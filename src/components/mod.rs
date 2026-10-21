@@ -23,6 +23,7 @@ pub mod proc_stats;
 pub mod secrets;
 pub mod sensor;
 pub mod shell_command;
+pub mod spoolman;
 pub mod template;
 pub mod webcam;
 pub mod websockets;
@@ -70,6 +71,7 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "octoprint_compat" => wrap(octoprint_compat::load_component(config)?),
         "mqtt" => wrap(mqtt::load_component(config)?),
         "sensor" => wrap(sensor::load_component(config)?),
+        "spoolman" => wrap(spoolman::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))

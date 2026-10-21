@@ -16,6 +16,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 hyper-tungstenite = "0.17"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
