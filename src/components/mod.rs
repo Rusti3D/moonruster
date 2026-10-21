@@ -21,6 +21,7 @@ pub mod ldap;
 pub mod machine;
 pub mod mqtt;
 pub mod octoprint_compat;
+pub mod power;
 pub mod proc_stats;
 pub mod secrets;
 pub mod sensor;
@@ -78,6 +79,7 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "update_manager" => wrap(update_manager::load_component(config)?),
         "gpio" => wrap(gpio::load_component(config)),
         "button" => wrap(button::load_component(config)?),
+        "power" => wrap(power::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))

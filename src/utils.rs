@@ -321,3 +321,12 @@ pub fn splitext_root(name: &str) -> String {
     let ext = splitext_ext(name);
     name[..name.len() - ext.len()].to_string()
 }
+
+/// urllib.parse.urlencode for a list of key/value pairs (quote_plus encoding)
+pub fn urlencode(pairs: &[(&str, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", url_escape(k).replace("%20", "+"), url_escape(v).replace("%20", "+")))
+        .collect::<Vec<_>>()
+        .join("&")
+}
