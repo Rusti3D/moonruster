@@ -1739,7 +1739,7 @@ impl ApiTransport for HttpRpcTransport {
     fn ip_addr(&self) -> Option<std::net::IpAddr> {
         self.ip
     }
-    fn screen_rpc_request(&self, api_def: &ApiDefinition, _rt: RequestType, _args: &Args) -> Result<(), ServerError> {
+    fn screen_rpc_request(&self, api_def: &ApiDefinition, _rt: RequestType, _args: &mut Args) -> Result<(), ServerError> {
         if self.user.is_none() && api_def.auth_required {
             return Err(ServerError::new("Unauthorized", 401));
         }

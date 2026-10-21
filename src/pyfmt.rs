@@ -200,3 +200,15 @@ mod tests {
         assert_eq!(py_float("1e3"), Some(1000.0));
     }
 }
+
+/// Python bool(value)
+pub fn py_truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(true),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+    }
+}

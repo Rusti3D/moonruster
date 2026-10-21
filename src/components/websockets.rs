@@ -299,7 +299,7 @@ impl ApiTransport for RemoteConnection {
     fn ip_addr(&self) -> Option<IpAddr> {
         self.ip
     }
-    fn screen_rpc_request(&self, api_def: &ApiDefinition, _rt: RequestType, _args: &Args) -> Result<(), ServerError> {
+    fn screen_rpc_request(&self, api_def: &ApiDefinition, _rt: RequestType, _args: &mut Args) -> Result<(), ServerError> {
         self.check_authenticated(api_def)
     }
     fn send_status(&self, status: &serde_json::Map<String, Value>, eventtime: f64) {

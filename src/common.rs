@@ -442,7 +442,7 @@ pub trait ApiTransport {
     fn ip_addr(&self) -> Option<IpAddr> {
         None
     }
-    fn screen_rpc_request(&self, _api_def: &ApiDefinition, _req_type: RequestType, _args: &Args) -> Result<(), ServerError> {
+    fn screen_rpc_request(&self, _api_def: &ApiDefinition, _req_type: RequestType, _args: &mut Args) -> Result<(), ServerError> {
         Ok(())
     }
     fn send_status(&self, _status: &Map<String, Value>, _eventtime: f64) {}
@@ -861,9 +861,9 @@ impl JsonRpc {
         api_def: &ApiDefinition,
         req_id: Value,
         transport: Rc<dyn ApiTransport>,
-        params: Args,
+        mut params: Args,
     ) -> Option<Value> {
-        let result = match transport.screen_rpc_request(api_def, request_type, &params) {
+        let result = match transport.screen_rpc_request(api_def, request_type, &mut params) {
             Err(e) => Err(e),
             Ok(()) => {
                 api_def

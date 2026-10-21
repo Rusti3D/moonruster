@@ -1373,6 +1373,7 @@ dependencies = [
  "tokio-util",
  "url",
  "uuid",
+ "webpki-roots",
  "zbus",
  "zip",
  "zvariant",
