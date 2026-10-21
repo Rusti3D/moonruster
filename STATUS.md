@@ -1,30 +1,47 @@
 # Moonruster status
 
 Goal (user, 2026-10-21): complete Rust port of Moonraker (Arksine/moonraker @ 9e676eba), 100% parity,
-drop-in replacement (same config, same database file, same HTTP/WS API). User asleep, full autonomy.
+drop-in replacement (same config, same database file, same HTTP/WS API).
+
+## State (2026-10-22)
+All 37 upstream components are ported and registered (`src/components/mod.rs`). Unit tests: `cargo test` (9 pass).
 
 ## Layout
-- `ref/moonraker` — reference python source (read-only). Port file by file from it.
+- `ref/moonraker` — reference python source (read-only).
 - `src/` — Rust port. Single-threaded tokio (current_thread + LocalSet), Rc/RefCell, `server()` global.
-  - common.rs (WebRequest, ApiDefinition, JsonRpc), configparser.rs (python configparser emulation),
-    confighelper.rs, server.rs, loghelper.rs, pyfmt.rs (python str/repr), utils.rs
-  - components/*.rs one per python component.
-- `tools/` — WSL test scripts. Build & test in WSL distro `ccs` (user root, ~/mr):
-  - ~/mr/klipper (latest), ~/mr/moonraker (ref, same commit), ~/mr/venv (python deps)
-  - ~/mr/klipper.dict built for atmega2560 via tools/build_dict.sh (test asset dict is too old)
-  - instances: ~/mr/inst/ref (python, port 7010) and ~/mr/inst/rust (port 7020), each own klippy
-  - tools/setup_instance.sh, start_klippy.sh <name>, start_ref.sh
-  - Build: `CARGO_TARGET_DIR=~/mr/target ~/.cargo/bin/cargo build` from /mnt/d/Projects/Moonruster
+  common.rs, configparser.rs, confighelper.rs, server.rs, loghelper.rs, pyfmt.rs (python str/repr),
+  utils.rs, async_serial.rs, sysfs_devs.rs, components/*.rs (one per python component,
+  update_manager/ and file_manager/ are folders like upstream).
+- Async jinja templates that call server functions (button `call_method`, power http `http_request`)
+  render on a worker thread; each call is bridged to the event loop (`template.rs render_async_ext`).
 
-## Component port status
-Done (written, not yet compiled): application, websockets, klippy_connection, klippy_apis, database,
-template, secrets, authorization, server, confighelper, loghelper.
-TODO (port fully from ref): file_manager (+metadata, upload), machine, data_store, shell_command,
-proc_stats, job_state, job_queue, history, http_client, announcements, webcam, extensions,
-dbus_manager, octoprint_compat, power, update_manager, mqtt, zeroconf, sensor, spoolman,
-simplyprint, paneldue, wled, gpio, button, ldap, analysis, td1, notifier.
+## Test environment (WSL distro `ccs`, root, ~/mr)
+- ~/mr/klipper, ~/mr/moonraker (ref, same commit), ~/mr/venv, ~/mr/klipper.dict (tools/build_dict.sh)
+- instances ~/mr/inst/ref (python, :7010) and ~/mr/inst/rust (:7020), each with its own batch klippy
+- `bash tools/reset_both.sh` restarts both klippys + servers; `python tools/difftest.py` compares 112 cases
+- mocks: tools/mock_spoolman.py (:7912), tools/mock_devices.py (:7913 tasmota/shelly/http/wled),
+  tools/mock_sp.py (:7914 simplyprint), tools/pdue_test.py (pty PanelDue), tools/setup_um_test.sh (git repos)
+- mosquitto installed in WSL for mqtt/sensor/power-mqtt tests
+- Build: `CARGO_TARGET_DIR=~/mr/target ~/.cargo/bin/cargo build --release` in /mnt/d/Projects/Moonruster
+
+## Verified against the reference (side by side)
+difftest 94/112 identical, remaining diffs are instance values (port, paths, file sizes from paths,
+random tokens/uuids), header order, and python set ordering (component list, namespace list).
+Compared live: mqtt (3.1.1 + v5, api over mqtt, status publish), sensor, spoolman, update_manager
+(git client update/rollback/recover, web client, klipper, PackageKit system packages), power (http
+generic w/ templates, klipper_device, mqtt device), notifier list, zeroconf mDNS + SSDP xml, wled http,
+paneldue (byte identical serial output), analysis (estimator download/dump), simplyprint (mock cloud).
+
+## Not verified (no hardware / service here)
+gpio + button + rf + gpio power (no gpiochip in WSL), td1, wled serial, real Spoolman / SimplyPrint
+cloud, tplink/tasmota/shelly/homeseer/homeassistant/loxone/hue/smartthings/uhubctl devices,
+ldap, mqtt TLS, apprise delivery (list/config only).
 
 ## Known deliberate differences
-- Server header "Moonruster/x", error "traceback" is synthetic (python traceback impossible).
-- LMDB (pre-sqlite) databases not converted; warning added.
-- Restart is in-process via re-exec.
+- Server header "Moonruster/x"; error "traceback" is synthetic.
+- LMDB (pre-sqlite) databases not converted; warning added. Restart is via re-exec.
+- update_manager "moonraker" entry has type none (status {}): Moonruster is a binary, not a
+  python git checkout. Klipper, clients and system updates work.
+- notifier delivers through the `apprise` CLI (needs the apprise python package installed).
+- preprocess_cancellation runs via system python3; libcamera list is always [];
+  thumbnail PNG bytes can differ from PIL.
