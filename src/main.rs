@@ -1,6 +1,7 @@
 // Moonruster - Moonraker (Klipper API server) ported to Rust
 
 mod assets;
+mod async_serial;
 mod common;
 mod configparser;
 mod confighelper;

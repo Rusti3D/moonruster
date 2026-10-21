@@ -22,6 +22,7 @@ pub mod machine;
 pub mod notifier;
 pub mod mqtt;
 pub mod octoprint_compat;
+pub mod paneldue;
 pub mod power;
 pub mod proc_stats;
 pub mod secrets;
@@ -31,6 +32,7 @@ pub mod spoolman;
 pub mod template;
 pub mod update_manager;
 pub mod webcam;
+pub mod wled;
 pub mod websockets;
 pub mod zeroconf;
 
@@ -84,6 +86,8 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "power" => wrap(power::load_component(config)?),
         "notifier" => wrap(notifier::load_component(config)?),
         "zeroconf" => wrap(zeroconf::load_component(config)?),
+        "wled" => wrap(wled::load_component(config)?),
+        "paneldue" => wrap(paneldue::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))

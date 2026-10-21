@@ -23,6 +23,15 @@ class Generic(tornado.web.RequestHandler):
         body = json.loads(self.request.body or b"{}")
         STATE["generic"] = body.get("set", STATE["generic"])
         self.write({"state": STATE["generic"], "hdr": self.request.headers.get("X-Test", "")})
-app = tornado.web.Application([(r"/cm", Tasmota), (r"/relay/(\d+)", Shelly), (r"/generic/(\w+)", Generic)])
+WLED_LOG = []
+class Wled(tornado.web.RequestHandler):
+    def post(self):
+        body = json.loads(self.request.body)
+        WLED_LOG.append(body)
+        self.write({"state": {"on": True}, "info": {"ver": "0.14"}} if body.get("v") else {"success": True})
+    def get(self):
+        self.write(json.dumps(WLED_LOG))
+        WLED_LOG.clear()
+app = tornado.web.Application([(r"/json", Wled), (r"/cm", Tasmota), (r"/relay/(\d+)", Shelly), (r"/generic/(\w+)", Generic)])
 app.listen(7913)
 tornado.ioloop.IOLoop.current().start()
