@@ -613,9 +613,9 @@ pub async fn serve_websocket(
             Ok(s) => klippy_stream = Some(s),
             Err(e) => {
                 let err = if e.status_code == 503 && e.message != "Klippy Unix Connection Not Available" {
-                    HttpError::with_reason(503, "Failed to open connection to Klippy")
+                    HttpError::new(503)
                 } else {
-                    HttpError::from_server_error(&e)
+                    HttpError::std_from(&e)
                 };
                 return (Err(error_response(&err, None)), user);
             }

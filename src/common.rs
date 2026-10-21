@@ -23,17 +23,23 @@ pub struct ServerError {
     pub status_code: i64,
     /// Present for AgentError (status 424)
     pub error_data: Option<Value>,
+    /// Raised as a tornado HTTPError (message is a log message)
+    pub is_http: bool,
 }
 
 impl ServerError {
     pub fn new(message: impl Into<String>, status_code: i64) -> Self {
-        ServerError { message: message.into(), status_code, error_data: None }
+        ServerError { message: message.into(), status_code, error_data: None, is_http: false }
+    }
+    /// tornado.web.HTTPError(code, log_message) raised from an API callback
+    pub fn http(status_code: i64, log_message: impl Into<String>) -> Self {
+        ServerError { message: log_message.into(), status_code, error_data: None, is_http: true }
     }
     pub fn bad(message: impl Into<String>) -> Self {
         Self::new(message, 400)
     }
     pub fn agent(message: impl Into<String>, data: Value) -> Self {
-        ServerError { message: message.into(), status_code: 424, error_data: Some(data) }
+        ServerError { message: message.into(), status_code: 424, error_data: Some(data), is_http: false }
     }
 }
 
@@ -866,6 +872,11 @@ impl JsonRpc {
             }
         };
         match result {
+            Err(e) if e.is_http => {
+                let reason = crate::components::application::standard_reason(e.status_code as u16);
+                let msg = format!("HTTP {}: {} ({})", e.status_code, reason, e.message);
+                Some(self.build_error(500, &msg, req_id, Some(&e), method_name))
+            }
             Err(e) => {
                 let mut code = e.status_code;
                 if code == 404 {

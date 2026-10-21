@@ -65,6 +65,8 @@ macro_rules! jq_endpoint {
 impl JobQueue {
     pub fn new(config: &ConfigHelper) -> Result<Rc<Self>, crate::confighelper::ConfigError> {
         let srv = server();
+        let load_on_start = config.getboolean_or("load_on_startup", false)?;
+        let automatic = config.getboolean_or("automatic_transition", false)?;
         let job_delay = config.getfloat_or("job_transition_delay", 0.01)?;
         if job_delay <= 0.0 {
             return Err(ConfigHelper::error("Value for option 'job_transition_delay' in section [job_queue] must be above 0.0"));
@@ -73,8 +75,8 @@ impl JobQueue {
             queued_jobs: RefCell::new(IndexMap::new()),
             lock: tokio::sync::Mutex::new(()),
             pause_requested: Cell::new(false),
-            load_on_start: config.getboolean_or("load_on_startup", false)?,
-            automatic: config.getboolean_or("automatic_transition", false)?,
+            load_on_start,
+            automatic,
             queue_state: RefCell::new("paused".into()),
             job_delay,
             job_transition_gcode: config.get_or("job_transition_gcode", "")?.trim().to_string(),

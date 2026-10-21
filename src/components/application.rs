@@ -238,8 +238,18 @@ impl HttpError {
     }
     /// Python ServerErrors converted via HTTPError(e.status_code, reason=str(e))
     pub fn from_server_error(e: &ServerError) -> Self {
+        if e.is_http {
+            return Self::std_from(e);
+        }
         let code = if (100..=599).contains(&e.status_code) { e.status_code as u16 } else { 500 };
         HttpError::with_reason(code, e.message.clone())
+    }
+    /// HTTPError(e.status_code, str(e)): the message is a log message, the
+    /// reason phrase is the standard one
+    pub fn std_from(e: &ServerError) -> Self {
+        let code = if (100..=599).contains(&e.status_code) { e.status_code as u16 } else { 500 };
+        log::debug!("HTTP {}: {}", code, e.message);
+        HttpError::new(code)
     }
     /// Non-HTTPError exceptions become a 500 in tornado
     pub fn internal() -> Self {
@@ -796,7 +806,7 @@ impl MoonrakerApp {
         if let Some(t) = self.template_cache.borrow().get(asset_name) {
             return Ok(t.clone());
         }
-        let asset = crate::assets::read_asset(asset_name).ok_or_else(|| HttpError::with_reason(404, "Asset Not Found"))?;
+        let asset = crate::assets::read_asset(asset_name).ok_or_else(|| HttpError::new(404))?;
         let factory: Rc<crate::components::template::TemplateFactory> =
             server().lookup_component("template").ok_or_else(HttpError::internal)?;
         let t = Rc::new(factory.create_ui_template(&asset).map_err(|_| HttpError::internal())?);
@@ -1152,7 +1162,7 @@ impl MoonrakerApp {
         let ctype = req.header("Content-Type").unwrap_or_default();
         if !ctype.trim().starts_with("application/json") {
             return (
-                error_response(&HttpError::with_reason(400, "Invalid content type, application/json required"), cors_req),
+                error_response(&HttpError::new(400), cors_req),
                 user,
             );
         }
@@ -1190,7 +1200,7 @@ impl MoonrakerApp {
                 let body_args: Value = serde_json::from_slice(&req.body).unwrap_or(Value::Null);
                 match body_args.get("url") {
                     Some(u) => crate::pyfmt::py_str(u),
-                    None => return (error_response(&HttpError::with_reason(400, "No url argument provided"), cors_req), user),
+                    None => return (error_response(&HttpError::new(400), cors_req), user),
                 }
             }
         };
@@ -1200,7 +1210,7 @@ impl MoonrakerApp {
             Some(a) => a.check_cors(Some(url.trim_end_matches('/'))).await,
         };
         if !allowed {
-            return (error_response(&HttpError::with_reason(400, format!("Unauthorized URL redirect: {}", url)), cors_req), user);
+            return (error_response(&HttpError::new(400), cors_req), user);
         }
         let mut resp = HttpResponse::new(302);
         if cors {
@@ -1334,7 +1344,7 @@ impl MoonrakerApp {
         let path = utils::url_unescape(&path);
         let fm: Rc<crate::components::file_manager::FileManager> =
             server().lookup_component("file_manager").ok_or_else(HttpError::internal)?;
-        let filename = fm.delete_file(&path).await.map_err(|e| HttpError::from_server_error(&e))?;
+        let filename = fm.delete_file(&path).await.map_err(|e| HttpError::std_from(&e))?;
         Ok(HttpResponse::json(200, &json!({"result": filename})))
     }
 
@@ -1360,7 +1370,7 @@ impl MoonrakerApp {
         let fm: Option<Rc<crate::components::file_manager::FileManager>> = server().lookup_component("file_manager");
         if let Some(fm) = fm {
             fm.check_reserved_path(&absolute_path.to_string_lossy(), false)
-                .map_err(|e| HttpError::from_server_error(&e))?;
+                .map_err(|e| HttpError::std_from(&e))?;
         }
         let meta = std::fs::metadata(&absolute_path).map_err(|_| HttpError::new(404))?;
         let size = meta.len();

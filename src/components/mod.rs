@@ -17,6 +17,7 @@ pub mod klippy_apis;
 pub mod klippy_connection;
 pub mod ldap;
 pub mod machine;
+pub mod octoprint_compat;
 pub mod proc_stats;
 pub mod secrets;
 pub mod shell_command;
@@ -64,6 +65,7 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "extensions" => wrap(extensions::load_component(config)?),
         "dbus_manager" => wrap(dbus_manager::load_component(config)),
         "ldap" => wrap(ldap::load_component(config)?),
+        "octoprint_compat" => wrap(octoprint_compat::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))

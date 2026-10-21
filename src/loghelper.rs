@@ -37,7 +37,8 @@ fn platform_str() -> String {
             let rel = std::ffi::CStr::from_ptr(uts.release.as_ptr()).to_string_lossy().to_string();
             let mach = std::ffi::CStr::from_ptr(uts.machine.as_ptr()).to_string_lossy().to_string();
             // python's platform.platform(terse=True) -> "Linux-<release>-<machine>-with-glibc..."
-            return format!("{}-{}-{}-with-glibc", sys, rel, mach);
+            let glibc = std::ffi::CStr::from_ptr(libc::gnu_get_libc_version()).to_string_lossy().to_string();
+            return format!("{}-{}-{}-with-glibc{}", sys, rel, mach, glibc);
         }
     }
     "Linux".into()

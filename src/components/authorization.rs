@@ -433,7 +433,7 @@ impl Authorization {
         let ip = req.get_ip_address();
         if let Some(ip) = ip {
             if self.check_logins_maxed(ip) {
-                return Err(ServerError::new("Unauthorized, Maximum Login Attempts Reached", 401));
+                return Err(ServerError::http(401, "Unauthorized, Maximum Login Attempts Reached"));
             }
         }
         match self.login_jwt_user(&req, false).await {
@@ -856,7 +856,7 @@ impl Authorization {
                 Ok(u) => Ok(Some(u)),
                 Err(e) => {
                     log::error!("JWT Decode Error {}\n{}", t, e);
-                    Err(HttpError::with_reason(401, "JWT Decode Error"))
+                    Err(HttpError::new(401))
                 }
             },
             _ => Ok(None),
@@ -949,7 +949,7 @@ impl Authorization {
             self.trusted_proxies.borrow_mut().push(ip);
             return Ok(());
         }
-        Err(HttpError::with_reason(401, format!("Proxy address {} not trusted", ip)))
+        Err(HttpError::new(401))
     }
 
     pub async fn authenticate_request(&self, req: &HttpRequest, auth_required: bool) -> Result<Option<UserInfo>, HttpError> {
@@ -968,7 +968,7 @@ impl Authorization {
         if let Some(key) = req.header("X-Api-Key") {
             if !key.is_empty() {
                 match self.validate_api_key(&key) {
-                    Err(e) => return Err(HttpError::with_reason(401, e.message)),
+                    Err(_) => return Err(HttpError::new(401)),
                     Ok(Some(u)) => return Ok(Some(u)),
                     Ok(None) => {}
                 }
@@ -978,7 +978,7 @@ impl Authorization {
             if !auth_required {
                 return Ok(None);
             }
-            return Err(HttpError::with_reason(401, "Unauthorized, Force Logins Enabled"));
+            return Err(HttpError::new(401));
         }
         if let Some(tu) = self.check_trusted_connection(ip).await {
             let mut orig_ip = None;
@@ -995,7 +995,7 @@ impl Authorization {
         if !auth_required {
             return Ok(None);
         }
-        Err(HttpError::with_reason(401, "Unauthorized"))
+        Err(HttpError::new(401))
     }
 
     pub async fn check_cors(&self, origin: Option<&str>) -> bool {

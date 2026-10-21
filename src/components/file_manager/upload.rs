@@ -23,7 +23,7 @@ pub async fn process_upload(
     let tmpname = fm.gen_temp_upload_path();
     let fail = |tmp: &str| {
         let _ = std::fs::remove_file(tmp);
-        HttpError::with_reason(500, "File Upload Parsing Failed")
+        HttpError::new(500)
     };
     let boundary = match multer::parse_boundary(&ctype) {
         Ok(b) => b,
@@ -100,14 +100,14 @@ pub async fn process_upload(
         let recd = String::from_utf8_lossy(&chk).to_lowercase();
         if calc != recd {
             let _ = std::fs::remove_file(&tmpname);
-            return Err(HttpError::with_reason(422, format!("File checksum mismatch: expected {}, calculated {}", recd, calc)));
+            return Err({ log::info!("File checksum mismatch: expected {}, calculated {}", recd, calc); HttpError::new(422) });
         }
     }
     let fname = match mp_filename {
         Some(f) if !f.trim().is_empty() => f,
         _ => {
             let _ = std::fs::remove_file(&tmpname);
-            return Err(HttpError::with_reason(400, "Multipart filename omitted"));
+            return Err(HttpError::new(400));
         }
     };
     for key in ["root", "print", "path"] {
@@ -126,5 +126,5 @@ pub async fn process_upload(
     dbg.push_str(&format!("\nChecksum: {}", calc));
     log::debug!("{}", dbg);
     log::info!("Processing Uploaded File: {}", fname);
-    fm.finalize_upload(values, user).await.map_err(|e| HttpError::from_server_error(&e))
+    fm.finalize_upload(values, user).await.map_err(|e| HttpError::std_from(&e))
 }
