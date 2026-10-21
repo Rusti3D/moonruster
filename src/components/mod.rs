@@ -29,6 +29,7 @@ pub mod proc_stats;
 pub mod secrets;
 pub mod sensor;
 pub mod shell_command;
+pub mod simplyprint;
 pub mod spoolman;
 pub mod td1;
 pub mod template;
@@ -92,6 +93,7 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "paneldue" => wrap(paneldue::load_component(config)?),
         "analysis" => wrap(analysis::load_component(config)?),
         "td1" => wrap(td1::load_component(config)?),
+        "simplyprint" => wrap(simplyprint::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))

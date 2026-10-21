@@ -2,7 +2,7 @@
 # Starts the reference python moonraker for instance "ref" (background)
 D=~/mr/inst/ref
 pkill -f "moonraker.py -d $D" 2>/dev/null
-sleep 0.5
+for i in $(seq 1 100); do pgrep -f "moonraker.py -d $D" > /dev/null || break; sleep 0.1; done
 cd ~/mr/moonraker
 nohup ~/mr/venv/bin/python moonraker/moonraker.py -d "$D" > "$D/logs/moonraker.stdout" 2>&1 &
 for i in $(seq 1 100); do
