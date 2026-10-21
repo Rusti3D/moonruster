@@ -101,6 +101,27 @@ impl JinjaTemplate {
         tmpl.render(minijinja::Value::from_serialize(context))
     }
 
+    /// Renders with extra (non serializable) context entries such as callables
+    pub fn render_with(&self, context: &Value, extra: Vec<(&str, minijinja::Value)>) -> Result<String, ServerError> {
+        let mut ctx: std::collections::BTreeMap<String, minijinja::Value> = std::collections::BTreeMap::new();
+        if let Value::Object(m) = context {
+            for (k, v) in m {
+                ctx.insert(k.clone(), minijinja::Value::from_serialize(v));
+            }
+        }
+        for (k, v) in extra {
+            ctx.insert(k.to_string(), v);
+        }
+        let res = self.env.template_from_str(&self.source).and_then(|t| t.render(minijinja::Value::from(ctx)));
+        match res {
+            Ok(s) => Ok(s.trim().to_string()),
+            Err(e) => {
+                log::debug!("Template render error: {}", e);
+                Err(ServerError::new("Error rending Jinja2 Template", 500))
+            }
+        }
+    }
+
     pub fn render(&self, context: &Value) -> Result<String, ServerError> {
         if self.is_async {
             return Err(ServerError::bad("Cannot render async templates with the render() method, use render_async()"));
