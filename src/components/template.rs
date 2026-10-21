@@ -78,6 +78,112 @@ impl TemplateFactory {
     }
 }
 
+pub type AsyncFn = Rc<dyn Fn(Vec<Value>, serde_json::Map<String, Value>) -> futures::future::LocalBoxFuture<'static, Result<Value, ServerError>>>;
+
+/// Builds a template object on the render thread, the object may call
+/// back into the event loop through the Caller
+pub type ObjBuilder = Box<dyn FnOnce(Caller) -> minijinja::Value + Send>;
+
+pub struct Call {
+    name: String,
+    args: Vec<Value>,
+    kwargs: serde_json::Map<String, Value>,
+    reply: std::sync::mpsc::Sender<Result<Value, String>>,
+}
+
+#[derive(Clone)]
+pub struct Caller {
+    tx: tokio::sync::mpsc::UnboundedSender<Call>,
+}
+
+impl Caller {
+    /// Blocking call of an async function on the event loop
+    pub fn call(&self, name: &str, args: Vec<Value>, kwargs: serde_json::Map<String, Value>) -> Result<minijinja::Value, Error> {
+        let (reply, rx) = std::sync::mpsc::channel();
+        self.tx
+            .send(Call { name: name.to_string(), args, kwargs, reply })
+            .map_err(|_| Error::new(ErrorKind::InvalidOperation, "event loop unavailable"))?;
+        match rx.recv() {
+            Ok(Ok(v)) => Ok(minijinja::Value::from_serialize(&v)),
+            Ok(Err(e)) => Err(Error::new(ErrorKind::InvalidOperation, e)),
+            Err(_) => Err(Error::new(ErrorKind::InvalidOperation, "call aborted")),
+        }
+    }
+}
+
+/// A mutable dict shared between renders (python dicts passed in a context)
+#[derive(Debug, Default)]
+pub struct SharedDict(pub std::sync::Mutex<serde_json::Map<String, Value>>);
+
+impl minijinja::value::Object for SharedDict {
+    fn repr(self: &std::sync::Arc<Self>) -> minijinja::value::ObjectRepr {
+        minijinja::value::ObjectRepr::Map
+    }
+
+    fn get_value(self: &std::sync::Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
+        let k = key.as_str()?;
+        self.0.lock().unwrap().get(k).map(minijinja::Value::from_serialize)
+    }
+
+    fn enumerate(self: &std::sync::Arc<Self>) -> minijinja::value::Enumerator {
+        let keys: Vec<minijinja::Value> = self.0.lock().unwrap().keys().map(|k| minijinja::Value::from(k.clone())).collect();
+        minijinja::value::Enumerator::Values(keys)
+    }
+
+    fn call_method(
+        self: &std::sync::Arc<Self>,
+        _state: &minijinja::State,
+        method: &str,
+        args: &[minijinja::Value],
+    ) -> Result<minijinja::Value, Error> {
+        let to_json = |v: &minijinja::Value| serde_json::to_value(v).unwrap_or(Value::Null);
+        let key = || args.first().and_then(|a| a.as_str()).map(String::from).ok_or_else(|| Error::new(ErrorKind::MissingArgument, "key"));
+        let mut m = self.0.lock().unwrap();
+        match method {
+            "update" => {
+                if let Some(Value::Object(o)) = args.first().map(to_json) {
+                    for (k, v) in o {
+                        m.insert(k, v);
+                    }
+                }
+                Ok(minijinja::Value::from(()))
+            }
+            "get" => Ok(m.get(&key()?).map(minijinja::Value::from_serialize).unwrap_or_else(|| args.get(1).cloned().unwrap_or(minijinja::Value::from(())))),
+            "setdefault" => {
+                let k = key()?;
+                let d = args.get(1).map(to_json).unwrap_or(Value::Null);
+                Ok(minijinja::Value::from_serialize(m.entry(k).or_insert(d)))
+            }
+            "pop" => {
+                let k = key()?;
+                match m.shift_remove(&k) {
+                    Some(v) => Ok(minijinja::Value::from_serialize(&v)),
+                    None => args.get(1).cloned().ok_or_else(|| Error::new(ErrorKind::InvalidOperation, format!("KeyError: '{}'", k))),
+                }
+            }
+            "keys" => Ok(minijinja::Value::from_serialize(m.keys().collect::<Vec<_>>())),
+            "values" => Ok(minijinja::Value::from_serialize(m.values().collect::<Vec<_>>())),
+            "items" => Ok(minijinja::Value::from_serialize(m.iter().collect::<Vec<_>>())),
+            "clear" => {
+                m.clear();
+                Ok(minijinja::Value::from(()))
+            }
+            _ => Err(Error::new(ErrorKind::UnknownMethod, format!("dict has no method {}", method))),
+        }
+    }
+}
+
+pub fn kwargs_to_map(kwargs: &minijinja::value::Kwargs) -> serde_json::Map<String, Value> {
+    let mut m = serde_json::Map::new();
+    let keys: Vec<String> = kwargs.args().map(String::from).collect();
+    for k in keys {
+        if let Ok(v) = kwargs.get::<minijinja::Value>(&k) {
+            m.insert(k, serde_json::to_value(&v).unwrap_or(Value::Null));
+        }
+    }
+    m
+}
+
 #[derive(Clone)]
 pub struct JinjaTemplate {
     source: String,
@@ -127,6 +233,74 @@ impl JinjaTemplate {
             return Err(ServerError::bad("Cannot render async templates with the render() method, use render_async()"));
         }
         match self.do_render(context) {
+            Ok(s) => Ok(s.trim().to_string()),
+            Err(e) => {
+                log::debug!("Template render error: {}", e);
+                Err(ServerError::new("Error rending Jinja2 Template", 500))
+            }
+        }
+    }
+
+    /// Async render where the template may call async functions running on
+    /// the server's event loop.  The template runs on a worker thread and
+    /// blocks on each call while the event loop services it.
+    pub async fn render_async_ext(
+        &self,
+        context: &Value,
+        funcs: Vec<(&str, AsyncFn)>,
+        objects: Vec<(&str, ObjBuilder)>,
+    ) -> Result<String, ServerError> {
+        let env: Environment<'static> = (*self.env).clone();
+        let source = self.source.clone();
+        let ctx = context.clone();
+        let names: Vec<String> = funcs.iter().map(|(n, _)| n.to_string()).collect();
+        let fmap: std::collections::HashMap<String, AsyncFn> = funcs.into_iter().map(|(n, f)| (n.to_string(), f)).collect();
+        let objects: Vec<(String, ObjBuilder)> = objects.into_iter().map(|(n, o)| (n.to_string(), o)).collect();
+        let (call_tx, mut call_rx) = tokio::sync::mpsc::unbounded_channel::<Call>();
+        let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+        std::thread::spawn(move || {
+            let mut env = env;
+            let caller = Caller { tx: call_tx };
+            for name in names {
+                let c = caller.clone();
+                let n = name.clone();
+                env.add_function(name, move |args: minijinja::value::Rest<minijinja::Value>, kwargs: minijinja::value::Kwargs| {
+                    let args: Vec<Value> = args.iter().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)).collect();
+                    c.call(&n, args, kwargs_to_map(&kwargs))
+                });
+            }
+            let mut ctx_map: std::collections::BTreeMap<String, minijinja::Value> = std::collections::BTreeMap::new();
+            if let Value::Object(m) = &ctx {
+                for (k, v) in m {
+                    ctx_map.insert(k.clone(), minijinja::Value::from_serialize(v));
+                }
+            }
+            for (name, build) in objects {
+                ctx_map.insert(name, build(caller.clone()));
+            }
+            let res = env
+                .template_from_str(&source)
+                .and_then(|t| t.render(minijinja::Value::from(ctx_map)))
+                .map_err(|e| format!("{:#}", e));
+            let _ = done_tx.send(res);
+        });
+        let res = loop {
+            tokio::select! {
+                r = &mut done_rx => break r.unwrap_or_else(|_| Err("render thread exited".into())),
+                Some(call) = call_rx.recv() => {
+                    match fmap.get(&call.name).cloned() {
+                        None => { let _ = call.reply.send(Err(format!("unknown function {}", call.name))); }
+                        Some(f) => {
+                            crate::server::spawn(async move {
+                                let r = f(call.args, call.kwargs).await.map_err(|e| e.message);
+                                let _ = call.reply.send(r);
+                            });
+                        }
+                    }
+                }
+            }
+        };
+        match res {
             Ok(s) => Ok(s.trim().to_string()),
             Err(e) => {
                 log::debug!("Template render error: {}", e);

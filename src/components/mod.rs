@@ -4,11 +4,13 @@
 pub mod announcements;
 pub mod application;
 pub mod authorization;
+pub mod button;
 pub mod data_store;
 pub mod database;
 pub mod dbus_manager;
 pub mod extensions;
 pub mod file_manager;
+pub mod gpio;
 pub mod history;
 pub mod http_client;
 pub mod job_queue;
@@ -74,6 +76,8 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "sensor" => wrap(sensor::load_component(config)?),
         "spoolman" => wrap(spoolman::load_component(config)?),
         "update_manager" => wrap(update_manager::load_component(config)?),
+        "gpio" => wrap(gpio::load_component(config)),
+        "button" => wrap(button::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))
