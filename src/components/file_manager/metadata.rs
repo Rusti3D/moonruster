@@ -596,7 +596,7 @@ impl Slicer {
     fn multi_or_single(result: Vec<String>) -> Option<Value> {
         if result.len() > 1 {
             // python's json.dumps default separators
-            let items: Vec<String> = result.iter().map(|s| serde_json::to_string(&py_json_ascii(s)).unwrap_or_default()).collect();
+            let items: Vec<String> = result.iter().map(|s| py_json_ascii(s)).collect();
             Some(json!(format!("[{}]", items.join(", "))))
         } else {
             result.into_iter().next().map(Value::String)
@@ -1001,8 +1001,21 @@ impl Slicer {
 }
 
 /// python json.dumps escapes non-ascii by default
+/// json.dumps(str) with python's default ensure_ascii=True
 fn py_json_ascii(s: &str) -> String {
-    s.to_string()
+    let encoded = serde_json::to_string(s).unwrap_or_default();
+    let mut out = String::with_capacity(encoded.len());
+    for c in encoded.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            let mut buf = [0u16; 2];
+            for u in c.encode_utf16(&mut buf) {
+                out.push_str(&format!("\\u{:04x}", u));
+            }
+        }
+    }
+    out
 }
 
 fn b64decode_lenient(data: &str) -> Option<Vec<u8>> {
@@ -1304,4 +1317,12 @@ pub fn main(args: &[String]) -> i32 {
     let out = json!({"file": filename, "metadata": metadata});
     print!("{}", out);
     0
+}
+
+#[cfg(test)]
+mod ascii_tests {
+    #[test]
+    fn ensure_ascii() {
+        assert_eq!(super::py_json_ascii("PLA \"x\" é😀"), r#""PLA \"x\" \u00e9\ud83d\ude00""#);
+    }
 }

@@ -273,7 +273,7 @@ impl SimplyPrint {
         let ambient = sp_info.get("ambient_temp").and_then(|v| v.as_i64()).unwrap_or(INITIAL_AMBIENT);
         let sensor_name = config.get_or("ambient_sensor", "")?;
         let webcam_name = config.get_or("webcam_name", "")?;
-        let test = config.get_opt("use_test_endpoint")?.map(|s| !s.is_empty()).unwrap_or(false);
+        let test = crate::pyfmt::py_truthy(&config.get_value_or("use_test_endpoint", json!(false), false)?);
         let connect_url = config.get_opt("url")?;
         let mut power_id = String::new();
         match config.get_opt("power_device")? {

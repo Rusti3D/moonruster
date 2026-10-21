@@ -1276,8 +1276,8 @@ impl MoonrakerApp {
             };
         let context = json!({
             "remote_ip": req.remote_ip,
-            "authorized": authorized,
-            "cors_enabled": cors_enabled,
+            "authorized": crate::pyfmt::py_bool(authorized),
+            "cors_enabled": crate::pyfmt::py_bool(cors_enabled),
             "version": srv.get_app_arg("software_version").unwrap_or(Value::Null),
             "ws_count": srv.wsm().get_count(),
             "klippy_state": kstate.as_str(),

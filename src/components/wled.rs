@@ -384,7 +384,7 @@ impl Wled {
                     _ => return Err(ConfigHelper::error(format!("Invalid Section Name: {}", n))),
                 };
                 log::info!("WLED strip: {}", name);
-                let _ = cfg.get_opt_dep("color_order", true)?;
+                let _ = cfg.get_value_or("color_order", json!(""), true)?;
                 let strip_type = cfg.get_or("type", "http")?.to_uppercase();
                 if strip_type != "HTTP" && strip_type != "SERIAL" {
                     return Err(ConfigHelper::error(format!("Unsupported Strip Type: {}", strip_type.to_lowercase())));

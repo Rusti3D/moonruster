@@ -316,6 +316,12 @@ impl ConfigHelper {
         )
     }
 
+    /// get() with a default of any type, the default is recorded as the
+    /// parsed value like python's get(option, default)
+    pub fn get_value_or(&self, option: &str, default: Value, deprecate: bool) -> CResult<Value> {
+        self.get_option(&|c, s, o| Ok(Value::String(c.get(s, o)?)), option, Some(default), None, deprecate, &|v| v.clone())
+    }
+
     pub fn get_opt(&self, option: &str) -> CResult<Option<String>> {
         self.get_opt_dep(option, false)
     }
