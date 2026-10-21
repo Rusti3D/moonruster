@@ -19,6 +19,7 @@ pub mod klippy_apis;
 pub mod klippy_connection;
 pub mod ldap;
 pub mod machine;
+pub mod notifier;
 pub mod mqtt;
 pub mod octoprint_compat;
 pub mod power;
@@ -31,6 +32,7 @@ pub mod template;
 pub mod update_manager;
 pub mod webcam;
 pub mod websockets;
+pub mod zeroconf;
 
 use crate::confighelper::{ConfigError, ConfigHelper};
 use crate::server::{LifecycleDyn, Server};
@@ -80,6 +82,8 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "gpio" => wrap(gpio::load_component(config)),
         "button" => wrap(button::load_component(config)?),
         "power" => wrap(power::load_component(config)?),
+        "notifier" => wrap(notifier::load_component(config)?),
+        "zeroconf" => wrap(zeroconf::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))
