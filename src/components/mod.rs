@@ -25,6 +25,7 @@ pub mod sensor;
 pub mod shell_command;
 pub mod spoolman;
 pub mod template;
+pub mod update_manager;
 pub mod webcam;
 pub mod websockets;
 
@@ -72,6 +73,7 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "mqtt" => wrap(mqtt::load_component(config)?),
         "sensor" => wrap(sensor::load_component(config)?),
         "spoolman" => wrap(spoolman::load_component(config)?),
+        "update_manager" => wrap(update_manager::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))

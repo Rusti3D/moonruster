@@ -44,7 +44,7 @@ pub fn which(cmd: &str) -> Option<PathBuf> {
 
 // ***** distro emulation *****
 
-fn parse_os_release() -> IndexMap<String, String> {
+pub(crate) fn parse_os_release() -> IndexMap<String, String> {
     let mut out = IndexMap::new();
     for path in ["/etc/os-release", "/usr/lib/os-release"] {
         if let Ok(data) = std::fs::read_to_string(path) {
