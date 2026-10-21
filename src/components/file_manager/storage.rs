@@ -128,6 +128,14 @@ impl MetadataStorage {
         self.pending_requests.borrow().contains_key(fname)
     }
 
+    /// Replaces the configuration of a registered processor (python
+    /// components mutate the registered dict in place)
+    pub fn update_gcode_processor(&self, name: &str, config: Value) {
+        if let Some(p) = self.processors.borrow_mut().get_mut(name) {
+            *p = config;
+        }
+    }
+
     pub fn register_gcode_processor(&self, name: &str, config: Option<Value>) -> Result<(), ServerError> {
         let cfg = match config {
             None => {

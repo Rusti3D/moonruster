@@ -1283,6 +1283,36 @@ impl UpdateManager {
         Ok(um)
     }
 
+    pub fn register_updater(&self, name: &str, config: Value) -> Result<(), ServerError> {
+        if self.get_updater(name).is_some() {
+            return Err(ServerError::bad(format!("Updater {} already registered", name)));
+        }
+        let mut m = Map::new();
+        m.insert(name.to_string(), config);
+        let cfg = self
+            .app_config
+            .read_supplemental_dict(&Value::Object(m))
+            .map_err(|e| ServerError::bad(e.0))?
+            .getsection(name);
+        let utype = cfg.get("type").map_err(|e| ServerError::bad(e.0))?;
+        let d = get_deploy(&utype, &cfg, &self.cmd_helper)
+            .map_err(|e| ServerError::bad(e.0))?
+            .ok_or_else(|| ServerError::bad(format!("Invalid type '{}'", utype)))?;
+        self.cmd_helper.updaters.borrow_mut().insert(name.to_string(), d);
+        Ok(())
+    }
+
+    pub async fn refresh_updater(&self, name: &str, force: bool) {
+        let updater = match self.get_updater(name) {
+            None => return,
+            Some(u) => u,
+        };
+        let _g = self.cmd_request_lock.lock().await;
+        if updater.base().needs_refresh(false) || force {
+            let _ = updater.refresh().await;
+        }
+    }
+
     fn updaters(&self) -> Vec<(String, Rc<dyn Deployer>)> {
         self.cmd_helper.updaters.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }

@@ -19,7 +19,7 @@ pub struct AsyncSerial {
     baud: i64,
     fd: Cell<Option<RawFd>>,
     chunk_tx: RefCell<Option<mpsc::UnboundedSender<Vec<u8>>>>,
-    chunk_rx: RefCell<Option<mpsc::UnboundedReceiver<Vec<u8>>>>,
+    chunk_rx: tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>,
     buf: RefCell<Vec<u8>>,
     reader_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
     send_buffer: RefCell<Vec<(oneshot::Sender<SendResult>, Vec<u8>)>>,
@@ -78,7 +78,7 @@ impl AsyncSerial {
             baud,
             fd: Cell::new(None),
             chunk_tx: RefCell::new(None),
-            chunk_rx: RefCell::new(None),
+            chunk_rx: tokio::sync::Mutex::new(None),
             buf: RefCell::new(Vec::new()),
             reader_task: RefCell::new(None),
             send_buffer: RefCell::new(Vec::new()),
@@ -138,7 +138,9 @@ impl AsyncSerial {
         self.fd.set(Some(fd));
         let (tx, rx) = mpsc::unbounded_channel();
         *self.chunk_tx.borrow_mut() = Some(tx.clone());
-        *self.chunk_rx.borrow_mut() = Some(rx);
+        if let Ok(mut g) = self.chunk_rx.try_lock() {
+            *g = Some(rx);
+        }
         self.buf.borrow_mut().clear();
         let w = Rc::downgrade(self);
         let h = spawn(async move {
@@ -185,8 +187,10 @@ impl AsyncSerial {
         Ok(())
     }
 
-    /// Reads one line including the terminating newline, None at EOF
+    /// Reads one line including the terminating newline, None at EOF.
+    /// Dropping the future (cancel) leaves buffered data intact.
     pub async fn read_line(&self) -> Option<Vec<u8>> {
+        let mut rx = self.chunk_rx.lock().await;
         loop {
             {
                 let mut buf = self.buf.borrow_mut();
@@ -194,14 +198,14 @@ impl AsyncSerial {
                     return Some(buf.drain(..=pos).collect());
                 }
             }
-            let rx = self.chunk_rx.borrow_mut().take();
-            let mut rx = rx?;
-            let chunk = rx.recv().await;
-            *self.chunk_rx.borrow_mut() = Some(rx);
+            let chunk = match rx.as_mut() {
+                None => None,
+                Some(r) => r.recv().await,
+            };
             match chunk {
                 Some(c) => self.buf.borrow_mut().extend(c),
                 None => {
-                    *self.chunk_rx.borrow_mut() = None;
+                    *rx = None;
                     let rest: Vec<u8> = std::mem::take(&mut *self.buf.borrow_mut());
                     return if rest.is_empty() { None } else { Some(rest) };
                 }

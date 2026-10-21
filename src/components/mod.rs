@@ -1,6 +1,7 @@
 // Component registry: maps component names to constructors (the python
 // implementation imports moonraker.components.<name> dynamically)
 
+pub mod analysis;
 pub mod announcements;
 pub mod application;
 pub mod authorization;
@@ -29,6 +30,7 @@ pub mod secrets;
 pub mod sensor;
 pub mod shell_command;
 pub mod spoolman;
+pub mod td1;
 pub mod template;
 pub mod update_manager;
 pub mod webcam;
@@ -88,6 +90,8 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         "zeroconf" => wrap(zeroconf::load_component(config)?),
         "wled" => wrap(wled::load_component(config)?),
         "paneldue" => wrap(paneldue::load_component(config)?),
+        "analysis" => wrap(analysis::load_component(config)?),
+        "td1" => wrap(td1::load_component(config)?),
         _ => return Ok(None),
     };
     Ok(Some(loaded))
