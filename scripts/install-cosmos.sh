@@ -59,11 +59,13 @@ if [ ! -f "$BACKUP" ]; then
 fi
 
 # Always rewritten from the backup.  Moonruster takes moonraker's options;
-# only the python interpreter flags are dropped.
+# only the python interpreter flags are dropped.  Logs rotate at 5 MB like
+# COSMOS's moonraker.
 report "Pointing $INIT at moonruster"
 sed -e "s|^MOONRAKER_EXEC=.*|MOONRAKER_EXEC=\"$DEST_BIN\"|" \
     -e '/^MOONRAKER_ARGS=/{s/-X [^ "]*//g;s/-m moonraker\.moonraker//;s/  */ /g;s/=" /="/;s/ "$/"/}' \
+    -e '/^MOONRAKER_ARGS=/a export MOONRUSTER_LOG_MAX_BYTES=5242880' \
     "$BACKUP" > "$INIT"
-grep '^MOONRAKER_' "$INIT"
+grep 'MOONR' "$INIT"
 $INIT restart
 report "Done.  Revert with: scripts/remote-install.sh <host> -r"

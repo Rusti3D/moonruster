@@ -97,6 +97,8 @@ On the printer it uses `scripts/install-cosmos.sh` (plain `sh`, COSMOS has no ba
 - back up `/etc/init.d/moonraker` to `/etc/moonruster/moonraker.init-backup`
 - change only its `MOONRAKER_EXEC=` line, and drop the Python interpreter flags from
   `MOONRAKER_ARGS` (`-d /etc/klipper -l ... -u ...` stay)
+- set `MOONRUSTER_LOG_MAX_BYTES=5242880` in it: logs rotate at 5 MB (2 backups) instead of daily,
+  as on COSMOS's Moonraker
 - restart the service
 
 `-r` restores the init script. The COSMOS additions to Moonraker are supported: `[machine]

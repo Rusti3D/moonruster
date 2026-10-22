@@ -1079,7 +1079,9 @@ impl MoonrakerApp {
     }
 
     fn log_request(&self, req: &HttpRequest, status: u16, user: Option<&UserInfo>) {
-        if !self.verbose && [200, 204, 206, 304].contains(&status) {
+        // COSMOS's moonraker also skips redirects (webcam_redirect)
+        let skip_302 = status == 302 && crate::loghelper::log_max_bytes().is_some();
+        if !self.verbose && ([200, 204, 206, 304].contains(&status) || skip_302) {
             return;
         }
         let request_time = 1000.0 * req.request_time();
