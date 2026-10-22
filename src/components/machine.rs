@@ -182,6 +182,7 @@ pub struct Provider {
     available_services: RefCell<IndexMap<String, Value>>,
     svc_cmd: RefCell<Option<Rc<ShellCommand>>>,
     status_cmds: RefCell<IndexMap<String, Rc<ShellCommand>>>,
+    status_pidfiles: RefCell<IndexMap<String, PathBuf>>,
     spv_conf: String,
     dbus_ready: Cell<bool>,
     login_mgr: Cell<bool>,
@@ -250,6 +251,9 @@ impl Provider {
                             .insert(svc.clone(), json!({"active_state": "unknown", "sub_state": "unknown"}));
                         let cmd = self.shell().build_shell_command(&format!("{}/{} status", SYSV_INIT_PATH, svc), None, None, None, false, None);
                         self.status_cmds.borrow_mut().insert(svc.clone(), cmd);
+                        if let Some(pidfile) = std::fs::read_to_string(&script).ok().and_then(|t| sysv_status_pidfile(&t)) {
+                            self.status_pidfiles.borrow_mut().insert(svc.clone(), pidfile);
+                        }
                     }
                 }
                 if !self.available_services.borrow().is_empty() {
@@ -261,11 +265,22 @@ impl Provider {
     }
 
     async fn update_sysv_state(&self, svc: &str, notify: bool) {
-        let cmd = match self.status_cmds.borrow().get(svc) {
-            Some(c) => c.clone(),
-            None => return,
+        let pidfile = self.status_pidfiles.borrow().get(svc).cloned();
+        let running = match pidfile {
+            // what the script's status does, without starting a shell
+            Some(p) => std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|t| t.trim().parse::<libc::pid_t>().ok())
+                .map(|pid| unsafe { libc::kill(pid, 0) } == 0)
+                .unwrap_or(false),
+            None => {
+                let cmd = match self.status_cmds.borrow().get(svc) {
+                    Some(c) => c.clone(),
+                    None => return,
+                };
+                cmd.run(&self.shell(), SYSV_STATUS_TIMEOUT, false, false, 1, None, None).await
+            }
         };
-        let running = cmd.run(&self.shell(), SYSV_STATUS_TIMEOUT, false, false, 1, None, None).await;
         let new_state = if running {
             json!({"active_state": "active", "sub_state": "running"})
         } else {
@@ -1040,6 +1055,7 @@ impl Machine {
             available_services: RefCell::new(IndexMap::new()),
             svc_cmd: RefCell::new(None),
             status_cmds: RefCell::new(IndexMap::new()),
+            status_pidfiles: RefCell::new(IndexMap::new()),
             spv_conf,
             dbus_ready: Cell::new(false),
             login_mgr: Cell::new(false),
@@ -1507,22 +1523,41 @@ impl Machine {
         if sequence % NETWORK_UPDATE_SEQUENCE != 0 {
             return;
         }
-        let shell: Rc<ShellCommandFactory> = match server().lookup_component("shell_command") {
-            Some(s) => s,
-            None => return,
+        // read from the kernel; `ip` is only needed for CAN bus details
+        let (network, canbus) = match native_network() {
+            Some(network) => (network, Map::new()),
+            None => match self.ip_network().await {
+                Some(r) => r,
+                None => return,
+            },
         };
+        let prev = self.system_info.borrow().get("network").cloned().unwrap_or(json!({}));
+        let network_v = Value::Object(network);
+        if network_v != prev {
+            self.find_public_ip();
+            if notify {
+                let _ = server().send_event("machine:net_state_changed", vec![network_v.clone()]);
+            }
+        }
+        let mut si = self.system_info.borrow_mut();
+        si.insert("network".into(), network_v);
+        si.insert("canbus".into(), Value::Object(canbus));
+    }
+
+    async fn ip_network(&self) -> Option<(Map<String, Value>, Map<String, Value>)> {
+        let shell: Rc<ShellCommandFactory> = server().lookup_component("shell_command")?;
         let resp = match self.addr_cmd.run_with_response(&shell, 2.0, 1, false, 1, None, None).await {
             Ok(r) => r,
             Err(e) => {
                 log::error!("Error processing network update\n{}", e);
-                return;
+                return None;
             }
         };
         let decoded: Vec<Value> = match serde_json::from_str(&resp) {
             Ok(v) => v,
             Err(e) => {
                 log::error!("Error processing network update\n{}", e);
-                return;
+                return None;
             }
         };
         let mut network = Map::new();
@@ -1570,17 +1605,7 @@ impl Machine {
                 network.insert(ifname, json!({"mac_address": intf["address"], "ip_addresses": addrs}));
             }
         }
-        let prev = self.system_info.borrow().get("network").cloned().unwrap_or(json!({}));
-        let network_v = Value::Object(network);
-        if network_v != prev {
-            self.find_public_ip();
-            if notify {
-                let _ = server().send_event("machine:net_state_changed", vec![network_v.clone()]);
-            }
-        }
-        let mut si = self.system_info.borrow_mut();
-        si.insert("network".into(), network_v);
-        si.insert("canbus".into(), Value::Object(canbus));
+        Some((network, canbus))
     }
 
     pub async fn get_public_network(&self) -> Value {
@@ -1750,6 +1775,78 @@ impl Machine {
         }
         let _ = std::fs::write(&usb_ids_path, &resp.content);
     }
+}
+
+/// The pid file of an init script whose `status)` is only the usual
+/// `[ -f $PIDFILE ] && kill -0 $(cat $PIDFILE)` check
+fn sysv_status_pidfile(script: &str) -> Option<PathBuf> {
+    let pidfile = script.lines().find_map(|l| l.trim().strip_prefix("PIDFILE="))?.trim_matches('"').to_string();
+    if !pidfile.starts_with('/') || pidfile.contains('$') {
+        return None;
+    }
+    let status = script.split_once("status)")?.1;
+    let status = status.split(";;").next()?;
+    let only_pid_check = status.contains("kill -0")
+        && status.lines().filter(|l| l.contains("kill -0")).all(|l| l.contains("PIDFILE") || l.contains(&pidfile));
+    only_pid_check.then(|| PathBuf::from(pidfile))
+}
+
+/// The interfaces `ip -json -det address` reports: up, ethernet type, with
+/// addresses (getifaddrs order, as ip's).  None when a CAN interface is up.
+fn native_network() -> Option<Map<String, Value>> {
+    let sys = |ifname: &str, f: &str| std::fs::read_to_string(format!("/sys/class/net/{}/{}", ifname, f)).ok().map(|s| s.trim().to_string());
+    let mut ifaces: Vec<(i64, String)> = std::fs::read_dir("/sys/class/net")
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| sys(n, "operstate").as_deref() == Some("up"))
+        .map(|n| (sys(&n, "ifindex").and_then(|i| i.parse().ok()).unwrap_or(0), n))
+        .collect();
+    ifaces.sort();
+    let mut addrs: IndexMap<String, Vec<Value>> = IndexMap::new();
+    unsafe {
+        let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut head) != 0 {
+            return None;
+        }
+        let mut cur = head;
+        while !cur.is_null() {
+            let ifa = &*cur;
+            cur = ifa.ifa_next;
+            if ifa.ifa_addr.is_null() {
+                continue;
+            }
+            let name = std::ffi::CStr::from_ptr(ifa.ifa_name).to_string_lossy().to_string();
+            let entry = match (*ifa.ifa_addr).sa_family as i32 {
+                libc::AF_INET => {
+                    let a = std::net::Ipv4Addr::from(u32::from_be((*(ifa.ifa_addr as *const libc::sockaddr_in)).sin_addr.s_addr));
+                    json!({"family": "ipv4", "address": a.to_string(), "is_link_local": a.is_link_local()})
+                }
+                libc::AF_INET6 => {
+                    let a = std::net::Ipv6Addr::from((*(ifa.ifa_addr as *const libc::sockaddr_in6)).sin6_addr.s6_addr);
+                    json!({"family": "ipv6", "address": a.to_string(), "is_link_local": a.segments()[0] & 0xffc0 == 0xfe80})
+                }
+                _ => continue,
+            };
+            addrs.entry(name).or_default().push(entry);
+        }
+        libc::freeifaddrs(head);
+    }
+    let mut network = Map::new();
+    for (_, ifname) in ifaces {
+        match sys(&ifname, "type").as_deref() {
+            Some("280") => return None,
+            Some("1") => {}
+            _ => continue,
+        }
+        let ips = addrs.shift_remove(&ifname).unwrap_or_default();
+        let mac = sys(&ifname, "address");
+        if ips.is_empty() || mac.is_none() {
+            continue;
+        }
+        network.insert(ifname, json!({"mac_address": mac, "ip_addresses": ips}));
+    }
+    Some(network)
 }
 
 fn capitalize(s: &str) -> String {
@@ -2470,4 +2567,20 @@ fn check_path_bare(path: &Path) -> bool {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<Machine>, crate::confighelper::ConfigError> {
     Machine::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sysv_status_pidfile_detection() {
+        let klipper = "PIDFILE=\"/var/run/klipper.pid\"\ncase \"$1\" in\n    status)\n        if [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null; then\n            echo running\n        else\n            exit 1\n        fi\n        ;;\nesac\n";
+        assert_eq!(sysv_status_pidfile(klipper), Some(PathBuf::from("/var/run/klipper.pid")));
+        let gui = "PIDFILE=/var/run/gui.pid\n    status)\n        if [ -f \"/var/run/gui.pid\" ] && kill -0 \"$(cat \"/var/run/gui.pid\")\" 2>/dev/null; then\n        fi\n        ;;\n";
+        assert_eq!(sysv_status_pidfile(gui), Some(PathBuf::from("/var/run/gui.pid")));
+        let gpio = "PIDFILE=/var/run/x.pid\n    status)\n        gpio_value=$(cat /sys/class/gpio/gpio1/value)\n        ;;\n";
+        assert_eq!(sysv_status_pidfile(gpio), None);
+        assert_eq!(sysv_status_pidfile("PIDFILE=$RUN/x.pid\nstatus)\nkill -0 $(cat $PIDFILE)\n;;"), None);
+    }
 }

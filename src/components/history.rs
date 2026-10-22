@@ -888,7 +888,8 @@ impl History {
 
     async fn finish_job(&self, status: &str, pstats: Map<String, Value>) {
         let _g = self.request_lock.lock().await;
-        let id = match (self.current_job.borrow().is_some(), self.current_job_id.get()) {
+        let has_job = self.current_job.borrow().is_some();
+        let id = match (has_job, self.current_job_id.get()) {
             (true, Some(id)) => id,
             _ => {
                 self.reset_current_job();

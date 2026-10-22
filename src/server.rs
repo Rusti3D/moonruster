@@ -542,21 +542,24 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
     /// handlers complete.  The future may be dropped without awaiting.
     pub fn send_event(&self, event: &str, args: Vec<Value>) -> impl std::future::Future<Output = ()> {
         let handlers: Vec<EventCallback> = self.events.borrow().get(event).cloned().unwrap_or_default();
-        let event = event.to_string();
-        let handle = spawn(async move {
-            let mut futs = Vec::new();
-            for h in handlers {
-                if let Some(f) = h(args.clone()) {
-                    futs.push(f);
+        // nothing to schedule for an event without handlers
+        let handle = (!handlers.is_empty()).then(|| {
+            spawn(async move {
+                let mut futs = Vec::new();
+                for h in handlers {
+                    if let Some(f) = h(args.clone()) {
+                        futs.push(f);
+                    }
                 }
-            }
-            if !futs.is_empty() {
-                futures::future::join_all(futs).await;
-            }
-            let _ = event;
+                if !futs.is_empty() {
+                    futures::future::join_all(futs).await;
+                }
+            })
         });
         async move {
-            let _ = handle.await;
+            if let Some(h) = handle {
+                let _ = h.await;
+            }
         }
     }
 

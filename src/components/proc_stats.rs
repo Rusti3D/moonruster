@@ -7,7 +7,6 @@ use crate::server::{server, spawn, Component};
 use crate::utils::float_value;
 use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
-use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -16,7 +15,7 @@ use std::rc::Rc;
 
 const VC_GEN_CMD_FILE: &str = "/usr/bin/vcgencmd";
 const VCIO_PATH: &str = "/dev/vcio";
-const STATM_FILE_PATH: &str = "/proc/self/smaps_rollup";
+const STATM_FILE_PATH: &str = "/proc/self/statm";
 const NET_DEV_PATH: &str = "/proc/net/dev";
 const TEMPERATURE_PATH: &str = "/sys/class/thermal/thermal_zone0/temp";
 const HWMON_ROOT_PATH: &str = "/sys/class/hwmon/";
@@ -45,6 +44,10 @@ fn process_time() -> f64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
     ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9
+}
+
+fn page_size_kb() -> i64 {
+    (unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as i64 / 1024).max(1)
 }
 
 fn boot_time() -> f64 {
@@ -338,14 +341,14 @@ impl ProcStats {
         }
     }
 
+    /// Rss from /proc/self/statm: the same counters as smaps_rollup's Rss
+    /// without the kernel walking every mapping each second
     fn get_memory_usage() -> (Value, Value) {
-        let data = match std::fs::read_to_string(STATM_FILE_PATH) {
-            Ok(d) => d,
-            Err(_) => return (Value::Null, Value::Null),
-        };
-        let re = Regex::new(r"Rss:\s+(\d+)\s+(\w+)").unwrap();
-        match re.captures(&data) {
-            Some(c) => (json!(c[1].parse::<i64>().unwrap_or(0)), json!(c[2].to_string())),
+        let resident = std::fs::read_to_string(STATM_FILE_PATH)
+            .ok()
+            .and_then(|d| d.split_whitespace().nth(1).and_then(|r| r.parse::<i64>().ok()));
+        match resident {
+            Some(pages) => (json!(pages * page_size_kb()), json!("kB")),
             None => (Value::Null, Value::Null),
         }
     }
@@ -363,14 +366,23 @@ impl ProcStats {
             Ok(d) => d,
             Err(_) => return out,
         };
-        let re = Regex::new(r"(\w+):(.+)").unwrap();
-        for c in re.captures_iter(&data) {
-            let parts: Vec<i64> = c[2].split_whitespace().map(|p| p.parse().unwrap_or(0)).collect();
+        // re.findall(r"(\w+):(.+)"), without a regex every second
+        for line in data.lines() {
+            let (pre, rest) = match line.split_once(':') {
+                Some(x) => x,
+                None => continue,
+            };
+            let start = pre.rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map(|i| i + 1).unwrap_or(0);
+            let name = &pre[start..];
+            if name.is_empty() || rest.is_empty() {
+                continue;
+            }
+            let parts: Vec<i64> = rest.split_whitespace().map(|p| p.parse().unwrap_or(0)).collect();
             if parts.len() < 12 {
                 return Map::new();
             }
             out.insert(
-                c[1].to_string(),
+                name.to_string(),
                 json!({
                     "rx_bytes": parts[0], "tx_bytes": parts[8],
                     "rx_packets": parts[1], "tx_packets": parts[9],
@@ -387,8 +399,13 @@ impl ProcStats {
             Ok(d) => d,
             Err(_) => return,
         };
-        let t = Regex::new(r"MemTotal:\s+(\d+)").unwrap().captures(&data).and_then(|c| c[1].parse::<i64>().ok());
-        let a = Regex::new(r"MemAvailable:\s+(\d+)").unwrap().captures(&data).and_then(|c| c[1].parse::<i64>().ok());
+        let field = |key: &str| {
+            data.lines()
+                .find_map(|l| l.strip_prefix(key))
+                .and_then(|v| v.split_whitespace().next())
+                .and_then(|v| v.parse::<i64>().ok())
+        };
+        let (t, a) = (field("MemTotal:"), field("MemAvailable:"));
         if let (Some(t), Some(a)) = (t, a) {
             let mut m = self.memory_usage.borrow_mut();
             m.insert("total".into(), json!(t));

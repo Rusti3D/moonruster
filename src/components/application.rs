@@ -95,9 +95,11 @@ fn clean_argument(s: &str) -> String {
 }
 
 pub fn split_host_and_port(netloc: &str) -> (String, Option<u16>) {
-    let re = Regex::new(r"^(.+):(\d+)$").unwrap();
-    if let Some(c) = re.captures(netloc) {
-        return (c[1].to_string(), c[2].parse().ok());
+    // r"^(.+):(\d+)$"
+    if let Some((host, port)) = netloc.rsplit_once(':') {
+        if !host.is_empty() && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) {
+            return (host.to_string(), port.parse().ok());
+        }
     }
     (netloc.to_string(), None)
 }
@@ -1891,4 +1893,20 @@ impl ApiTransport for HttpRpcTransport {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<MoonrakerApp>, crate::confighelper::ConfigError> {
     MoonrakerApp::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_host_and_port as s;
+
+    #[test]
+    fn host_and_port() {
+        assert_eq!(s("printer.local:7125"), ("printer.local".into(), Some(7125)));
+        assert_eq!(s("printer.local"), ("printer.local".into(), None));
+        assert_eq!(s("[::1]:80"), ("[::1]".into(), Some(80)));
+        assert_eq!(s("[::1]"), ("[::1]".into(), None));
+        assert_eq!(s("::1"), (":".into(), Some(1)));
+        assert_eq!(s("host:99999"), ("host".into(), None));
+        assert_eq!(s(":80"), (":80".into(), None));
+    }
 }

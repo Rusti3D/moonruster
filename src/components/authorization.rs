@@ -1013,7 +1013,8 @@ impl Authorization {
                 }
             }
         }
-        let ip_re = Regex::new(r"^https?://([^/:]+)").unwrap();
+        static IP_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"^https?://([^/:]+)").unwrap());
+        let ip_re = &*IP_RE;
         if let Some(c) = ip_re.captures(origin) {
             let ip = c.get(1).unwrap().as_str();
             if let Ok(addr) = ip.parse::<IpAddr>() {

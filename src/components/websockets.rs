@@ -208,11 +208,13 @@ impl RemoteConnection {
         if status.is_empty() {
             return;
         }
-        self.queue_message(&json!({
-            "jsonrpc": "2.0",
-            "method": "notify_status_update",
-            "params": [status, eventtime],
-        }));
+        // serialized directly, the hottest message during a print
+        let msg = format!(
+            r#"{{"jsonrpc":"2.0","method":"notify_status_update","params":[{},{}]}}"#,
+            serde_json::to_string(status).unwrap_or_default(),
+            serde_json::to_string(&eventtime).unwrap_or_default()
+        );
+        self.queue_message_str(msg);
     }
 
     pub async fn call_method_with_response(&self, method: &str, params: Option<Value>) -> Result<Value, ServerError> {
@@ -880,4 +882,22 @@ async fn run_bridge(
 
 pub fn load_component(config: &ConfigHelper) -> Rc<WebsocketManager> {
     WebsocketManager::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn status_update_format() {
+        let status = json!({"toolhead": {"position": [1.5, 2.0], "homed_axes": "xyz"}});
+        let et = 1234.5678f64;
+        let expected = json!({"jsonrpc": "2.0", "method": "notify_status_update", "params": [status, et]}).to_string();
+        let got = format!(
+            r#"{{"jsonrpc":"2.0","method":"notify_status_update","params":[{},{}]}}"#,
+            serde_json::to_string(status.as_object().unwrap()).unwrap(),
+            serde_json::to_string(&et).unwrap()
+        );
+        assert_eq!(got, expected);
+    }
 }

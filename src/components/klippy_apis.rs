@@ -256,12 +256,15 @@ impl KlippyApi {
     }
 
     pub fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {
-        for cb in self.subscription_callbacks.borrow().iter() {
-            let cb = cb.clone();
+        // deferred like moonraker's register_callback, one task for all
+        let cbs: Vec<SubCallback> = self.subscription_callbacks.borrow().clone();
+        if !cbs.is_empty() {
             let st = status.clone();
             spawn(async move {
-                if let Some(f) = cb(st, eventtime) {
-                    f.await;
+                for cb in cbs {
+                    if let Some(f) = cb(st.clone(), eventtime) {
+                        spawn(f);
+                    }
                 }
             });
         }

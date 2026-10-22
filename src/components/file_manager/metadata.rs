@@ -20,7 +20,7 @@ fn logi(msg: &str) {
 }
 
 fn re(p: &str) -> Regex {
-    Regex::new(p).unwrap_or_else(|_| Regex::new("$^").unwrap())
+    crate::utils::try_regex(p).unwrap_or_else(|| crate::utils::regex("$^"))
 }
 
 fn sub_float(p: &str) -> String {
@@ -338,7 +338,7 @@ impl Slicer {
 
     pub fn check_gcode_processor(&self, regex: &str, location: &str) -> Option<Map<String, Value>> {
         let data = if location == "header" { &self.header_data } else { &self.footer_data };
-        let r = Regex::new(&format!("(?m){}", regex)).ok()?;
+        let r = crate::utils::try_regex(&format!("(?m){}", regex))?;
         let c = r.captures(data)?;
         let mut m = Map::new();
         for name in r.capture_names().flatten() {

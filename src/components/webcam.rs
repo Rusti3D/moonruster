@@ -96,7 +96,7 @@ impl WebCam {
 
     /// ":8080/stream" -> default host on port 8080 (COSMOS patch to moonraker)
     fn expand_url(url: &str) -> String {
-        static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"^:(\d+)(/.*)?$").unwrap());
+        static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| crate::utils::regex(r"^:(\d+)(/.*)?$"));
         match RE.captures(url) {
             Some(c) => {
                 let host = DEFAULT_HOST.with(|h| h.borrow().clone());
@@ -119,7 +119,7 @@ impl WebCam {
             return Err(ServerError::bad("Empty URL Provided"));
         }
         let mut url = Self::expand_url(url);
-        if !Regex::new(r"^\w+://[^/]+").unwrap().is_match(&url) {
+        if !crate::utils::regex(r"^\w+://[^/]+").is_match(&url) {
             let host = DEFAULT_HOST.with(|h| h.borrow().clone());
             url = format!("{}/{}", host, url.trim_start_matches('/'));
         }
@@ -144,7 +144,7 @@ impl WebCam {
     }
 
     pub async fn convert_local(url: &str) -> Result<String, ServerError> {
-        let re = Regex::new(r"^(\w+)://([^/]+)(/.*)?").unwrap();
+        let re = crate::utils::regex(r"^(\w+)://([^/]+)(/.*)?");
         let c = match re.captures(url) {
             Some(c) => c,
             None => return Ok(url.to_string()),
@@ -153,9 +153,9 @@ impl WebCam {
         let addr_full = c[2].to_string();
         let fragment = c.get(3).map(|m| m.as_str().to_string()).unwrap_or_default();
         let am = if addr_full.starts_with('[') {
-            Regex::new(r"^\[(.+)\](:\d+)?").unwrap().captures(&addr_full).map(|c| (c[1].to_string(), c.get(2).map(|m| m.as_str().to_string())))
+            crate::utils::regex(r"^\[(.+)\](:\d+)?").captures(&addr_full).map(|c| (c[1].to_string(), c.get(2).map(|m| m.as_str().to_string())))
         } else {
-            Regex::new(r"^([^:]+)(:\d+)?").unwrap().captures(&addr_full).map(|c| (c[1].to_string(), c.get(2).map(|m| m.as_str().to_string())))
+            crate::utils::regex(r"^([^:]+)(:\d+)?").captures(&addr_full).map(|c| (c[1].to_string(), c.get(2).map(|m| m.as_str().to_string())))
         };
         let (mut addr, port) = match am {
             Some(x) => x,

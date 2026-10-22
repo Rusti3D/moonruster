@@ -146,10 +146,13 @@ impl KlippyConnection {
         let k = Rc::downgrade(&kc);
         kc.remote_methods.borrow_mut().insert(
             "process_status_update".into(),
-            remote_method(move |p| {
+            remote_method(move |mut p| {
                 if let Some(kc) = k.upgrade() {
                     let eventtime = p.get("eventtime").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let status = p.get("status").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+                    let status = match p.remove("status") {
+                        Some(Value::Object(s)) => s,
+                        _ => Map::new(),
+                    };
                     kc.process_status_update(eventtime, &status);
                 }
             }),
@@ -443,8 +446,14 @@ impl KlippyConnection {
 
     async fn read_stream(self: Rc<Self>, read_half: tokio::net::unix::OwnedReadHalf) {
         let mut reader = tokio::io::BufReader::with_capacity(64 * 1024, read_half);
+        let mut buf = Vec::new();
         loop {
-            let mut buf = Vec::new();
+            // reused, but a large response (configfile) doesn't stay allocated
+            if buf.capacity() > 256 * 1024 {
+                buf = Vec::new();
+            } else {
+                buf.clear();
+            }
             match reader.read_until(0x03, &mut buf).await {
                 Ok(0) => break,
                 Ok(_) => {
@@ -686,18 +695,20 @@ impl KlippyConnection {
         }
     }
 
-    fn process_command(self: &Rc<Self>, cmd: Value) {
+    fn process_command(self: &Rc<Self>, mut cmd: Value) {
         if let Some(method) = cmd.get("method").and_then(|m| m.as_str()) {
             let cb = self.remote_methods.borrow().get(method).cloned();
             match cb {
                 Some(cb) => {
-                    let params = cmd.get("params").and_then(|p| p.as_object()).cloned().unwrap_or_default();
-                    let mname = method.to_string();
+                    // the message is owned, so params move instead of being copied
+                    let params = match cmd.get_mut("params").map(Value::take) {
+                        Some(Value::Object(p)) => p,
+                        _ => Map::new(),
+                    };
                     spawn(async move {
                         if let Some(f) = cb(params) {
                             f.await;
                         }
-                        let _ = mname;
                     });
                 }
                 None => log::info!("Unknown method received: {}", method),
@@ -748,10 +759,18 @@ impl KlippyConnection {
         {
             let mut cache = self.subscription_cache.borrow_mut();
             for (field, item) in status {
-                let entry = cache.entry(field.clone()).or_insert_with(|| json!({}));
-                if let (Some(e), Some(i)) = (entry.as_object_mut(), item.as_object()) {
+                if !cache.contains_key(field) {
+                    cache.insert(field.clone(), json!({}));
+                }
+                if let (Some(e), Some(i)) = (cache.get_mut(field).and_then(|e| e.as_object_mut()), item.as_object()) {
                     for (k, v) in i {
-                        e.insert(k.clone(), v.clone());
+                        // existing keys are updated in place, no key allocation
+                        match e.get_mut(k) {
+                            Some(slot) => *slot = v.clone(),
+                            None => {
+                                e.insert(k.clone(), v.clone());
+                            }
+                        }
                     }
                 }
             }

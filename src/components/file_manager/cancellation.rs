@@ -105,7 +105,7 @@ fn header(out: &mut String, count: usize) {
 
 /// re.sub(r"\W+", "_", id).strip("_")
 fn clean_id(id: &str) -> String {
-    let re = regex::Regex::new(r"\W+").unwrap();
+    let re = crate::utils::regex(r"\W+");
     re.replace_all(id, "_").trim_matches('_').to_string()
 }
 

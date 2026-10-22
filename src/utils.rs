@@ -413,3 +413,24 @@ pub fn urlencode(pairs: &[(&str, String)]) -> String {
         .collect::<Vec<_>>()
         .join("&")
 }
+
+thread_local! {
+    static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, Option<regex::Regex>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Compiled once per pattern (per thread) instead of on every call
+pub fn try_regex(pattern: &str) -> Option<regex::Regex> {
+    REGEX_CACHE.with(|c| {
+        if let Some(r) = c.borrow().get(pattern) {
+            return r.clone();
+        }
+        let r = regex::Regex::new(pattern).ok();
+        c.borrow_mut().insert(pattern.to_string(), r.clone());
+        r
+    })
+}
+
+pub fn regex(pattern: &str) -> regex::Regex {
+    try_regex(pattern).expect("invalid regex")
+}
