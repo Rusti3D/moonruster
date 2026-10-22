@@ -40,8 +40,17 @@ LDAP 9/9 (`ldap_test.sh`), `preprocess_cancellation` ported to Rust
 (`src/components/file_manager/cancellation.rs`), byte-identical on 6 files (`ppc_test.sh`).
 Apprise is now the only (optional) Python dependency.
 
-1. **Test the installer** on a real or throwaway Debian host with an existing Moonraker
-   (KIAUH install): swap, check Mainsail/Fluidd, revert with `-r`, check history/settings survive.
+Printer installs need no build on the printer: `tools/cross_build.sh` (cargo-zigbuild) makes
+static musl binaries for aarch64, armv7, armv6 and x86_64 in `dist/` (~17 MB each), and
+`scripts/remote-install.sh user@host` copies the right one plus `install.sh` over SSH and swaps
+the service. `.github/workflows/release.yml` builds the binaries for `v*` tags (not run yet, no
+release published). The aarch64 binary passed difftest/ext/ppc under qemu-user
+(`MOONRUSTER_BIN=dist/... tools/run_all.sh ...`); only qemu artifacts differ (CPU info, PolicyKit
+start-time check).
+
+1. **Test the installer** (`scripts/remote-install.sh`) against a real or throwaway Debian host with
+   an existing Moonraker (KIAUH install): swap, check Mainsail/Fluidd, revert with `-r`, check
+   history/settings survive. Then tag `v0.1.0` to publish release binaries.
 2. **First real printer test** (ideally a spare printer): Mainsail/Fluidd, uploads from a slicer,
    printing, update manager, webcam, power devices.
 3. **Untestable here, needs hardware**: GPIO, buttons, RF/GPIO power, TD-1, WLED serial,

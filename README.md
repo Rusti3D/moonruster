@@ -36,15 +36,16 @@ log an error and everything else runs normally.
 
 ## Install
 
-See [docs/INSTALL.md](docs/INSTALL.md). Short version, on the printer host:
+See [docs/INSTALL.md](docs/INSTALL.md). Nothing is built on the printer: from a PC, with the
+repo checked out,
 
 ```bash
-git clone https://github.com/shawn-makes-stuff/moonruster.git
-cd moonruster
-cargo build --release
-./scripts/install.sh          # swaps an existing moonraker.service over
-./scripts/install.sh -r       # goes back to Moonraker
+scripts/remote-install.sh pi@printer.local       # swaps an existing moonraker.service over
+scripts/remote-install.sh pi@printer.local -r    # goes back to Moonraker
 ```
+
+copies a static binary for the printer's architecture (from `dist/`, built with
+`tools/cross_build.sh`, or the latest release) and swaps the service over SSH.
 
 ## Command line
 

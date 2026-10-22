@@ -1,0 +1,27 @@
+# Builds static printer binaries and attaches them to a GitHub release
+# when a version tag (v*) is pushed.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup update stable
+          rustup target add aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf arm-unknown-linux-musleabihf x86_64-unknown-linux-musl
+          pip install ziglang cargo-zigbuild
+      - name: Build
+        run: bash tools/cross_build.sh
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/moonruster-linux-*

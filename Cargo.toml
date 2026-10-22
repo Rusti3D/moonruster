@@ -60,3 +60,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 rustls-native-certs = "0.8"
 mdns-sd = "0.21"
 socket2 = { version = "0.6", features = ["all"] }
+
+[profile.release]
+# small binaries for printer hosts with little storage
+strip = true
+lto = true
+codegen-units = 1

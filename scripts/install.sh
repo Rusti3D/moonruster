@@ -8,6 +8,9 @@
 #
 # usage: install.sh [-b <binary>] [-s <service name>] [-d <data path>] [-r]
 #   -b  moonruster binary to install (default: target/release/moonruster)
+#
+# Usually run through scripts/remote-install.sh from a PC, which copies the
+# binary and this script to the printer.
 #   -s  service name (default: moonraker)
 #   -d  data path for a new install (default: ~/printer_data)
 #   -r  revert: restore the backed up Moonraker service file
@@ -54,9 +57,9 @@ if [ $REVERT = "y" ]; then
     exit 0
 fi
 
-if [ ! -x "$BINARY" ]; then
+if [ ! -f "$BINARY" ]; then
     echo "Binary not found: $BINARY"
-    echo "Build it first with: cargo build --release"
+    echo "Pass one with -b, or install from a PC with scripts/remote-install.sh"
     exit 1
 fi
 
