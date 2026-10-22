@@ -38,7 +38,7 @@ to websocket clients subscribed like Mainsail, 30 s per run:
 | --- | --- | --- |
 | Idle, CPU | 0.08 s | 0.03 s |
 | 20 status updates/s, 2 clients, CPU | 0.57 s | 0.22 s |
-| Own memory | 35 MB | 3.6 MB |
+| Own memory | 35 MB | 2.1 MB |
 
 With 200 G-code files and no Klipper:
 
@@ -50,7 +50,10 @@ With 200 G-code files and no Klipper:
 
 On a printer (Elegoo Centauri Carbon, armv7, 115 MB RAM, COSMOS firmware whose Moonraker already
 uses lazy imports) Moonraker's own memory was 22.0 MB (19.8 MB in RAM + 2.2 MB in zram swap) and
-Moonruster's 6.8 MB (5.6 + 1.2), leaving 10.3 MB more `MemAvailable` and half the zram use.
+Moonruster's 6.8 MB (5.6 + 1.2), leaving 10.3 MB more `MemAvailable` and half the zram use. That
+was before routes stopped being compiled as regexes, which cut Moonruster's own memory by about
+1.3 MB in the synthetic test. The real-world gap is about 3x rather than the 10x+ above: a real
+Klipper, file list, history and webcam add data on both sides, and COSMOS trims its Python.
 
 Reproduce the first table with `tools/bench.sh` (it starts `tools/mock_klippy.py` and
 `tools/ws_clients.py`, which needs `tornado`, e.g. from Moonraker's virtualenv):
