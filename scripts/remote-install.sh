@@ -1,6 +1,7 @@
 #!/bin/bash
 # Installs Moonruster on a printer over SSH, run from a PC.  Only the binary
-# and install.sh are copied to the printer (into /tmp); nothing is built there.
+# and install.sh (install-cosmos.sh on COSMOS printers) are copied to the
+# printer (into /tmp); nothing is built there.
 #
 # usage: remote-install.sh <user@host> [-b <binary>] [-s <service>] [-d <data path>] [-r]
 #   -b  binary to install (default: dist/moonruster-linux-<arch>, else the
@@ -37,7 +38,15 @@ CTL="/tmp/moonruster-ssh-$$"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=60)
 trap 'ssh "${SSH_OPTS[@]}" -O exit "$HOST" 2>/dev/null || true' EXIT
 
-ssh "${SSH_OPTS[@]}" "$HOST" "cat > /tmp/moonruster-install.sh" < "$SRCDIR/scripts/install.sh"
+# COSMOS: sysvinit moonraker service, BusyBox sh only
+INSTALLER=install.sh
+RUN_SHELL=bash
+if ssh "${SSH_OPTS[@]}" "$HOST" "[ -x /etc/init.d/moonraker ] && ! command -v systemctl >/dev/null"; then
+    echo "COSMOS printer detected"
+    INSTALLER=install-cosmos.sh
+    RUN_SHELL=sh
+fi
+ssh "${SSH_OPTS[@]}" "$HOST" "cat > /tmp/moonruster-install.sh" < "$SRCDIR/scripts/$INSTALLER"
 
 if [ $REVERT = "n" ]; then
     MACH=$(ssh "${SSH_OPTS[@]}" "$HOST" uname -m)
@@ -68,4 +77,4 @@ fi
 
 # -t: sudo may ask for the password on the printer
 REMOTE_ARGS=$(printf '%q ' "${ARGS[@]}")
-ssh "${SSH_OPTS[@]}" -t "$HOST" "bash /tmp/moonruster-install.sh $REMOTE_ARGS; rm -f /tmp/moonruster /tmp/moonruster-install.sh"
+ssh "${SSH_OPTS[@]}" -t "$HOST" "$RUN_SHELL /tmp/moonruster-install.sh $REMOTE_ARGS; rm -f /tmp/moonruster /tmp/moonruster-install.sh"

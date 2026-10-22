@@ -22,6 +22,7 @@ pub enum AppType {
     Zip,
     Python,
     Executable,
+    Swupdate,
 }
 
 impl AppType {
@@ -33,13 +34,14 @@ impl AppType {
             AppType::Zip => "zip",
             AppType::Python => "python",
             AppType::Executable => "executable",
+            AppType::Swupdate => "swupdate",
         }
     }
     pub fn from_string(s: &str) -> Option<AppType> {
         Self::all().into_iter().find(|t| t.name() == s.to_lowercase())
     }
     pub fn all() -> Vec<AppType> {
-        vec![AppType::None, AppType::Web, AppType::GitRepo, AppType::Zip, AppType::Python, AppType::Executable]
+        vec![AppType::None, AppType::Web, AppType::GitRepo, AppType::Zip, AppType::Python, AppType::Executable, AppType::Swupdate]
     }
     pub fn valid_types() -> Vec<AppType> {
         Self::all().into_iter().filter(|t| *t != AppType::None).collect()
@@ -54,6 +56,7 @@ impl AppType {
         match self {
             AppType::None => vec![],
             AppType::Web | AppType::Zip | AppType::Executable => vec![Channel::Stable, Channel::Beta],
+            AppType::Swupdate => vec![Channel::Stable, Channel::Dev],
             _ => vec![Channel::Stable, Channel::Beta, Channel::Dev],
         }
     }

@@ -44,6 +44,9 @@ scripts/remote-install.sh pi@printer.local       # swaps an existing moonraker.s
 scripts/remote-install.sh pi@printer.local -r    # goes back to Moonraker
 ```
 
+COSMOS printers (Elegoo Centauri Carbon) are detected and handled too, including COSMOS's
+Moonraker additions (sysvinit provider, built-in web client serving, SWUpdate firmware updates).
+
 copies a static binary for the printer's architecture (from `dist/`, built with
 `tools/cross_build.sh`, or the latest release) and swaps the service over SSH.
 
