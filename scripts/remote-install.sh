@@ -36,7 +36,7 @@ CTL="/tmp/moonruster-ssh-$$"
 SSH_OPTS=(-o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=60)
 trap 'ssh "${SSH_OPTS[@]}" -O exit "$HOST" 2>/dev/null || true' EXIT
 
-scp "${SSH_OPTS[@]}" -q "$SRCDIR/scripts/install.sh" "$HOST:/tmp/moonruster-install.sh"
+ssh "${SSH_OPTS[@]}" "$HOST" "cat > /tmp/moonruster-install.sh" < "$SRCDIR/scripts/install.sh"
 
 if [ $REVERT = "n" ]; then
     MACH=$(ssh "${SSH_OPTS[@]}" "$HOST" uname -m)
@@ -61,7 +61,7 @@ if [ $REVERT = "n" ]; then
         fi
     fi
     echo "Copying $BINARY to $HOST"
-    scp "${SSH_OPTS[@]}" -q "$BINARY" "$HOST:/tmp/moonruster"
+    ssh "${SSH_OPTS[@]}" "$HOST" "cat > /tmp/moonruster" < "$BINARY"
     ARGS+=(-b /tmp/moonruster)
 fi
 
