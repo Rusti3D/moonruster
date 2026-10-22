@@ -386,10 +386,11 @@ impl ApiDefinition {
             endpoint.to_string()
         };
         if transports.contains(TransportType::HTTP) {
-            let re = regex::Regex::new(r"^/([^/]+)").unwrap();
-            let ok = re
-                .captures(&http_path)
-                .map(|c| ENDPOINT_PREFIXES.contains(&c.get(1).unwrap().as_str()))
+            // r"^/([^/]+)"
+            let ok = http_path
+                .strip_prefix('/')
+                .and_then(|p| p.split('/').next())
+                .map(|seg| !seg.is_empty() && ENDPOINT_PREFIXES.contains(&seg))
                 .unwrap_or(false);
             if !ok {
                 let prefixes: Vec<String> = ENDPOINT_PREFIXES.iter().map(|p| format!("'/{} '", p)).collect();

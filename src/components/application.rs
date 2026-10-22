@@ -368,7 +368,8 @@ pub enum HandlerKind {
 
 struct Rule {
     pattern: String,
-    regex: Regex,
+    // None for plain paths (most routes), matched by string comparison
+    regex: Option<Regex>,
     kind: HandlerKind,
 }
 
@@ -547,6 +548,10 @@ impl MoonrakerApp {
 
     fn add_handler(&self, pattern: &str, kind: HandlerKind) {
         self.remove_handler(pattern);
+        if !pattern.contains(|c: char| "\\.+*?()[]{}|^$".contains(c)) {
+            self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), regex: None, kind });
+            return;
+        }
         let mut re_src = pattern.to_string();
         if !re_src.ends_with('$') {
             re_src.push('$');
@@ -558,7 +563,7 @@ impl MoonrakerApp {
                 return;
             }
         };
-        self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), regex, kind });
+        self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), regex: Some(regex), kind });
     }
 
     fn remove_handler(&self, pattern: &str) {
@@ -572,10 +577,17 @@ impl MoonrakerApp {
     fn find_handler(&self, path: &str) -> Option<RouteMatch> {
         let rules = self.rules.borrow();
         for rule in rules.iter() {
-            if let Some(caps) = rule.regex.captures(path) {
+            let regex = match &rule.regex {
+                Some(r) => r,
+                None if rule.pattern == path => {
+                    return Some(RouteMatch { kind: rule.kind.clone(), path_args: vec![], path_kwargs: vec![] });
+                }
+                None => continue,
+            };
+            if let Some(caps) = regex.captures(path) {
                 let mut path_args = Vec::new();
                 let mut path_kwargs = Vec::new();
-                let names: Vec<Option<&str>> = rule.regex.capture_names().collect();
+                let names: Vec<Option<&str>> = regex.capture_names().collect();
                 let has_named = names.iter().any(|n| n.is_some());
                 for (i, name) in names.iter().enumerate().skip(1) {
                     let val = caps.get(i).map(|m| utils::url_unescape(m.as_str()));
