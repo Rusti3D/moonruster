@@ -115,7 +115,10 @@ fn parse_args(argv: &[String]) -> Args {
             "-v" | "--verbose" => a.verbose = true,
             "-g" | "--debug" => a.debug = true,
             "-o" | "--asyncio-debug" => a.asyncio_debug = true,
+            // MOONRAKER_ARGS from existing service env files: "-m moonraker"
+            // or, on older installs, the path to moonraker.py
             "-m" | "moonraker" => {}
+            p if p.ends_with("moonraker.py") => {}
             other => {
                 eprintln!("moonruster: error: unrecognized arguments: {}", other);
                 std::process::exit(2);
