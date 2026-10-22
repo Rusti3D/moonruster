@@ -300,10 +300,6 @@ pub fn set_rollover_info(name: &str, item: &str) {
     }
 }
 
-pub fn file_logging_enabled() -> bool {
-    STATE.lock().ok().and_then(|g| g.as_ref().map(|s| s.file.is_some())).unwrap_or(false)
-}
-
 pub fn rollover_log() -> Result<(), ServerError> {
     let mut g = STATE.lock().map_err(|_| ServerError::new("Log lock poisoned", 500))?;
     match g.as_mut() {

@@ -116,20 +116,12 @@ impl ConfigHelper {
         self.source.config.borrow().has_section(section)
     }
 
-    pub fn contains(&self, section: &str) -> bool {
-        self.source.config.borrow().contains(section)
-    }
-
     pub fn has_option(&self, option: &str) -> bool {
         self.source.config.borrow().has_option(&self.section, option)
     }
 
     pub fn set_option(&self, option: &str, value: &str) -> CResult<()> {
         self.source.set_option(&self.section, option, value)
-    }
-
-    pub fn get_file(&self) -> Option<PathBuf> {
-        self.source.find_config_file(&self.section, None)
     }
 
     pub fn get_options(&self) -> IndexMap<String, String> {
@@ -382,10 +374,6 @@ impl ConfigHelper {
         self.get_option(&Self::parse_float, option, default, Some((&ex, bounds)), false, &|v| utils::float_value(*v))
     }
 
-    pub fn getfloat(&self, option: &str) -> CResult<f64> {
-        self.getfloat_b(option, None, Bounds::none())
-    }
-
     pub fn getfloat_or(&self, option: &str, default: f64) -> CResult<f64> {
         self.getfloat_b(option, Some(default), Bounds::none())
     }
@@ -411,10 +399,6 @@ impl ConfigHelper {
             "0" | "no" | "false" | "off" => Ok(false),
             _ => Err(FetchErr::Other(format!("Not a boolean: {}", raw))),
         }
-    }
-
-    pub fn getboolean(&self, option: &str) -> CResult<bool> {
-        self.get_option(&Self::parse_bool, option, None, None, false, &|v| Value::Bool(*v))
     }
 
     pub fn getboolean_or(&self, option: &str, default: bool) -> CResult<bool> {
@@ -536,10 +520,6 @@ impl ConfigHelper {
         v.as_array().map(|a| a.iter().map(crate::pyfmt::py_str).collect()).unwrap_or_default()
     }
 
-    pub fn getlist(&self, option: &str) -> CResult<Vec<String>> {
-        Ok(Self::to_str_vec(self.getlists(option, None, &Self::str_conv, &[Some("\n")], None)?))
-    }
-
     pub fn getlist_sep(&self, option: &str, sep: Option<&str>, count: Option<usize>) -> CResult<Vec<String>> {
         Ok(Self::to_str_vec(self.getlists(option, None, &Self::str_conv, &[sep], Some(&[count]))?))
     }
@@ -570,21 +550,6 @@ impl ConfigHelper {
             return Ok(None);
         }
         Ok(Some(v.as_array().unwrap().iter().filter_map(|x| x.as_i64()).collect()))
-    }
-
-    pub fn getfloatlist_opt(&self, option: &str, default: Option<Vec<f64>>, sep: Option<&str>, count: Option<usize>) -> CResult<Option<Vec<f64>>> {
-        let d = match &default {
-            Some(v) => Value::Array(v.iter().map(|x| utils::float_value(*x)).collect()),
-            None => Value::Null,
-        };
-        let conv = |s: &str| {
-            crate::pyfmt::py_float(s).map(utils::float_value).ok_or_else(|| format!("could not convert string to float: '{}'", s))
-        };
-        let v = self.getlists(option, Some(d), &conv, &[sep], Some(&[count]))?;
-        if v.is_null() {
-            return Ok(None);
-        }
-        Ok(Some(v.as_array().unwrap().iter().filter_map(|x| x.as_f64()).collect()))
     }
 
     // ***** Dict *****
@@ -700,17 +665,8 @@ impl ConfigHelper {
         Ok(utils::resolve_path(&utils::expand_user(&strpath)))
     }
 
-    pub fn getpath(&self, option: &str) -> CResult<PathBuf> {
-        let t = self.gettemplate(option, false)?;
-        self.render_path(&t)
-    }
-
     pub fn getpath_or(&self, option: &str, default: &Path) -> CResult<PathBuf> {
         self.getpath_opt_dep(option, Some(default), false).map(|p| p.unwrap())
-    }
-
-    pub fn getpath_opt(&self, option: &str) -> CResult<Option<PathBuf>> {
-        self.getpath_opt_dep(option, None, false)
     }
 
     pub fn getpath_opt_dep(&self, option: &str, default: Option<&Path>, deprecate: bool) -> CResult<Option<PathBuf>> {
@@ -770,14 +726,6 @@ impl ConfigHelper {
         }
         let first = cp.sections().first().cloned().unwrap_or_default();
         let source = Rc::new(ConfigSource::new_dict(cp));
-        Ok(ConfigHelper::new(source, &first, Rc::new(RefCell::new(IndexMap::new())), None))
-    }
-
-    pub fn read_supplemental_config(&self, file_name: &str) -> CResult<ConfigHelper> {
-        let fpath = utils::resolve_path(&utils::expand_user(file_name));
-        let source = Rc::new(ConfigSource::new_file());
-        source.read_file(&fpath)?;
-        let first = source.config.borrow().sections().first().cloned().unwrap_or_default();
         Ok(ConfigHelper::new(source, &first, Rc::new(RefCell::new(IndexMap::new())), None))
     }
 
@@ -984,10 +932,6 @@ impl ConfigSource {
         s
     }
 
-    pub fn is_in_transaction(&self) -> bool {
-        !self.updates_pending.borrow().is_empty() || self.save_lock.get()
-    }
-
     pub fn backup_source(&self) {
         *self.backup.borrow_mut() = Some(SourceBackup {
             raw_data: self.raw_config_data.borrow().clone(),
@@ -1152,90 +1096,6 @@ impl ConfigSource {
         res
     }
 
-    pub fn add_section(&self, section: &str) -> CResult<()> {
-        if !self.is_file {
-            return self.config.borrow_mut().add_section(section).map_err(|e| ConfigError(e.to_string()));
-        }
-        self.acquire_save_lock()?;
-        let res = (|| {
-            if self.file_section_map.borrow().contains_key(section) {
-                return Ok(());
-            }
-            let mut buf = splitlines(&self.raw_config_data.borrow()[0]);
-            if buf.last().map(|l| !l.trim().is_empty()).unwrap_or(false) {
-                buf.push(String::new());
-            }
-            buf.push(format!("[{}]", section));
-            buf.push(String::new());
-            let updated = buf.join("\n");
-            let mut test = ConfigParser::new();
-            if test.read_string(&updated, "<string>").is_err() || !test.has_section(section) {
-                return Err(ConfigError(format!(
-                    "Failed to add section [{}], file: {}",
-                    section,
-                    self.files.borrow()[0].display()
-                )));
-            }
-            self.updates_pending.borrow_mut().insert(0);
-            self.file_section_map.borrow_mut().insert(section.to_string(), vec![0]);
-            self.raw_config_data.borrow_mut()[0] = updated;
-            let _ = self.config.borrow_mut().add_section(section);
-            Ok(())
-        })();
-        self.save_lock.set(false);
-        res
-    }
-
-    pub fn remove_section(&self, section: &str) -> CResult<()> {
-        if !self.is_file {
-            self.config.borrow_mut().remove_section(section);
-            return Ok(());
-        }
-        self.acquire_save_lock()?;
-        let res = (|| {
-            let indices = match self.file_section_map.borrow().get(section) {
-                None => return Ok(()),
-                Some(v) => v.clone(),
-            };
-            let mut pending = Vec::new();
-            for idx in indices {
-                let mut buf = splitlines(&self.raw_config_data.borrow()[idx]);
-                let err = || {
-                    ConfigError(format!(
-                        "Failed to remove section [{}], file: {}",
-                        section,
-                        self.files.borrow()[0].display()
-                    ))
-                };
-                let si = self.find_section_info(section, &buf).ok_or_else(err)?;
-                let start = si.start;
-                let mut end = si.end;
-                if end < buf.len() && start > 0 && buf[start - 1].trim().is_empty() && buf[end].trim().is_empty() {
-                    end += 1;
-                }
-                let tail: Vec<String> = buf[end..].to_vec();
-                buf.truncate(start);
-                buf.extend(tail);
-                buf.push(String::new());
-                let updated = buf.join("\n");
-                let mut test = ConfigParser::new();
-                if test.read_string(&updated, "<string>").is_err() || test.has_section(section) {
-                    return Err(err());
-                }
-                pending.push((idx, updated));
-            }
-            for (idx, data) in pending {
-                self.updates_pending.borrow_mut().insert(idx);
-                self.raw_config_data.borrow_mut()[idx] = data;
-            }
-            self.file_section_map.borrow_mut().shift_remove(section);
-            self.config.borrow_mut().remove_section(section);
-            Ok(())
-        })();
-        self.save_lock.set(false);
-        res
-    }
-
     pub fn save(&self) -> bool {
         *self.backup.borrow_mut() = None;
         let pending: Vec<usize> = self.updates_pending.borrow().iter().cloned().collect();
@@ -1268,18 +1128,6 @@ impl ConfigSource {
         }
         self.save_lock.set(false);
         Ok(())
-    }
-
-    pub fn revert(&self) -> bool {
-        if self.updates_pending.borrow().is_empty() {
-            return false;
-        }
-        *self.backup.borrow_mut() = None;
-        let entry = self.files.borrow()[0].clone();
-        if let Err(e) = self.read_file(&entry) {
-            log::error!("Failed to revert configuration: {}", e);
-        }
-        true
     }
 
     pub fn write_config(&self, dest_folder: &Path) -> std::io::Result<()> {
@@ -1365,14 +1213,6 @@ impl ConfigSource {
             }
         }
         out
-    }
-
-    pub fn find_config_file(&self, section: &str, option: Option<&str>) -> Option<PathBuf> {
-        let idx = match option {
-            Some(o) => self.file_option_map.borrow().get(&(section.to_string(), o.to_string())).map(|v| v[0]),
-            None => self.file_section_map.borrow().get(section).map(|v| v[0]),
-        }?;
-        self.files.borrow().get(idx).cloned()
     }
 
     fn write_buffer(&self, buffer: &[String], fpath: &Path) -> CResult<()> {

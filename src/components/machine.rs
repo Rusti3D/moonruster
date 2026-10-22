@@ -1224,28 +1224,12 @@ impl Machine {
         self.moonraker_service_info.borrow().clone()
     }
 
-    pub async fn wait_for_init(&self, timeout: Option<f64>) {
-        if self.init_done.get() {
-            return;
-        }
-        match timeout {
-            Some(t) => {
-                let _ = tokio::time::timeout(std::time::Duration::from_secs_f64(t), self.init_notify.notified()).await;
-            }
-            None => self.init_notify.notified().await,
-        }
-    }
-
     pub async fn validate_installation(self: &Rc<Self>) -> bool {
         self.validator.perform_validation().await
     }
 
     pub async fn extract_service_info(&self, name: &str, pid: i64) -> Value {
         self.provider.extract_service_info(name, pid, None, false).await
-    }
-
-    pub async fn extract_service_info_ext(&self, name: &str, pid: i64, props: Option<Vec<String>>, raw: bool) -> Value {
-        self.provider.extract_service_info(name, pid, props, raw).await
     }
 
     pub fn get_system_provider(&self) -> Rc<Provider> {
@@ -2091,7 +2075,7 @@ impl InstallValidator {
             }
             Err(e) => Err(e),
         };
-        let mut need_restart = false;
+        let need_restart;
         match res {
             Err(ValidationResult::Validation(msg)) => {
                 srv.add_warning(&msg, None, true);

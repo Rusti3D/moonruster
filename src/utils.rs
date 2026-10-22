@@ -272,30 +272,6 @@ pub fn path_glob(base: &Path, pattern: &str) -> Vec<PathBuf> {
     }
 }
 
-pub fn pretty_print_time(mut seconds: i64) -> String {
-    if seconds == 0 {
-        return "0 Seconds".into();
-    }
-    let days = seconds / 86400;
-    seconds %= 86400;
-    let hours = seconds / 3600;
-    seconds %= 3600;
-    let minutes = seconds / 60;
-    let secs = seconds % 60;
-    let mut out = Vec::new();
-    for (ident, val) in [("Day", days), ("Hour", hours), ("Minute", minutes), ("Second", secs)] {
-        if val == 0 {
-            continue;
-        }
-        if val == 1 {
-            out.push(format!("{} {}", val, ident));
-        } else {
-            out.push(format!("{} {}s", val, ident));
-        }
-    }
-    out.join(", ")
-}
-
 pub fn parse_ip_address(addr: &str) -> Option<std::net::IpAddr> {
     if addr.is_empty() {
         return None;
@@ -346,25 +322,6 @@ pub fn get_unix_peer_credentials(fd: i32, name: &str) -> Option<(u32, u32, u32)>
         return None;
     }
     Some((cred.pid as u32, cred.uid, cred.gid))
-}
-
-/// Linux kernel version (major, minor)
-pub fn kernel_version() -> (i64, i64) {
-    let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
-    unsafe {
-        if libc::uname(&mut uts) != 0 {
-            return (0, 0);
-        }
-        let rel = std::ffi::CStr::from_ptr(uts.release.as_ptr()).to_string_lossy().to_string();
-        let parts: Vec<i64> = rel.split('.').take(2).filter_map(|p| {
-            let d: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
-            d.parse().ok()
-        }).collect();
-        if parts.len() == 2 {
-            return (parts[0], parts[1]);
-        }
-    }
-    (0, 0)
 }
 
 /// Strftime using the local timezone

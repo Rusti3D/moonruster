@@ -91,7 +91,7 @@ fn parse_args(argv: &[String]) -> Args {
             Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
             _ => (arg, None),
         };
-        let mut take = |i: &mut usize| -> String {
+        let take = |i: &mut usize| -> String {
             if let Some(v) = &inline {
                 return v.clone();
             }

@@ -167,9 +167,6 @@ pub enum JobEvent {
 }
 
 impl JobEvent {
-    pub fn finished(&self) -> bool {
-        (*self as i32) >= 5
-    }
     pub fn aborted(&self) -> bool {
         (*self as i32) >= 6
     }
@@ -517,18 +514,11 @@ impl WebRequest {
         WebRequest { endpoint: endpoint.to_string(), args, request_type, transport, ip_addr, current_user: user }
     }
 
-    pub fn internal(endpoint: &str, args: Args) -> Self {
-        Self::new(endpoint, args, RequestType::empty(), None, None, None)
-    }
-
     pub fn get_endpoint(&self) -> &str {
         &self.endpoint
     }
     pub fn get_request_type(&self) -> RequestType {
         self.request_type
-    }
-    pub fn get_action(&self) -> String {
-        self.request_type.name().unwrap_or("").to_string()
     }
     pub fn get_args(&self) -> &Args {
         &self.args
@@ -749,10 +739,6 @@ impl JsonRpc {
 
     pub fn get_method(&self, name: &str) -> Option<(RequestType, Rc<ApiDefinition>)> {
         self.methods.borrow().get(name).cloned()
-    }
-
-    pub fn remove_method(&self, name: &str) {
-        self.methods.borrow_mut().remove(name);
     }
 
     pub async fn dispatch(&self, data: &[u8], transport: Rc<dyn ApiTransport>) -> Option<String> {

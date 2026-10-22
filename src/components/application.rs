@@ -570,10 +570,6 @@ impl MoonrakerApp {
         self.rules.borrow_mut().retain(|r| r.pattern != pattern);
     }
 
-    pub fn has_rule(&self, pattern: &str) -> bool {
-        self.rules.borrow().iter().any(|r| r.pattern == pattern)
-    }
-
     fn find_handler(&self, path: &str) -> Option<RouteMatch> {
         let rules = self.rules.borrow();
         for rule in rules.iter() {
@@ -862,18 +858,6 @@ impl MoonrakerApp {
     pub fn register_websocket_handler(&self, pattern: &str, bridge: bool) {
         let kind = if bridge { HandlerKind::BridgeSocket } else { HandlerKind::WebSocket };
         self.add_handler(&format!("{}{}", self.route_prefix, pattern), kind);
-    }
-
-    pub fn remove_endpoint(&self, endpoint: &str) {
-        let api_def = self.api_cache.borrow_mut().remove(endpoint);
-        if let Some(api_def) = api_def {
-            log::debug!("Removing Endpoint: {}", endpoint);
-            self.registered_base_handlers.borrow_mut().retain(|h| h != &api_def.http_path);
-            self.remove_handler(&api_def.http_path);
-            for m in &api_def.rpc_methods {
-                self.json_rpc.remove_method(m);
-            }
-        }
     }
 
     pub async fn load_template(&self, asset_name: &str) -> Result<Rc<crate::components::template::JinjaTemplate>, HttpError> {

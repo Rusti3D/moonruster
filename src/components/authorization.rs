@@ -10,7 +10,7 @@ use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use indexmap::IndexMap;
 use regex::Regex;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -766,10 +766,6 @@ impl Authorization {
             return Ok(self.users.borrow().get(API_USER).cloned());
         }
         Err(ServerError::new("Invalid API Key", 401))
-    }
-
-    pub fn is_api_key_enabled(&self) -> bool {
-        self.enable_api_key
     }
 
     fn load_private_key(secret: &str) -> Result<SigningKey, ServerError> {

@@ -83,7 +83,6 @@ impl HttpResponse {
 #[derive(Clone)]
 pub enum Body {
     None,
-    Bytes(Vec<u8>),
     Text(String),
     Json(Value),
 }
@@ -143,31 +142,12 @@ impl HttpClient {
         })
     }
 
-    pub fn register_cached_url(&self, url: &str, etag: Option<&str>, last_modified: Option<&str>) -> Result<(), ServerError> {
-        let mut headers = IndexMap::new();
-        if let Some(e) = etag {
-            headers.insert("etag".to_string(), e.to_string());
-        }
-        if let Some(l) = last_modified {
-            headers.insert("last-modified".to_string(), l.to_string());
-        }
-        if headers.is_empty() {
-            return Err(ServerError::bad("Either an Etag or Last Modified Date must be specified"));
-        }
-        self.response_cache.borrow_mut().insert(
-            url.to_string(),
-            HttpResponse { url: url.into(), final_url: url.into(), status_code: 200, content: Vec::new(), headers, error: None },
-        );
-        Ok(())
-    }
-
     pub async fn request(&self, method: &str, url: &str, body: Body, headers: &[(String, String)], opts: RequestOpts) -> HttpResponse {
         let cache_key = url.split('?').next().unwrap_or(url).to_string();
         let method = method.to_uppercase();
         let mut req_headers: Vec<(String, String)> = Vec::new();
         let body_bytes: Option<Vec<u8>> = match body {
             Body::None => None,
-            Body::Bytes(b) => Some(b),
             Body::Text(t) => Some(t.into_bytes()),
             Body::Json(v) => {
                 req_headers.push(("Content-Type".into(), "application/json".into()));
@@ -315,10 +295,6 @@ impl HttpClient {
         self.request("POST", url, body, headers, opts).await
     }
 
-    pub async fn delete(&self, url: &str, headers: &[(String, String)], opts: RequestOpts) -> HttpResponse {
-        self.request("DELETE", url, Body::None, headers, opts).await
-    }
-
     pub async fn github_api_request(&self, resource: &str, attempts: usize, retry_pause_time: f64) -> Result<HttpResponse, ServerError> {
         let url = format!("{}{}", GITHUB_PREFIX, resource.trim_matches('/'));
         if let (Some(reset), Some(0)) = (self.gh_limit_reset_time.get(), self.gh_limit_remaining.get()) {
@@ -348,15 +324,6 @@ impl HttpClient {
             "github_requests_remaining": self.gh_limit_remaining.get(),
             "github_limit_reset_time": self.gh_limit_reset_time.get(),
         })
-    }
-
-    pub async fn get_file(&self, url: &str, content_type: &str, request_timeout: f64, attempts: usize) -> Result<Vec<u8>, ServerError> {
-        let headers = vec![("Accept".to_string(), content_type.to_string())];
-        let resp = self
-            .get_opts(url, &headers, RequestOpts { request_timeout, attempts, enable_cache: false, ..Default::default() })
-            .await;
-        resp.raise_for_status(None)?;
-        Ok(resp.content)
     }
 
     pub async fn download_file(
@@ -474,72 +441,6 @@ fn title_case(h: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("-")
-}
-
-/// HttpRequestWrapper used by components that repeatedly hit the same endpoint
-pub struct HttpRequestWrapper {
-    client: Rc<HttpClient>,
-    default_method: String,
-    default_url: String,
-    method: RefCell<String>,
-    url: RefCell<String>,
-    body: RefCell<Body>,
-    headers: RefCell<Vec<(String, String)>>,
-    pub opts: RefCell<RequestOpts>,
-    default_opts: RequestOpts,
-    last_response: RefCell<Option<HttpResponse>>,
-}
-
-impl HttpRequestWrapper {
-    pub fn new(client: Rc<HttpClient>, default_url: &str, opts: RequestOpts) -> Self {
-        HttpRequestWrapper {
-            client,
-            default_method: "GET".into(),
-            default_url: default_url.into(),
-            method: RefCell::new("GET".into()),
-            url: RefCell::new(default_url.into()),
-            body: RefCell::new(Body::None),
-            headers: RefCell::new(Vec::new()),
-            opts: RefCell::new(opts.clone()),
-            default_opts: opts,
-            last_response: RefCell::new(None),
-        }
-    }
-    pub async fn send(&self) -> HttpResponse {
-        let resp = self
-            .client
-            .request(&self.method.borrow().clone(), &self.url.borrow().clone(), self.body.borrow().clone(), &self.headers.borrow().clone(), self.opts.borrow().clone())
-            .await;
-        *self.last_response.borrow_mut() = Some(resp.clone());
-        resp
-    }
-    pub fn set_method(&self, m: &str) {
-        *self.method.borrow_mut() = m.into();
-    }
-    pub fn set_url(&self, u: &str) {
-        *self.url.borrow_mut() = u.into();
-    }
-    pub fn set_body(&self, b: Body) {
-        *self.body.borrow_mut() = b;
-    }
-    pub fn add_header(&self, name: &str, value: &str) {
-        let mut h = self.headers.borrow_mut();
-        h.retain(|(k, _)| k != name);
-        h.push((name.into(), value.into()));
-    }
-    pub fn set_headers(&self, headers: Vec<(String, String)>) {
-        *self.headers.borrow_mut() = headers;
-    }
-    pub fn reset(&self) {
-        *self.method.borrow_mut() = self.default_method.clone();
-        *self.url.borrow_mut() = self.default_url.clone();
-        *self.body.borrow_mut() = Body::None;
-        self.headers.borrow_mut().clear();
-        *self.opts.borrow_mut() = self.default_opts.clone();
-    }
-    pub fn last_response(&self) -> Option<HttpResponse> {
-        self.last_response.borrow().clone()
-    }
 }
 
 pub fn load_component(config: &ConfigHelper) -> Rc<HttpClient> {

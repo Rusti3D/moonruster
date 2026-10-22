@@ -425,17 +425,8 @@ impl MoonrakerDatabase {
         .unwrap_or((String::new(), 0))
     }
 
-    pub fn database_path(&self) -> &Path {
-        &self.sql_db
-    }
-
     pub fn get_database_path(&self) -> String {
         self.sql_db.to_string_lossy().to_string()
-    }
-
-    /// Execute a closure with the sqlite connection
-    pub fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
-        f(&self.conn.borrow())
     }
 
     // ***** Record level ops *****
@@ -513,17 +504,6 @@ impl MoonrakerDatabase {
         Ok(())
     }
 
-    pub fn sync_namespace(&self, namespace: &str, values: &Map<String, Value>) -> Result<(), ServerError> {
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
-        tx.execute(&format!("DELETE FROM {} WHERE namespace = ?", NAMESPACE_TABLE), params![namespace])?;
-        for (k, v) in values {
-            tx.execute(&format!("INSERT INTO {} VALUES(?, ?, ?)", NAMESPACE_TABLE), params![namespace, k, json_to_sql(v)])?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     pub fn get_namespace_length(&self, namespace: &str) -> Result<i64, ServerError> {
         Ok(self.conn.borrow().query_row(
             &format!("SELECT COUNT(namespace) FROM {} WHERE namespace = ?", NAMESPACE_TABLE),
@@ -552,25 +532,6 @@ impl MoonrakerDatabase {
             out.push((row.get::<_, String>(0)?, decode_record(&value_ref_bytes(row.get_ref(1)?))?));
         }
         Ok(out)
-    }
-
-    pub fn namespace_contains(&self, namespace: &str, key: &Value) -> bool {
-        let key_list = match parse_namespace_key(key) {
-            Ok(k) => k,
-            Err(_) => return false,
-        };
-        let rec = match self.get_record(namespace, &key_list[0]) {
-            Ok(Some(r)) => r,
-            _ => return false,
-        };
-        let mut cur = &rec;
-        for k in &key_list[1..] {
-            match getitem(cur, k) {
-                Some(v) => cur = v,
-                None => return false,
-            }
-        }
-        true
     }
 
     pub fn insert_item_sync(&self, namespace: &str, key: &Value, value: Value) -> Result<(), ServerError> {
@@ -615,54 +576,6 @@ impl MoonrakerDatabase {
             log::info!("Error inserting key '{}' in namespace '{}'", crate::pyfmt::py_str(key), namespace);
         } else {
             self.namespaces.borrow_mut().insert(namespace.to_string());
-        }
-        Ok(())
-    }
-
-    pub fn update_item_sync(&self, namespace: &str, key: &Value, value: Value) -> Result<(), ServerError> {
-        let key_list = parse_namespace_key(key)?;
-        let mut record = self.get_record_or_404(namespace, &key_list[0])?;
-        if key_list.len() == 1 {
-            match (&mut record, &value) {
-                (Value::Object(r), Value::Object(v)) => {
-                    for (k, val) in v {
-                        r.insert(k.clone(), val.clone());
-                    }
-                }
-                _ => record = value,
-            }
-        } else {
-            let not_found = || ServerError::new(format!("Key '{}' in namespace '{}' not found", crate::pyfmt::py_str(key), namespace), 404);
-            if !record.is_object() {
-                return Err(not_found());
-            }
-            let mut item = &mut record;
-            for k in &key_list[1..key_list.len() - 1] {
-                item = item.as_object_mut().and_then(|o| o.get_mut(k)).ok_or_else(not_found)?;
-            }
-            let last = key_list.last().unwrap();
-            let rpt_key = key_list[..key_list.len() - 1].join(".");
-            let obj = match item.as_object_mut() {
-                Some(o) if o.contains_key(last) => o,
-                _ => {
-                    return Err(ServerError::bad(format!(
-                        "Item at key '{}' in namespace '{}'is not a dictionary object, cannot update",
-                        rpt_key, namespace
-                    )))
-                }
-            };
-            let target = obj.get_mut(last).unwrap();
-            match (target, &value) {
-                (Value::Object(t), Value::Object(v)) => {
-                    for (k, val) in v {
-                        t.insert(k.clone(), val.clone());
-                    }
-                }
-                (t, _) => *t = value.clone(),
-            }
-        }
-        if !self.insert_record(namespace, &key_list[0], &record) {
-            log::info!("Error updating key '{}' in namespace '{}'", crate::pyfmt::py_str(key), namespace);
         }
         Ok(())
     }
@@ -725,24 +638,6 @@ impl MoonrakerDatabase {
         }
     }
 
-    pub fn insert_batch_sync(&self, namespace: &str, records: &Map<String, Value>) -> Result<(), ServerError> {
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
-        for (k, v) in records {
-            tx.execute(
-                &format!(
-                    "INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(namespace, key) DO UPDATE SET value=excluded.value",
-                    NAMESPACE_TABLE
-                ),
-                params![namespace, k, encode_record(v)?],
-            )?;
-        }
-        tx.commit()?;
-        drop(conn);
-        self.namespaces.borrow_mut().insert(namespace.to_string());
-        Ok(())
-    }
-
     pub fn move_batch_sync(&self, namespace: &str, source: &[String], dest: &[String]) -> Result<(), ServerError> {
         let mut conn = self.conn.borrow_mut();
         let tx = conn.transaction()?;
@@ -791,18 +686,6 @@ impl MoonrakerDatabase {
 
     pub async fn insert_item(&self, namespace: &str, key: &Value, value: Value) -> Result<(), ServerError> {
         self.insert_item_sync(namespace, key, value)
-    }
-
-    pub async fn update_item(&self, namespace: &str, key: &Value, value: Value) -> Result<(), ServerError> {
-        self.update_item_sync(namespace, key, value)
-    }
-
-    pub async fn delete_item(&self, namespace: &str, key: &Value) -> ApiResult {
-        self.delete_item_sync(namespace, key)
-    }
-
-    pub async fn get_item(&self, namespace: &str, key: Option<&Value>, default: Option<Value>) -> ApiResult {
-        self.get_item_sync(namespace, key, default)
     }
 
     pub fn register_local_namespace(self: &Rc<Self>, namespace: &str, forbidden: bool, parse_keys: bool) -> Result<NamespaceWrapper, ServerError> {
@@ -930,11 +813,6 @@ impl MoonrakerDatabase {
         Ok(total)
     }
 
-    pub fn sql_executescript(&self, sql: &str) -> Result<(), ServerError> {
-        self.conn.borrow().execute_batch(sql)?;
-        Ok(())
-    }
-
     pub fn compact_database(&self) -> Result<Value, ServerError> {
         if self.restored.get() {
             return Err(ServerError::bad("Cannot compact restored database, awaiting restart"));
@@ -999,10 +877,6 @@ impl MoonrakerDatabase {
         }
         self.restored.set(true);
         Ok(json!({"restored_tables": tables, "restored_namespaces": namespaces}))
-    }
-
-    pub fn is_restored(&self) -> bool {
-        self.restored.get()
     }
 
     pub fn tables(&self) -> Vec<String> {
@@ -1185,22 +1059,6 @@ impl NamespaceWrapper {
         self.db.insert_item_sync(&self.namespace, &self.key(key), value)
     }
 
-    pub fn insert_key(&self, key: &Value, value: Value) -> Result<(), ServerError> {
-        self.db.insert_item_sync(&self.namespace, key, value)
-    }
-
-    pub fn update_child(&self, key: &str, value: Value) -> Result<(), ServerError> {
-        self.db.update_item_sync(&self.namespace, &self.key(key), value)
-    }
-
-    pub fn update(&self, value: &Map<String, Value>) -> Result<(), ServerError> {
-        self.db.insert_batch_sync(&self.namespace, value)
-    }
-
-    pub fn sync(&self, value: &Map<String, Value>) -> Result<(), ServerError> {
-        self.db.sync_namespace(&self.namespace, value)
-    }
-
     pub fn get(&self, key: &str, default: Value) -> Value {
         self.db.get_item_sync(&self.namespace, Some(&self.key(key)), Some(default.clone())).unwrap_or(default)
     }
@@ -1213,10 +1071,6 @@ impl NamespaceWrapper {
         self.db.delete_item_sync(&self.namespace, &self.key(key))
     }
 
-    pub fn insert_batch(&self, records: &Map<String, Value>) -> Result<(), ServerError> {
-        self.db.insert_batch_sync(&self.namespace, records)
-    }
-
     pub fn move_batch(&self, source: &[String], dest: &[String]) -> Result<(), ServerError> {
         self.db.move_batch_sync(&self.namespace, source, dest)
     }
@@ -1225,20 +1079,8 @@ impl NamespaceWrapper {
         self.db.delete_batch_sync(&self.namespace, keys)
     }
 
-    pub fn get_batch(&self, keys: &[String]) -> Result<Map<String, Value>, ServerError> {
-        self.db.get_batch_sync(&self.namespace, keys)
-    }
-
-    pub fn length(&self) -> i64 {
-        self.db.get_namespace_length(&self.namespace).unwrap_or(0)
-    }
-
     pub fn as_dict(&self) -> Map<String, Value> {
         self.db.get_namespace(&self.namespace, false).unwrap_or_default()
-    }
-
-    pub fn contains(&self, key: &str) -> bool {
-        self.db.namespace_contains(&self.namespace, &self.key(key))
     }
 
     pub fn keys(&self) -> Vec<String> {

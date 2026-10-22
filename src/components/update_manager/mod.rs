@@ -429,7 +429,6 @@ impl Deployer for PlainDeploy {
 
 pub struct AppDeploy {
     pub base: BaseDeploy,
-    pub config: ConfigHelper,
     pub type_: AppType,
     pub channel: Channel,
     pub channel_invalid: bool,
@@ -486,7 +485,6 @@ impl AppDeploy {
         let info_tags = config.getlist_opt("info_tags", Some(vec![]), Some("\n"))?.unwrap_or_default();
         Ok(AppDeploy {
             base,
-            config: config.clone(),
             type_,
             channel,
             channel_invalid,

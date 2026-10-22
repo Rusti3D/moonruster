@@ -614,10 +614,6 @@ impl FileManager {
         self.file_paths.borrow().keys().cloned().collect()
     }
 
-    pub fn get_fixed_path_args(&self) -> Map<String, Value> {
-        self.fixed_path_args.borrow().clone()
-    }
-
     pub fn get_relative_path(&self, root: &str, full_path: &str) -> String {
         match self.file_paths.borrow().get(root) {
             Some(rd) if full_path.starts_with(rd.as_str()) => relpath(full_path, rd),
@@ -942,7 +938,7 @@ impl FileManager {
         let method = if store_only { zip::CompressionMethod::Stored } else { zip::CompressionMethod::Deflated };
         let mut processed = std::collections::HashSet::new();
         // Err(None) is a PermissionError, which is skipped for directory children
-        let mut add = |zw: &mut zip::ZipWriter<std::fs::File>, path: &Path, arc: &str| -> Result<bool, Option<ServerError>> {
+        let add = |zw: &mut zip::ZipWriter<std::fs::File>, path: &Path, arc: &str| -> Result<bool, Option<ServerError>> {
             let data = match std::fs::read(path) {
                 Ok(d) => d,
                 Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {

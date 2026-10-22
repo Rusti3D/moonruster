@@ -241,16 +241,6 @@ impl DataStore {
         };
         Ok(json!({"gcode_store": items}))
     }
-
-    pub fn get_temperature_store(&self) -> Value {
-        let mut out = Map::new();
-        for (name, sensor) in self.temperature_store.borrow().iter() {
-            let m: Map<String, Value> =
-                sensor.iter().map(|(k, v)| (format!("{}s", k), Value::Array(v.iter().cloned().collect()))).collect();
-            out.insert(name.clone(), Value::Object(m));
-        }
-        Value::Object(out)
-    }
 }
 
 /// python's list[-count:]

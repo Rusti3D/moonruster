@@ -142,10 +142,6 @@ impl ConfigParser {
         }
     }
 
-    pub fn remove_section(&mut self, section: &str) -> bool {
-        self.sections.shift_remove(section).is_some()
-    }
-
     /// Python's read_string()
     pub fn read_string(&mut self, data: &str, source: &str) -> Result<(), CpError> {
         let mut elements_added: HashSet<String> = HashSet::new();

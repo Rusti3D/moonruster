@@ -723,22 +723,8 @@ impl MqttClient {
         }
     }
 
-    pub async fn wait_connection(&self, timeout: Option<f64>) -> bool {
-        match timeout {
-            None => {
-                self.connect_evt.wait().await;
-                true
-            }
-            Some(t) => tokio::time::timeout(Duration::from_secs_f64(t.max(0.0)), self.connect_evt.wait()).await.is_ok(),
-        }
-    }
-
     pub fn is_connected(&self) -> bool {
         self.connect_evt.is_set()
-    }
-
-    pub fn get_instance_name(&self) -> String {
-        self.instance_name.clone()
     }
 
     // ***** Subscriptions and publishing *****

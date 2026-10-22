@@ -3,6 +3,7 @@
 
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -490,13 +491,10 @@ pub async fn query_can_uuids(interface: &str) -> Result<Vec<Value>, crate::commo
         unsafe { libc::close(fd) };
         return Err(err());
     }
-    let async_fd = match tokio::io::unix::AsyncFd::new(fd) {
-        Ok(a) => a,
-        Err(_) => {
-            unsafe { libc::close(fd) };
-            return Err(err());
-        }
-    };
+    // owned, so the socket is closed on every return and on cancellation
+    let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+    // SAFETY: the OwnedFd keeps fd open for the AsyncFd's lifetime
+    let async_fd = unsafe { tokio::io::unix::AsyncFd::register(owned) }.map_err(|_| err())?;
     // send query frame
     let mut frame = [0u8; 16];
     frame[0..4].copy_from_slice(&KLIPPER_ADMIN_ID.to_le_bytes());
@@ -552,6 +550,5 @@ pub async fn query_can_uuids(interface: &str) -> Result<Vec<Value>, crate::commo
         }
     }
     drop(async_fd);
-    unsafe { libc::close(fd) };
     Ok(uuids)
 }

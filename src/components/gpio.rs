@@ -88,7 +88,6 @@ fn io_err(msg: &str) -> ServerError {
 }
 
 struct PinParams {
-    orig: String,
     inverted: bool,
     pin_id: u32,
     chip_id: String,
@@ -99,9 +98,6 @@ struct PinParams {
 }
 
 pub struct GpioOutputPin {
-    pub orig: String,
-    pub name: String,
-    pub inverted: bool,
     fd: RawFd,
     value: Cell<i32>,
 }
@@ -117,9 +113,6 @@ impl GpioOutputPin {
         self.value.set(v);
         Ok(())
     }
-    pub fn get_value(&self) -> i32 {
-        self.value.get()
-    }
     fn close(&self) {
         unsafe { libc::close(self.fd) };
     }
@@ -128,9 +121,7 @@ impl GpioOutputPin {
 pub type GpioEventCallback = Rc<dyn Fn(f64, f64, i32)>;
 
 pub struct GpioEvent {
-    pub orig: String,
     pub name: String,
-    pub inverted: bool,
     fd: RawFd,
     value: Cell<i32>,
     callback: GpioEventCallback,
@@ -168,7 +159,9 @@ impl GpioEvent {
         let w = Rc::downgrade(self);
         let fd = self.fd;
         let h = spawn(async move {
-            let afd = match AsyncFd::new(fd) {
+            // SAFETY: the event fd is only closed by close() at shutdown, after
+            // stop(); nothing registers a new fd after that
+            let afd = match unsafe { AsyncFd::register(fd) } {
                 Ok(a) => a,
                 Err(e) => {
                     log::error!("GPIO: unable to watch event fd: {}", e);
@@ -310,7 +303,6 @@ impl GpioFactory {
         let chip_id = c.name("chip_id").map(|m| m.as_str()).unwrap_or("gpiochip0").to_string();
         let pin_name = c["pin_name"].to_string();
         Ok(PinParams {
-            orig: pin_desc.to_string(),
             inverted,
             pin_id: c["pin_id"].parse().unwrap_or(0),
             full_name: format!("{}:{}", chip_id, pin_name),
@@ -366,9 +358,6 @@ impl GpioFactory {
             return Err(err);
         }
         let pin = Rc::new(GpioOutputPin {
-            orig: p.orig.clone(),
-            name: p.full_name.clone(),
-            inverted: p.inverted,
             fd: req.fd,
             value: Cell::new(p.initial_value),
         });
@@ -398,9 +387,7 @@ impl GpioFactory {
             libc::fcntl(req.fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
         }
         let evt = Rc::new(GpioEvent {
-            orig: p.orig.clone(),
             name: p.full_name.clone(),
-            inverted: p.inverted,
             fd: req.fd,
             value: Cell::new(0),
             callback,

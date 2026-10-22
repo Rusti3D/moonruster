@@ -1151,7 +1151,8 @@ impl Observer {
 }
 
 async fn inotify_reader(fd: i32, obs: Weak<Observer>) {
-    let afd = match tokio::io::unix::AsyncFd::new(fd) {
+    // SAFETY: the inotify fd is never closed, it lives as long as the process
+    let afd = match unsafe { tokio::io::unix::AsyncFd::register(fd) } {
         Ok(a) => a,
         Err(e) => {
             log::error!("Unable to poll inotify fd: {}", e);

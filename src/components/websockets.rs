@@ -109,9 +109,6 @@ impl RemoteConnection {
     pub fn hostname(&self) -> String {
         self.hostname.clone()
     }
-    pub fn start_time(&self) -> f64 {
-        self.connected_time.get()
-    }
     pub fn set_connected_time(&self, t: f64) {
         self.connected_time.set(t);
     }
@@ -391,10 +388,6 @@ impl WebsocketManager {
         }
     }
 
-    pub fn has_socket(&self, ws_id: u64) -> bool {
-        self.clients.borrow().contains_key(&ws_id)
-    }
-
     pub fn get_client(&self, uid: u64) -> Option<Rc<RemoteConnection>> {
         self.clients.borrow().get(&uid).cloned()
     }
@@ -414,28 +407,6 @@ impl WebsocketManager {
             .filter(|sc| sc.client_data.borrow().get("type").map(|t| *t == ct).unwrap_or(false))
             .cloned()
             .collect()
-    }
-
-    pub fn get_clients_by_name(&self, name: &str) -> Vec<Rc<RemoteConnection>> {
-        if name.is_empty() {
-            return Vec::new();
-        }
-        let n = name.to_lowercase();
-        self.clients
-            .borrow()
-            .values()
-            .filter(|sc| sc.client_data.borrow().get("name").map(|t| t.to_lowercase() == n).unwrap_or(false))
-            .cloned()
-            .collect()
-    }
-
-    pub fn get_unidentified_clients(&self) -> Vec<Rc<RemoteConnection>> {
-        // client_data is never empty in moonraker, so this always returns []
-        Vec::new()
-    }
-
-    pub fn all_clients(&self) -> Vec<Rc<RemoteConnection>> {
-        self.clients.borrow().values().cloned().collect()
     }
 
     pub fn add_client(&self, sc: Rc<RemoteConnection>) {

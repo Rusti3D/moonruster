@@ -6,7 +6,7 @@
 use crate::confighelper::{ConfigError, ConfigHelper};
 use crate::server::spawn;
 use std::cell::{Cell, RefCell};
-use std::os::fd::RawFd;
+use std::os::fd::{FromRawFd, RawFd};
 use std::rc::Rc;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, oneshot};
@@ -143,8 +143,12 @@ impl AsyncSerial {
         }
         self.buf.borrow_mut().clear();
         let w = Rc::downgrade(self);
+        // the reader task owns the descriptor and closes it when it ends, so
+        // its epoll registration never outlives the fd (abort is deferred)
+        let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
         let h = spawn(async move {
-            let afd = match AsyncFd::new(fd) {
+            // SAFETY: the OwnedFd keeps fd open for the AsyncFd's lifetime
+            let afd = match unsafe { AsyncFd::register(owned) } {
                 Ok(a) => a,
                 Err(_) => return,
             };
@@ -214,11 +218,11 @@ impl AsyncSerial {
     }
 
     fn close_now(&self) {
+        // aborting the reader drops its AsyncFd, which closes the fd
         if let Some(t) = self.reader_task.borrow_mut().take() {
             t.abort();
         }
-        if let Some(fd) = self.fd.take() {
-            unsafe { libc::close(fd) };
+        if self.fd.take().is_some() {
             log::info!("{}: Disconnected", self.name);
         }
         for (tx, _) in self.send_buffer.borrow_mut().drain(..) {

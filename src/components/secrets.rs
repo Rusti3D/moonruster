@@ -95,16 +95,8 @@ impl Secrets {
         self.secrets_file.clone()
     }
 
-    pub fn get_type(&self) -> String {
-        self.kind.borrow().clone()
-    }
-
     pub fn values(&self) -> Value {
         self.values.borrow().clone()
-    }
-
-    pub fn get(&self, key: &str) -> Option<Value> {
-        self.values.borrow().get(key).cloned()
     }
 }
 

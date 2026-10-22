@@ -4,7 +4,6 @@ use super::FileManager;
 use crate::common::UserInfo;
 use crate::components::application::{HttpError, HttpRequest};
 use futures::StreamExt;
-use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::Request;
 use serde_json::{json, Map, Value};

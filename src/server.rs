@@ -49,10 +49,6 @@ pub trait Component: Any {
     async fn close(self: Rc<Self>) {}
 }
 
-/// Marker for registered objects that have no lifecycle (jsonrpc, etc)
-pub struct NoLifecycle;
-impl Component for NoLifecycle {}
-
 thread_local! {
     static SERVER: RefCell<Option<Rc<Server>>> = const { RefCell::new(None) };
 }
@@ -212,10 +208,6 @@ impl Server {
 
     pub fn data_path(&self) -> String {
         self.app_arg_str("data_path")
-    }
-
-    pub fn get_api_version(&self) -> (i64, i64, i64) {
-        API_VERSION
     }
 
     pub fn get_warnings(&self) -> Vec<String> {
@@ -601,8 +593,10 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
             comp.clone().exit().await;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        self.app().close().await;
-        self.wsm().close().await;
+        // called explicitly: on an Rc, `.close()` resolves to Component::close
+        // (a no-op) instead of these inherent methods
+        crate::components::application::MoonrakerApp::close(&self.app()).await;
+        crate::components::websockets::WebsocketManager::close(&self.wsm()).await;
         let kc = self.klippy();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), kc.close_conn(true)).await;
         for (name, comp) in comps {

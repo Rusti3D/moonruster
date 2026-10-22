@@ -635,10 +635,6 @@ impl Announcements {
         Ok(())
     }
 
-    pub async fn dismiss_announcement(&self, entry_id: &str, wake_time: Option<i64>) -> Result<(), ServerError> {
-        self.entry_mgr.dismiss_entry(entry_id, wake_time)
-    }
-
     pub async fn get_announcements(&self, include_dismissed: bool) -> Value {
         Value::Array(self.entry_mgr.list_entries(include_dismissed))
     }

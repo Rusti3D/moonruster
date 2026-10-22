@@ -120,10 +120,6 @@ impl MetadataStorage {
         let _ = self.mddb.insert(key, value);
     }
 
-    pub fn is_processing(&self) -> bool {
-        !self.pending_requests.borrow().is_empty()
-    }
-
     pub fn is_file_processing(&self, fname: &str) -> bool {
         self.pending_requests.borrow().contains_key(fname)
     }

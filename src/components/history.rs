@@ -312,13 +312,6 @@ impl HistoryFieldData {
         }))
     }
 
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn provider(&self) -> &str {
-        &self.provider
-    }
-
     pub fn update(&self, value: Value) {
         self.tracker.borrow_mut().update(value);
     }
@@ -880,12 +873,6 @@ impl History {
         }
     }
 
-    pub async fn delete_job(&self, job_id: &str) -> Result<(), ServerError> {
-        let id = Self::parse_uid(job_id)?;
-        server().database().sql_execute(&format!("DELETE FROM {} WHERE job_id = ?", HIST_TABLE), &[rusqlite::types::Value::Integer(id)])?;
-        Ok(())
-    }
-
     async fn finish_job(&self, status: &str, pstats: Map<String, Value>) {
         let _g = self.request_lock.lock().await;
         let has_job = self.current_job.borrow().is_some();
@@ -927,12 +914,6 @@ impl History {
         *self.current_job.borrow_mut() = None;
         self.current_job_id.set(None);
         *self.job_user.borrow_mut() = "No User".into();
-    }
-
-    pub async fn get_job(&self, job_id: &str) -> Result<Option<Value>, ServerError> {
-        let id = Self::parse_uid(job_id)?;
-        let rows = server().database().sql_query(&format!("SELECT * FROM {} WHERE job_id = ?", HIST_TABLE), &[rusqlite::types::Value::Integer(id)])?;
-        Ok(rows.into_iter().next().map(Value::Object))
     }
 
     fn grab_job_metadata(&self) {
