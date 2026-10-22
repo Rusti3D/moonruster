@@ -752,7 +752,7 @@ impl GitRepo {
         if uc != "?" {
             let cnt = self.rev_list(&format!("HEAD..{} --count", uc)).await?;
             let n = cnt.trim().parse::<i64>().map_err(|_| {
-                ServerError::new(format!("invalid literal for int() with base 10: '{}'", cnt), 500)
+                ServerError::exc(format!("invalid literal for int() with base 10: '{}'", cnt))
             })?;
             self.st.borrow_mut().commits_behind_count = n;
         }

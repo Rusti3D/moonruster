@@ -189,17 +189,15 @@ fn base62_id() -> String {
 }
 
 fn load_tls_config() -> Result<tokio_rustls::rustls::ClientConfig, String> {
+    // paho's tls_set() uses the system CA store (OpenSSL default paths,
+    // honoring SSL_CERT_FILE / SSL_CERT_DIR)
     let mut roots = tokio_rustls::rustls::RootCertStore::empty();
-    for path in ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"] {
-        if let Ok(data) = std::fs::read(path) {
-            for cert in rustls_pemfile::certs(&mut data.as_slice()).flatten() {
-                let _ = roots.add(cert);
-            }
-            break;
-        }
+    let certs = rustls_native_certs::load_native_certs();
+    for cert in certs.certs {
+        let _ = roots.add(cert);
     }
     if roots.is_empty() {
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        return Err("No system CA certificates found".into());
     }
     Ok(tokio_rustls::rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth())
 }

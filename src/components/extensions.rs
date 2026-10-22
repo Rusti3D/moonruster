@@ -138,8 +138,11 @@ impl ExtensionManager {
         let sockfile = server().app_arg_str("unix_socket_path");
         let sock_path = crate::utils::resolve_path(&crate::utils::expand_user(&sockfile));
         log::info!("Creating Unix Domain Socket at '{}'", sock_path.display());
-        if sock_path.exists() {
-            let _ = std::fs::remove_file(&sock_path);
+        // asyncio.start_unix_server only replaces an existing socket file
+        if let Ok(m) = std::fs::metadata(&sock_path) {
+            if std::os::unix::fs::FileTypeExt::is_socket(&m.file_type()) {
+                let _ = std::fs::remove_file(&sock_path);
+            }
         }
         let listener = match tokio::net::UnixListener::bind(&sock_path) {
             Ok(l) => l,

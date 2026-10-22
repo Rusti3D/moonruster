@@ -397,6 +397,14 @@ impl Server {
         if self.failed_components.borrow().iter().any(|c| c == name) {
             return Err(ConfigError(format!("Component {} previously failed to load", name)));
         }
+        // python imports the module before calling getsection(), an unknown
+        // component never adds its section to the parsed config
+        if !crate::components::COMPONENT_NAMES.contains(&name) {
+            log::error!("Unable to load component: ({})
+ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
+            self.set_failed_component(name);
+            return Err(ConfigError(format!("No module named 'moonraker.components.{}'", name)));
+        }
         let comp_cfg = if SERVER_COMPONENTS.contains(&name) {
             config.clone()
         } else {

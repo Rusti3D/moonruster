@@ -400,7 +400,7 @@ pub trait Deployer {
         Err(ServerError::bad(format!("Rollback not available for {}", self.base().name)))
     }
     async fn recover(&self, _hard: bool, _force_dep_update: bool) -> Result<(), ServerError> {
-        Err(ServerError::new("NotImplementedError", 500))
+        Err(ServerError::exc("NotImplementedError"))
     }
     fn get_update_status(&self) -> Value {
         json!({})

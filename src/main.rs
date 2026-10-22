@@ -65,6 +65,25 @@ fn parse_args(argv: &[String]) -> Args {
         debug: env_bool("MOONRAKER_ENABLE_DEBUG"),
         asyncio_debug: env_bool("MOONRAKER_ASYNCIO_DEBUG"),
     };
+    // argparse also accepts attached short values ("-d/path") and clustered
+    // short flags ("-nv"); expand those first
+    let mut expanded: Vec<String> = vec![argv.first().cloned().unwrap_or_default()];
+    for arg in argv.iter().skip(1) {
+        let b = arg.as_bytes();
+        if b.len() > 2 && b[0] == b'-' && b[1] != b'-' {
+            if "dclu".contains(b[1] as char) {
+                expanded.push(arg[..2].to_string());
+                expanded.push(arg[2..].to_string());
+                continue;
+            }
+            if arg[1..].chars().all(|c| "nsvgoh".contains(c)) {
+                expanded.extend(arg[1..].chars().map(|c| format!("-{}", c)));
+                continue;
+            }
+        }
+        expanded.push(arg.clone());
+    }
+    let argv = &expanded;
     let mut i = 1;
     while i < argv.len() {
         let arg = argv[i].as_str();

@@ -79,7 +79,7 @@ def http(host, method, path, **kw):
         body = r.json()
     except Exception:
         body = r.text
-    hdrs = {k.lower(): v for k, v in r.headers.items() if k.lower() in ("content-type", "location", "content-disposition", "access-control-allow-origin", "accept-ranges", "content-range")}
+    hdrs = {k.lower(): v for k, v in r.headers.items() if k.lower() in ("content-type", "location", "content-disposition", "access-control-allow-origin", "accept-ranges", "content-range", "cache-control", "content-encoding", "vary", "allow", "access-control-allow-methods", "access-control-allow-headers")}
     return {"status": r.status_code, "reason": r.reason, "headers": hdrs, "body": body}
 
 HTTP_CASES = [
@@ -167,6 +167,37 @@ HTTP_CASES = [
     ("GET", "/api/printer", {}),
     ("GET", "/api/printerprofiles", {}),
     ("GET", "/server/files/moonraker.log", {}),
+    ("HEAD", "/server/files/config/printer.cfg", {}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"Range": "bytes=0-99"}}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"Range": "bytes=-50"}}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"Range": "bytes=100-"}}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"Range": "bytes=999999-"}}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"Range": "bytes=abc"}}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"If-Modified-Since": "Fri, 01 Jan 2100 00:00:00 GMT"}}),
+    ("GET", "/server/files/config/printer.cfg", {"headers": {"If-None-Match": "*"}}),
+    ("GET", "/server/files/config/", {}),
+    ("GET", "/server/files/config/../moonraker.asvc", {}),
+    ("GET", "/server/files/config/%2e%2e/moonraker.asvc", {}),
+    ("GET", "/server/files/nope/x.cfg", {}),
+    ("DELETE", "/server/files/config/nope.cfg", {}),
+    ("DELETE", "/server/files/logs/moonraker.log", {}),
+    ("POST", "/server/files/config/printer.cfg", {}),
+    ("GET", "/server/files/klippy.log", {"headers": {"Range": "bytes=0-10"}}),
+    ("GET", "/", {}),
+    ("GET", "/favicon.ico", {}),
+    ("GET", "/server/info?raw=yes", {}),
+    ("GET", "/server/temperature_store?include_monitors=1", {}),
+    ("GET", "/server/gcode_store?count=abc", {}),
+    ("POST", "/server/database/item", {"data": {"namespace": "test", "key": "form", "value": "x"}}),
+    ("POST", "/server/database/item", {"json": [1, 2]}),
+    ("POST", "/server/database/item", {"data": "{bad json", "headers": {"Content-Type": "application/json"}}),
+    ("GET", "/server/database/item?namespace=test&key=form", {}),
+    ("GET", "/printer/objects/query?gcode_move&toolhead=position&extruder=target,temperature", {}),
+    ("GET", "/printer/objects/query", {}),
+    ("POST", "/printer/gcode/script", {"json": {"script": ""}}),
+    ("GET", "/machine/proc_stats?x=1", {}),
+    ("PUT", "/server/info", {}),
+    ("PATCH", "/server/info", {}),
 ]
 
 WS_CASES = [

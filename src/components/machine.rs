@@ -540,7 +540,7 @@ impl Provider {
             let act = &self.shutdown_action;
             let cmd = if has_sysctl() { format!("systemctl {}", act) } else { act.clone() };
             self.exec_sudo(&cmd).await?;
-            return Err(ServerError::new("'NoneType' object has no attribute 'call_power_off'", 500));
+            return Err(ServerError::exc("'NoneType' object has no attribute 'call_power_off'"));
         }
         let act = &self.shutdown_action;
         let cmd = if has_sysctl() { format!("systemctl {}", act) } else { act.clone() };
@@ -556,7 +556,7 @@ impl Provider {
         let cmd = if has_sysctl() { "systemctl reboot" } else { "reboot" };
         self.exec_sudo(cmd).await?;
         if self.kind == ProviderKind::SystemdDbus {
-            return Err(ServerError::new("'NoneType' object has no attribute 'call_reboot'", 500));
+            return Err(ServerError::exc("'NoneType' object has no attribute 'call_reboot'"));
         }
         Ok(())
     }
@@ -648,7 +648,7 @@ impl Provider {
             ProviderKind::SystemdCli => {
                 let res: Result<Value, ServerError> = async {
                     let resp = self.shell().exec(&format!("systemctl status {}", pid), 2.0).await?;
-                    let unit_name = resp.split_whitespace().nth(1).ok_or_else(|| ServerError::new("list index out of range", 500))?.to_string();
+                    let unit_name = resp.split_whitespace().nth(1).ok_or_else(|| ServerError::exc("list index out of range"))?.to_string();
                     let mut info = Map::new();
                     info.insert("unit_name".into(), json!(unit_name));
                     info.insert("is_default".into(), json!(true));
@@ -690,7 +690,10 @@ impl Provider {
                 let res: Result<Value, ServerError> = async {
                     let path: zvariant::OwnedObjectPath = dbus.call(SYSTEMD_BUS, SYSTEMD_PATH_OBJ, SYSTEMD_MGR, "GetUnitByPID", &(pid as u32,)).await?;
                     let unit_props = dbus.get_all_properties(SYSTEMD_BUS, path.as_str(), "org.freedesktop.systemd1.Unit").await?;
-                    let svc_props = dbus.get_all_properties(SYSTEMD_BUS, path.as_str(), "org.freedesktop.systemd1.Service").await.unwrap_or_default();
+                    // get_interfaces() fails for units without a Service interface (scopes)
+                    dbus.has_interface(SYSTEMD_BUS, path.as_str(), "org.freedesktop.systemd1.Unit").await?;
+                    dbus.has_interface(SYSTEMD_BUS, path.as_str(), "org.freedesktop.systemd1.Service").await?;
+                    let svc_props = dbus.get_all_properties(SYSTEMD_BUS, path.as_str(), "org.freedesktop.systemd1.Service").await?;
                     let unit_name = unit_props.get("Id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let mut info = Map::new();
                     info.insert("unit_name".into(), json!(unit_name));
@@ -1169,7 +1172,7 @@ impl Machine {
     }
 
     async fn handle_sysinfo_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
-        let mut si = self.system_info.borrow().clone();
+        let mut si = self.get_system_info();
         si.insert("instance_ids".into(), json!({"moonraker": self.unit_name(), "klipper": server().klippy().unit_name()}));
         Ok(json!({"system_info": si}))
     }
@@ -1217,7 +1220,7 @@ impl Machine {
             if !restart && responses.len() > 1 {
                 let m = self.clone();
                 spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    crate::utils::sleep_ordered(std::time::Duration::from_millis(50)).await;
                     let _ = server().send_event(
                         "machine:sudo_alert",
                         vec![json!({"sudo_requested": m.sudo_requested(), "request_messages": m.sudo_request_messages()})],
@@ -1302,7 +1305,12 @@ impl Machine {
     }
 
     pub fn get_system_info(&self) -> Map<String, Value> {
-        self.system_info.borrow().clone()
+        let mut si = self.system_info.borrow().clone();
+        // python stores the provider's service dict itself, so the state is live
+        if si.contains_key("service_state") {
+            si.insert("service_state".into(), Value::Object(self.provider.get_available_services().into_iter().collect()));
+        }
+        si
     }
 
     pub fn sudo_password(&self) -> Option<String> {

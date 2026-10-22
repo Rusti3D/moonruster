@@ -10,8 +10,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 const READ_SIZE: usize = 1024 * 1024;
-const UFP_MODEL_PATH: &str = "3D/model.gcode";
-const UFP_THUMB_PATH: &str = "Metadata/thumbnail.png";
+const UFP_MODEL_PATH: &str = "/3D/model.gcode";
+const UFP_THUMB_PATH: &str = "/Metadata/thumbnail.png";
 const SUPPORTED_THUMB_FORMATS: [&str; 3] = ["png", "jpg", "qoi"];
 const PPC_REGEX: &str = r"^; Pre-Processed for Cancel-Object support by preprocess_cancellation (?P<version>v?\d+(?:\.\d+)*)";
 
@@ -871,7 +871,7 @@ impl Slicer {
             if dest_ext != ext {
                 match image::load_from_memory(&decoded) {
                     Ok(img) => {
-                        if img.save_with_format(&thumb_path, image::ImageFormat::Png).is_err() {
+                        if save_png(&img, &thumb_path).is_err() {
                             continue;
                         }
                     }
@@ -1048,9 +1048,38 @@ fn make_miniature(src: &Path, dest: &Path) -> Result<(u32, u32), String> {
         x = w;
         y = h;
     }
-    let out = if x == w && y == h { img } else { img.resize_exact(x, y, image::imageops::FilterType::CatmullRom) };
-    out.save_with_format(dest, image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    let out = if x == w && y == h {
+        img
+    } else if img.color().has_alpha() {
+        // PIL resizes RGBA images in premultiplied form (RGBa)
+        let mut pm = img.to_rgba8();
+        for p in pm.pixels_mut() {
+            let a = p[3] as u32;
+            for c in 0..3 {
+                p[c] = ((p[c] as u32 * a + 127) / 255) as u8;
+            }
+        }
+        let mut r = image::imageops::resize(&pm, x, y, image::imageops::FilterType::CatmullRom);
+        for p in r.pixels_mut() {
+            let a = p[3] as u32;
+            for c in 0..3 {
+                p[c] = if a == 0 { 0 } else { ((p[c] as u32 * 255 + a / 2) / a).min(255) as u8 };
+            }
+        }
+        image::DynamicImage::ImageRgba8(r)
+    } else {
+        img.resize_exact(x, y, image::imageops::FilterType::CatmullRom)
+    };
+    save_png(&out, dest)?;
     Ok((out.width(), out.height()))
+}
+
+/// PIL's PNG save: zlib default level with adaptive row filters
+fn save_png(img: &image::DynamicImage, dest: &Path) -> Result<(), String> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    let f = std::fs::File::create(dest).map_err(|e| e.to_string())?;
+    let enc = PngEncoder::new_with_quality(std::io::BufWriter::new(f), CompressionType::Default, FilterType::Adaptive);
+    img.write_with_encoder(enc).map_err(|e| e.to_string())
 }
 
 // ***** Processors *****
@@ -1235,12 +1264,11 @@ fn extract_ufp(ufp_path: &Path, dest_path: &Path) -> Result<(), String> {
     let thumb_dir = dest_path.parent().unwrap_or(Path::new(".")).join(".thumbs");
     let f = std::fs::File::open(ufp_path).map_err(|e| e.to_string())?;
     let mut zf = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
-    let find = |zf: &zip::ZipArchive<std::fs::File>, name: &str| {
-        zf.index_for_name(name).or_else(|| zf.index_for_name(&format!("/{}", name)))
-    };
+    // zipfile.getinfo() matches the stored name exactly
+    let find = |zf: &zip::ZipArchive<std::fs::File>, name: &str| zf.index_for_name(name);
     let mut model = Vec::new();
     {
-        let idx = find(&zf, UFP_MODEL_PATH).ok_or_else(|| format!("There is no item named '/{}' in the archive", UFP_MODEL_PATH))?;
+        let idx = find(&zf, UFP_MODEL_PATH).ok_or_else(|| format!("There is no item named '{}' in the archive", UFP_MODEL_PATH))?;
         let mut entry = zf.by_index(idx).map_err(|e| e.to_string())?;
         entry.read_to_end(&mut model).map_err(|e| e.to_string())?;
     }

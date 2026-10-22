@@ -454,7 +454,7 @@ impl Authorization {
 
     fn delayed_event(event: &'static str, username: String) {
         spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            crate::utils::sleep_ordered(std::time::Duration::from_millis(5)).await;
             let _ = server().send_event(event, vec![json!({"username": username})]);
         });
     }
@@ -467,7 +467,7 @@ impl Authorization {
         }
         let jwk_id = {
             let mut users = self.users.borrow_mut();
-            let u = users.get_mut(&username).ok_or_else(|| ServerError::new(format!("'{}'", username), 500))?;
+            let u = users.get_mut(&username).ok_or_else(|| ServerError::exc(format!("'{}'", username)))?;
             let id = u.jwk_id.take();
             u.jwt_secret = None;
             id
@@ -551,7 +551,7 @@ impl Authorization {
         if RESERVED_USERS.contains(&username.as_str()) {
             return Err(ServerError::bad(format!("Invalid Reset Request for user {}", username)));
         }
-        let salt = hex::decode(&user.salt).map_err(|e| ServerError::new(e.to_string(), 500))?;
+        let salt = hex::decode(&user.salt).map_err(|e| ServerError::exc(e.to_string()))?;
         if !compare_digest(&pbkdf2_hex(&password, &salt), &user.password) {
             return Err(ServerError::bad("Invalid Password"));
         }
@@ -704,7 +704,7 @@ impl Authorization {
     }
 
     pub fn decode_jwt(&self, token: &str, token_type: &str, check_exp: bool) -> Result<UserInfo, ServerError> {
-        let generic = |m: &str| ServerError::new(m.to_string(), 500);
+        let generic = |m: &str| ServerError::exc(m.to_string());
         let (message, sig) = token.rsplit_once('.').ok_or_else(|| generic("not enough values to unpack (expected 2, got 1)"))?;
         let parts: Vec<&str> = message.split('.').collect();
         if parts.len() != 2 {
@@ -746,7 +746,7 @@ impl Authorization {
 
     pub fn validate_jwt(&self, token: &str) -> Result<UserInfo, ServerError> {
         self.decode_jwt(token, "access", true).map_err(|e| {
-            if e.status_code == 500 {
+            if e.is_exc {
                 ServerError::new(format!("Failed to decode JWT: {}", e.message), 401)
             } else {
                 e
@@ -796,9 +796,9 @@ impl Authorization {
             return Err(ServerError::bad("Invalid Curve"));
         }
         let x = jwk.get("x").and_then(|v| v.as_str()).ok_or_else(|| ServerError::bad("No 'x' argument in jwk"))?;
-        let key = base64url_decode(x).map_err(|e| ServerError::new(e, 500))?;
-        let arr: [u8; 32] = key.as_slice().try_into().map_err(|_| ServerError::new("Invalid public key", 500))?;
-        VerifyingKey::from_bytes(&arr).map_err(|e| ServerError::new(e.to_string(), 500))
+        let key = base64url_decode(x).map_err(ServerError::exc)?;
+        let arr: [u8; 32] = key.as_slice().try_into().map_err(|_| ServerError::exc("Invalid public key"))?;
+        VerifyingKey::from_bytes(&arr).map_err(|e| ServerError::exc(e.to_string()))
     }
 
     fn prune_conn_handler(&self) {

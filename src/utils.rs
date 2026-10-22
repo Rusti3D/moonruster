@@ -47,6 +47,89 @@ impl AsyncEvent {
     }
 }
 
+// ***** Ordered timers *****
+// asyncio runs timers in (deadline, scheduling order).  Independent tokio
+// sleeps that land in the same timer slot may wake in any order, so short
+// delays whose ordering is visible to clients (notifications) use this queue.
+
+struct TimerQueue {
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<(tokio::time::Instant, u64)>>,
+    waiters: std::collections::HashMap<u64, tokio::sync::oneshot::Sender<()>>,
+    seq: u64,
+    driver: Option<std::rc::Rc<tokio::sync::Notify>>,
+}
+
+thread_local! {
+    static TIMERS: std::cell::RefCell<TimerQueue> = std::cell::RefCell::new(TimerQueue {
+        heap: Default::default(),
+        waiters: Default::default(),
+        seq: 0,
+        driver: None,
+    });
+}
+
+/// asyncio.sleep() with the loop's timer ordering
+pub async fn sleep_ordered(delay: std::time::Duration) {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let deadline = tokio::time::Instant::now() + delay;
+    let (start_driver, wake) = TIMERS.with(|t| {
+        let mut t = t.borrow_mut();
+        t.seq += 1;
+        let seq = t.seq;
+        let earliest = t.heap.peek().map(|r| r.0 .0 > deadline).unwrap_or(true);
+        t.heap.push(std::cmp::Reverse((deadline, seq)));
+        t.waiters.insert(seq, tx);
+        match &t.driver {
+            Some(n) => (None, if earliest { Some(n.clone()) } else { None }),
+            None => {
+                let n = std::rc::Rc::new(tokio::sync::Notify::new());
+                t.driver = Some(n.clone());
+                (Some(n), None)
+            }
+        }
+    });
+    if let Some(n) = wake {
+        n.notify_one();
+    }
+    if let Some(n) = start_driver {
+        crate::server::spawn(timer_driver(n));
+    }
+    let _ = rx.await;
+}
+
+async fn timer_driver(notify: std::rc::Rc<tokio::sync::Notify>) {
+    loop {
+        let next = TIMERS.with(|t| t.borrow().heap.peek().map(|r| r.0 .0));
+        match next {
+            None => notify.notified().await,
+            Some(dl) => {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(dl) => {}
+                    _ = notify.notified() => continue,
+                }
+            }
+        }
+        let now = tokio::time::Instant::now();
+        let due: Vec<tokio::sync::oneshot::Sender<()>> = TIMERS.with(|t| {
+            let mut t = t.borrow_mut();
+            let mut out = Vec::new();
+            while let Some(std::cmp::Reverse((dl, seq))) = t.heap.peek().copied() {
+                if dl > now {
+                    break;
+                }
+                t.heap.pop();
+                if let Some(tx) = t.waiters.remove(&seq) {
+                    out.push(tx);
+                }
+            }
+            out
+        });
+        for tx in due {
+            let _ = tx.send(());
+        }
+    }
+}
+
 pub fn time_now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }

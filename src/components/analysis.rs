@@ -354,7 +354,7 @@ impl GcodeAnalysis {
             .await
             .map_err(|_| ServerError::new("Klipper Estimator dump-config failed", 500))?;
         std::fs::write(dest, &ret).map_err(|_| ServerError::new("Klipper Estimator dump-config failed", 500))?;
-        serde_json::from_str(&ret).map_err(|e| ServerError::new(e.to_string(), 500))
+        serde_json::from_str(&ret).map_err(|e| ServerError::exc(e.to_string()))
     }
 
     async fn estimate_file(&self, gc_path: &Path, est_config: &Path) -> ApiResult {
@@ -367,8 +367,8 @@ impl GcodeAnalysis {
         }
         let cmd = self.gen_estimator_cmd(gc_path, est_config, false)?;
         let ret = Self::shell().exec_cmd(&cmd, ExecOpts { timeout: self.estimator_timeout as f64, ..Default::default() }).await?;
-        let data: Value = serde_json::from_str(&ret).map_err(|e| ServerError::new(e.to_string(), 500))?;
-        data.get("sequences").and_then(|s| s.get(0)).cloned().ok_or_else(|| ServerError::new("KeyError: 'sequences'", 500))
+        let data: Value = serde_json::from_str(&ret).map_err(|e| ServerError::exc(e.to_string()))?;
+        data.get("sequences").and_then(|s| s.get(0)).cloned().ok_or_else(|| ServerError::exc("'sequences'"))
     }
 
     async fn post_process_file(&self, gc_path: &Path, est_config: &Path, force: bool) -> ApiResult {

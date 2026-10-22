@@ -50,6 +50,9 @@ fn wrap<T: crate::server::Component + 'static>(c: Rc<T>) -> Loaded {
     (c.clone() as Rc<dyn Any>, c as Rc<dyn LifecycleDyn>)
 }
 
+/// Names of the available components (the modules in moonraker.components)
+pub const COMPONENT_NAMES: [&str; 37] = ["application", "websockets", "klippy_connection", "klippy_apis", "database", "template", "secrets", "authorization", "file_manager", "machine", "data_store", "shell_command", "proc_stats", "job_state", "job_queue", "history", "http_client", "announcements", "webcam", "extensions", "dbus_manager", "ldap", "octoprint_compat", "mqtt", "sensor", "spoolman", "update_manager", "gpio", "button", "power", "notifier", "zeroconf", "wled", "paneldue", "analysis", "td1", "simplyprint"];
+
 /// Returns Ok(None) when no component with the given name exists
 pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -> Result<Option<Loaded>, ConfigError> {
     let loaded = match name {

@@ -1144,7 +1144,7 @@ impl Observer {
             if let Some(fm) = fmw.upgrade() {
                 fm.cancel_notification(&key);
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            crate::utils::sleep_ordered(std::time::Duration::from_millis(5)).await;
             let _ = server().send_event("file_manager:filelist_changed", vec![result]);
         });
     }

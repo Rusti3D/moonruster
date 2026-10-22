@@ -176,7 +176,9 @@ impl ShellCommand {
         }
     }
 
-    fn spawn_child(&self, has_input: bool, use_stderr_pipe: bool) -> Option<tokio::process::Child> {
+    /// Spawns the process.  Without a stderr pipe, stderr shares the stdout
+    /// pipe (stderr=STDOUT in python), returned as the merged reader
+    fn spawn_child(&self, has_input: bool, use_stderr_pipe: bool) -> Option<(tokio::process::Child, Option<tokio::net::unix::pipe::Receiver>)> {
         if self.command.is_empty() {
             log::error!("shell_command: Command ({}) failed", self.name);
             return None;
@@ -184,12 +186,43 @@ impl ShellCommand {
         let mut cmd = tokio::process::Command::new(&self.command[0]);
         cmd.args(&self.command[1..]);
         cmd.stdin(if has_input { Stdio::piped() } else { Stdio::inherit() });
-        cmd.stdout(Stdio::piped());
+        let mut merged = None;
         if use_stderr_pipe {
+            cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
         } else {
-            // python redirects stderr to stdout
-            cmd.stderr(Stdio::piped());
+            let (r, w) = match std::io::pipe() {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error!("shell_command: Command ({}) failed
+{}", self.name, e);
+                    return None;
+                }
+            };
+            let w2 = match w.try_clone() {
+                Ok(w2) => w2,
+                Err(e) => {
+                    log::error!("shell_command: Command ({}) failed
+{}", self.name, e);
+                    return None;
+                }
+            };
+            cmd.stdout(Stdio::from(w));
+            cmd.stderr(Stdio::from(w2));
+            let fd: std::os::fd::OwnedFd = r.into();
+            unsafe {
+                let raw = std::os::fd::AsRawFd::as_raw_fd(&fd);
+                let fl = libc::fcntl(raw, libc::F_GETFL);
+                libc::fcntl(raw, libc::F_SETFL, fl | libc::O_NONBLOCK);
+            }
+            match tokio::net::unix::pipe::Receiver::from_owned_fd(fd) {
+                Ok(rx) => merged = Some(rx),
+                Err(e) => {
+                    log::error!("shell_command: Command ({}) failed
+{}", self.name, e);
+                    return None;
+                }
+            }
         }
         if let Some(env) = &self.env {
             cmd.env_clear();
@@ -200,7 +233,7 @@ impl ShellCommand {
         }
         cmd.kill_on_drop(false);
         match cmd.spawn() {
-            Ok(c) => Some(c),
+            Ok(c) => Some((c, merged)),
             Err(e) => {
                 log::error!("shell_command: Command ({}) failed\n{}", self.name, e);
                 None
@@ -247,7 +280,7 @@ impl ShellCommand {
         stream_callbacks: bool,
     ) -> Option<(bool, bool, Vec<u8>, Vec<u8>)> {
         let use_err_pipe = self.std_err_cb.is_some() || self.log_stderr;
-        let mut child = self.spawn_child(proc_input.is_some(), use_err_pipe)?;
+        let (mut child, merged) = self.spawn_child(proc_input.is_some(), use_err_pipe)?;
         self.pid.set(child.id());
         if let (Some(input), Some(mut stdin)) = (proc_input, child.stdin.take()) {
             let data = input.as_bytes().to_vec();
@@ -255,17 +288,14 @@ impl ShellCommand {
                 let _ = stdin.write_all(&data).await;
             });
         }
-        let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let out_cb = if stream_callbacks { self.std_out_cb.clone() } else { None };
-        // when stderr isn't requested it is merged into stdout
-        let err_cb = if stream_callbacks {
-            if use_err_pipe { self.std_err_cb.clone() } else { self.std_out_cb.clone() }
-        } else {
-            None
-        };
+        let err_cb = if stream_callbacks { self.std_err_cb.clone() } else { None };
         let log_stderr = self.log_stderr && stream_callbacks;
-        let read_out = read_stream(stdout, out_cb, false);
+        let read_out: futures::future::LocalBoxFuture<'_, Vec<u8>> = match merged {
+            Some(rx) => Box::pin(read_stream(Some(rx), out_cb, false)),
+            None => Box::pin(read_stream(child.stdout.take(), out_cb, false)),
+        };
         let read_err = read_stream(stderr, err_cb, log_stderr);
         let wait = async {
             let (o, e) = futures::join!(read_out, read_err);
@@ -276,7 +306,7 @@ impl ShellCommand {
         let notify = self.done_notify.borrow().clone();
         tokio::pin!(wait);
         let res = tokio::time::timeout(std::time::Duration::from_secs_f64(to), &mut wait).await;
-        let (timed_out, out, mut err, status) = match res {
+        let (timed_out, out, err, status) = match res {
             Ok((o, e, s)) => (false, o, e, s.ok()),
             Err(_) => {
                 // cancel concurrently with completing the wait
@@ -301,12 +331,6 @@ impl ShellCommand {
             s.code().or_else(|| s.signal().map(|sig| -sig))
         });
         self.return_code.set(code);
-        if !use_err_pipe {
-            // merged output
-            let mut merged = out.clone();
-            merged.append(&mut err);
-            return Some((!timed_out, timed_out, merged, Vec::new()));
-        }
         Some((!timed_out, timed_out, out, err))
     }
 

@@ -184,40 +184,70 @@ fn valid_reason(reason: &str) -> bool {
 }
 
 pub fn standard_reason(code: u16) -> &'static str {
+    // http.client.responses (python 3.12)
     match code {
         100 => "Continue",
         101 => "Switching Protocols",
+        102 => "Processing",
+        103 => "Early Hints",
         200 => "OK",
         201 => "Created",
         202 => "Accepted",
+        203 => "Non-Authoritative Information",
         204 => "No Content",
+        205 => "Reset Content",
         206 => "Partial Content",
+        207 => "Multi-Status",
+        208 => "Already Reported",
+        226 => "IM Used",
+        300 => "Multiple Choices",
         301 => "Moved Permanently",
         302 => "Found",
+        303 => "See Other",
         304 => "Not Modified",
+        305 => "Use Proxy",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
         400 => "Bad Request",
         401 => "Unauthorized",
+        402 => "Payment Required",
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
         406 => "Not Acceptable",
+        407 => "Proxy Authentication Required",
         408 => "Request Timeout",
         409 => "Conflict",
         410 => "Gone",
         411 => "Length Required",
         412 => "Precondition Failed",
         413 => "Request Entity Too Large",
+        414 => "Request-URI Too Long",
         415 => "Unsupported Media Type",
         416 => "Requested Range Not Satisfiable",
+        417 => "Expectation Failed",
+        418 => "I'm a Teapot",
+        421 => "Misdirected Request",
         422 => "Unprocessable Entity",
         423 => "Locked",
         424 => "Failed Dependency",
+        425 => "Too Early",
+        426 => "Upgrade Required",
+        428 => "Precondition Required",
         429 => "Too Many Requests",
+        431 => "Request Header Fields Too Large",
+        451 => "Unavailable For Legal Reasons",
         500 => "Internal Server Error",
         501 => "Not Implemented",
         502 => "Bad Gateway",
         503 => "Service Unavailable",
         504 => "Gateway Timeout",
+        505 => "HTTP Version Not Supported",
+        506 => "Variant Also Negotiates",
+        507 => "Insufficient Storage",
+        508 => "Loop Detected",
+        510 => "Not Extended",
+        511 => "Network Authentication Required",
         _ => "Unknown",
     }
 }
@@ -238,6 +268,10 @@ impl HttpError {
     }
     /// Python ServerErrors converted via HTTPError(e.status_code, reason=str(e))
     pub fn from_server_error(e: &ServerError) -> Self {
+        if e.is_exc {
+            log::debug!("Uncaught exception: {}", e.message);
+            return Self::internal();
+        }
         if e.is_http {
             return Self::std_from(e);
         }
@@ -975,18 +1009,27 @@ impl MoonrakerApp {
         }
         let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let mut builder = Response::builder().status(status);
+        // tornado's header order: Server, Content-Type, Date, then the rest
         builder = builder.header("Server", concat!("Moonruster/", env!("CARGO_PKG_VERSION")));
+        let ctype = resp.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("Content-Type")).map(|(_, v)| v.clone());
+        if let Some(Ok(val)) = ctype.as_deref().map(HeaderValue::from_str) {
+            builder = builder.header("Content-Type", val);
+        }
         builder = builder.header("Date", httpdate::fmt_http_date(std::time::SystemTime::now()));
         for (n, v) in &resp.headers {
+            if n.eq_ignore_ascii_case("Content-Type") {
+                continue;
+            }
             if let (Ok(name), Ok(val)) = (HeaderName::from_bytes(n.as_bytes()), HeaderValue::from_str(v)) {
                 builder = builder.header(name, val);
             }
         }
         let mut response = builder.body(resp.body).unwrap_or_else(|_| Response::new(empty_body()));
-        if let Some(r) = resp.reason {
-            if let Ok(rp) = hyper::ext::ReasonPhrase::try_from(r.into_bytes()) {
-                response.extensions_mut().insert(rp);
-            }
+        // tornado uses python's reason phrases, which differ from hyper's
+        // canonical ones for some codes (413, 414, 416...)
+        let reason = resp.reason.unwrap_or_else(|| standard_reason(resp.status).to_string());
+        if let Ok(rp) = hyper::ext::ReasonPhrase::try_from(reason.into_bytes()) {
+            response.extensions_mut().insert(rp);
         }
         response
     }
@@ -1416,10 +1459,11 @@ impl MoonrakerApp {
                 if (start.is_some() && (start.unwrap() >= size_i || (end.is_some() && start.unwrap() >= end.unwrap())))
                     || end == Some(0)
                 {
-                    let mut r = HttpResponse::new(416);
-                    r.set_header("Content-Type", "text/plain");
-                    r.set_header("Content-Range", format!("bytes */{}", size));
-                    return Ok(r);
+                    // headers from set_headers() are kept
+                    resp.status = 416;
+                    resp.set_header("Content-Type", "text/plain");
+                    resp.set_header("Content-Range", format!("bytes */{}", size));
+                    return Ok(resp);
                 }
                 if let Some(e) = end {
                     if e > size_i {

@@ -710,7 +710,7 @@ impl History {
     }
 
     fn parse_uid(job_id: &str) -> Result<i64, ServerError> {
-        i64::from_str_radix(job_id.trim(), 16).map_err(|_| ServerError::new(format!("invalid literal for int() with base 16: '{}'", job_id), 500))
+        i64::from_str_radix(job_id.trim(), 16).map_err(|_| ServerError::exc(format!("invalid literal for int() with base 16: '{}'", job_id)))
     }
 
     async fn handle_job_request(self: Rc<Self>, req: WebRequest) -> ApiResult {

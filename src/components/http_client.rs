@@ -36,7 +36,7 @@ pub struct HttpResponse {
 
 impl HttpResponse {
     pub fn json(&self) -> Result<Value, ServerError> {
-        serde_json::from_slice(&self.content).map_err(|e| ServerError::new(e.to_string(), 500))
+        serde_json::from_slice(&self.content).map_err(|e| ServerError::exc(e.to_string()))
     }
     pub fn header(&self, name: &str) -> Option<String> {
         self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())

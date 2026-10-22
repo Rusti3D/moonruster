@@ -163,7 +163,9 @@ impl MoonrakerLdap {
             }
             Some(g) => g.clone(),
         };
-        let groups = match user.attrs.get(&self.membership_attr) {
+        // ldap3 entry attributes are looked up case insensitively
+        let found = user.attrs.iter().find(|(k, _)| k.eq_ignore_ascii_case(&self.membership_attr)).map(|(_, v)| v);
+        let groups = match found {
             None => {
                 log::info!("Membership attribute {} not present in user entry", self.membership_attr);
                 return false;

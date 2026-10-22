@@ -107,7 +107,7 @@ impl WebCam {
         if !convert_local {
             return Ok(url);
         }
-        Ok(Self::convert_local(&url).await)
+        Self::convert_local(&url).await
     }
 
     fn get_local_ips() -> Vec<String> {
@@ -124,11 +124,11 @@ impl WebCam {
         out
     }
 
-    pub async fn convert_local(url: &str) -> String {
+    pub async fn convert_local(url: &str) -> Result<String, ServerError> {
         let re = Regex::new(r"^(\w+)://([^/]+)(/.*)?").unwrap();
         let c = match re.captures(url) {
             Some(c) => c,
-            None => return url.to_string(),
+            None => return Ok(url.to_string()),
         };
         let scheme = c[1].to_string();
         let addr_full = c[2].to_string();
@@ -140,7 +140,7 @@ impl WebCam {
         };
         let (mut addr, port) = match am {
             Some(x) => x,
-            None => return url.to_string(),
+            None => return Ok(url.to_string()),
         };
         let port = match port {
             Some(p) => p.trim_start_matches(':').to_string(),
@@ -148,21 +148,26 @@ impl WebCam {
                 "http" => "80".into(),
                 "https" => "443".into(),
                 "rtsp" => "554".into(),
-                _ => return url.to_string(),
+                _ => return Ok(url.to_string()),
             },
         };
-        let lookup = format!("{}:{}", addr, port);
-        if let Ok(Ok(mut addrs)) = tokio::task::spawn_blocking(move || std::net::ToSocketAddrs::to_socket_addrs(&lookup)).await {
-            if let Some(a) = addrs.next() {
-                addr = a.ip().to_string();
+        // socket.getaddrinfo(addr, int(port))
+        if let Ok(pnum) = port.parse::<u16>() {
+            let host = addr.clone();
+            if let Ok(Ok(mut addrs)) =
+                tokio::task::spawn_blocking(move || std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), pnum))).await
+            {
+                if let Some(a) = addrs.next() {
+                    addr = a.ip().to_string();
+                }
             }
         }
         let ip: std::net::IpAddr = match addr.parse() {
             Ok(i) => i,
-            Err(_) => return url.to_string(),
+            Err(_) => return Ok(url.to_string()),
         };
         if ip.is_loopback() || !Self::get_local_ips().contains(&addr) {
-            return url.to_string();
+            return Ok(url.to_string());
         }
         let shell: Option<Rc<crate::components::shell_command::ShellCommandFactory>> = server().lookup_component("shell_command");
         if let Some(sh) = shell {
@@ -172,21 +177,23 @@ impl WebCam {
                     if parts.len() < 5 {
                         continue;
                     }
-                    let (laddr, lport) = match parts[3].rsplit_once(':') {
-                        Some(x) if parts[3].matches(':').count() == 1 || parts[3].starts_with('[') => x,
-                        _ => continue,
+                    // `laddr, lport = parts[3].split(":")` raises on ipv6 entries
+                    let (laddr, lport) = match parts[3].split(':').collect::<Vec<_>>()[..] {
+                        [a, p] => (a, p),
+                        [_] => return Err(ServerError::exc("not enough values to unpack (expected 2, got 1)")),
+                        _ => return Err(ServerError::exc("too many values to unpack (expected 2)")),
                     };
                     if lport == port {
                         if laddr == "[::]" {
-                            return format!("{}://[::1]:{}{}", scheme, port, fragment);
+                            return Ok(format!("{}://[::1]:{}{}", scheme, port, fragment));
                         } else if laddr == "0.0.0.0" {
-                            return format!("{}://127.0.0.1:{}{}", scheme, port, fragment);
+                            return Ok(format!("{}://127.0.0.1:{}{}", scheme, port, fragment));
                         }
                     }
                 }
             }
         }
-        url.to_string()
+        Ok(url.to_string())
     }
 
     pub fn update(&mut self, req: &WebRequest) -> Result<(), ServerError> {

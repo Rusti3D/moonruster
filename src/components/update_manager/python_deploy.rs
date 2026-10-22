@@ -369,7 +369,7 @@ impl PythonDeploy {
         let pip_exec = AsyncPipExecutor::new(self.app.pip_cmd.as_deref().unwrap_or(""), None);
         self.app.update_pip(&pip_exec).await;
         let resp = pip_exec.call_pip_with_response(&pip_args, 1200.0, 3, None).await?;
-        let data: Value = serde_json::from_str(&resp).map_err(|e| ServerError::new(e.to_string(), 500))?;
+        let data: Value = serde_json::from_str(&resp).map_err(|e| ServerError::exc(e.to_string()))?;
         let install_data = data.get("install").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         if install_data.is_empty() {
             let mut st = self.st.borrow_mut();
@@ -415,7 +415,7 @@ impl PythonDeploy {
                 self.app.base.log_info("No commits found");
                 return Ok(());
             }
-            let sha = commits[0].get("sha").map(crate::pyfmt::py_str).ok_or_else(|| ServerError::new("KeyError: 'sha'", 500))?;
+            let sha = commits[0].get("sha").map(crate::pyfmt::py_str).ok_or_else(|| ServerError::exc("'sha'"))?;
             let mut st = self.st.borrow_mut();
             st.upstream_sha = sha.clone();
             st.upstream_version = st.current_version.clone();
@@ -446,7 +446,7 @@ impl PythonDeploy {
             st.upstream_version = st.current_version.clone();
             return Ok(());
         }
-        let tag = result.get("tag_name").map(crate::pyfmt::py_str).ok_or_else(|| ServerError::new("KeyError: 'tag_name'", 500))?;
+        let tag = result.get("tag_name").map(crate::pyfmt::py_str).ok_or_else(|| ServerError::exc("'tag_name'"))?;
         let uv = Version::py(&tag);
         let gt = uv.gt(&self.st.borrow().current_version)?;
         let mut st = self.st.borrow_mut();

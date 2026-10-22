@@ -25,21 +25,28 @@ pub struct ServerError {
     pub error_data: Option<Value>,
     /// Raised as a tornado HTTPError (message is a log message)
     pub is_http: bool,
+    /// A python exception that is not a ServerError (ValueError, KeyError,
+    /// OSError...): http requests get a plain 500, json-rpc gets str(e)
+    pub is_exc: bool,
 }
 
 impl ServerError {
     pub fn new(message: impl Into<String>, status_code: i64) -> Self {
-        ServerError { message: message.into(), status_code, error_data: None, is_http: false }
+        ServerError { message: message.into(), status_code, error_data: None, is_http: false, is_exc: false }
+    }
+    /// A non-ServerError python exception
+    pub fn exc(message: impl Into<String>) -> Self {
+        ServerError { message: message.into(), status_code: 500, error_data: None, is_http: false, is_exc: true }
     }
     /// tornado.web.HTTPError(code, log_message) raised from an API callback
     pub fn http(status_code: i64, log_message: impl Into<String>) -> Self {
-        ServerError { message: log_message.into(), status_code, error_data: None, is_http: true }
+        ServerError { message: log_message.into(), status_code, error_data: None, is_http: true, is_exc: false }
     }
     pub fn bad(message: impl Into<String>) -> Self {
         Self::new(message, 400)
     }
     pub fn agent(message: impl Into<String>, data: Value) -> Self {
-        ServerError { message: message.into(), status_code: 424, error_data: Some(data), is_http: false }
+        ServerError { message: message.into(), status_code: 424, error_data: Some(data), is_http: false, is_exc: false }
     }
 }
 
@@ -53,13 +60,13 @@ impl std::error::Error for ServerError {}
 
 impl From<std::io::Error> for ServerError {
     fn from(e: std::io::Error) -> Self {
-        ServerError::new(e.to_string(), 500)
+        ServerError::exc(e.to_string())
     }
 }
 
 impl From<rusqlite::Error> for ServerError {
     fn from(e: rusqlite::Error) -> Self {
-        ServerError::new(e.to_string(), 500)
+        ServerError::exc(e.to_string())
     }
 }
 

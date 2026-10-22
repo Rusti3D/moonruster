@@ -297,7 +297,7 @@ impl OctoPrintCompat {
         let trimmed = rel.trim_matches('/');
         let (root, filename) = trimmed
             .split_once('/')
-            .ok_or_else(|| ServerError::new("not enough values to unpack (expected 2, got 1)", 500))?;
+            .ok_or_else(|| ServerError::exc("not enough values to unpack (expected 2, got 1)"))?;
         let srv = server();
         let fm: Rc<crate::components::file_manager::FileManager> = srv.lookup_component("file_manager").ok_or_else(|| ServerError::new("fm", 500))?;
         if command != "select" {

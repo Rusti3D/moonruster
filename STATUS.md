@@ -32,9 +32,20 @@ Compared live: mqtt (3.1.1 + v5, api over mqtt, status publish), sensor, spoolma
 generic w/ templates, klipper_device, mqtt device), notifier list, zeroconf mDNS + SSDP xml, wled http,
 paneldue (byte identical serial output), analysis (estimator download/dump), simplyprint (mock cloud).
 
+## Review pass 2026-10-22 (more differential suites, all in tools/)
+scenario.py (uploads, metadata for 16 slicer formats + UFP, file ops, prints, history, queue, auth,
+octoprint upload; 127/147, rest = random/thumb-size/timing), ext_test.py (agents, unix socket,
+klippysocket, subscriptions, db backups; 36/37), power_test.sh + mock_power.py (tplink, tasmota,
+shelly, smartthings, homeseer, homeassistant, loxone, hue incl. outgoing requests; 47/47),
+machine_test.sh systemd_cli|systemd_dbus (7/8, rest = component order), config_cmp.py (includes,
+comments, case, DEFAULT, duplicates, syntax error/backup, secrets; all identical), difftest 117/143.
+Run them with tools/run_all.sh (detached: nohup setsid). Pending: mqtt_tls_test.sh (script just
+fixed, not run yet), ldap_test.sh + mock_ldap.py (needs /tmp/ldapvenv with ldaptor; not run yet),
+re-run scenario/difftest after the latest fixes.
+
 ## Not verified (no hardware / service here)
 gpio + button + rf + gpio power (no gpiochip in WSL), td1, wled serial, real Spoolman / SimplyPrint
-cloud, tplink/tasmota/shelly/homeseer/homeassistant/loxone/hue/smartthings/uhubctl devices,
+cloud, real smart plugs (mocked only), uhubctl,
 ldap, mqtt TLS, apprise delivery (list/config only).
 
 ## Known deliberate differences

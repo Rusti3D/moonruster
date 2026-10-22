@@ -176,6 +176,11 @@ impl NotifySyncLock {
         for _ in 0..5 {
             match tokio::time::timeout(std::time::Duration::from_secs_f64(timeout), evt.wait()).await {
                 Ok(_) => {
+                    // wait_for(shield(fut)) resumes a couple of loop iterations
+                    // after the future is set, letting the observer queue its
+                    // other notifications before the request finishes
+                    tokio::task::yield_now().await;
+                    tokio::task::yield_now().await;
                     ok = true;
                     break;
                 }
@@ -766,8 +771,8 @@ impl FileManager {
                 let dp = dir_path.clone();
                 tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dp))
                     .await
-                    .map_err(|e| ServerError::new(e.to_string(), 500))?
-                    .map_err(|e| ServerError::new(py_os_error(&e, &dir_path), 500))?;
+                    .map_err(|e| ServerError::exc(e.to_string()))?
+                    .map_err(|e| ServerError::exc(py_os_error(&e, &dir_path)))?;
             } else {
                 std::fs::remove_dir(&dir_path).map_err(|e| ServerError::bad(py_os_error(&e, &dir_path)))?;
             }
@@ -935,13 +940,16 @@ impl FileManager {
         let mut zw = zip::ZipWriter::new(file);
         let method = if store_only { zip::CompressionMethod::Stored } else { zip::CompressionMethod::Deflated };
         let mut processed = std::collections::HashSet::new();
-        let mut add = |zw: &mut zip::ZipWriter<std::fs::File>, path: &Path, arc: &str| -> Result<bool, ServerError> {
+        // Err(None) is a PermissionError, which is skipped for directory children
+        let mut add = |zw: &mut zip::ZipWriter<std::fs::File>, path: &Path, arc: &str| -> Result<bool, Option<ServerError>> {
             let data = match std::fs::read(path) {
                 Ok(d) => d,
-                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Ok(false),
-                Err(e) => return Err(e.into()),
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    return Err(None);
+                }
+                Err(e) => return Err(Some(e.into())),
             };
-            let meta = std::fs::metadata(path)?;
+            let meta = std::fs::metadata(path).map_err(|e| Some(e.into()))?;
             let mtime = chrono::DateTime::from_timestamp(meta.mtime(), 0).map(|d| d.with_timezone(&chrono::Local).naive_local());
             let mut opts = zip::write::SimpleFileOptions::default().compression_method(method).unix_permissions(meta.mode() & 0o7777);
             if let Some(m) = mtime {
@@ -957,8 +965,8 @@ impl FileManager {
                     opts = opts.last_modified_time(dt);
                 }
             }
-            zw.start_file(arc, opts).map_err(|e| ServerError::new(e.to_string(), 500))?;
-            zw.write_all(&data)?;
+            zw.start_file(arc, opts).map_err(|e| Some(ServerError::exc(e.to_string())))?;
+            zw.write_all(&data).map_err(|e| Some(e.into()))?;
             Ok(true)
         };
         for item in items {
@@ -976,7 +984,7 @@ impl FileManager {
                     continue;
                 }
                 let rel = ip.strip_prefix(&root_parent).unwrap_or(&ip).to_string_lossy().to_string();
-                add(&mut zw, &ip, &rel)?;
+                add(&mut zw, &ip, &rel).map_err(|e| e.unwrap_or_else(|| ServerError::exc(format!("[Errno 13] Permission denied: '{}'", ip.display()))))?;
                 continue;
             } else if !ip.is_dir() {
                 return Err(ServerError::bad(format!("Item at path '{}' is not a valid file or directory", item)));
@@ -992,11 +1000,14 @@ impl FileManager {
                         continue;
                     }
                     let rel = cp.strip_prefix(&root_parent).unwrap_or(&cp).to_string_lossy().to_string();
-                    add(&mut zw, &cp, &rel)?;
+                    match add(&mut zw, &cp, &rel) {
+                        Err(Some(e)) => return Err(e),
+                        _ => {}
+                    }
                 }
             }
         }
-        zw.finish().map_err(|e| ServerError::new(e.to_string(), 500))?;
+        zw.finish().map_err(|e| ServerError::exc(e.to_string()))?;
         shutil_move(&temp_dest.to_string_lossy(), &destination.to_string_lossy()).map_err(ServerError::bad)?;
         Ok(())
     }
@@ -1048,7 +1059,7 @@ impl FileManager {
             Ok(m) => m,
             Err(e) => {
                 if raise_error {
-                    return Err(ServerError::new(py_os_error(&e, path), 500));
+                    return Err(ServerError::exc(py_os_error(&e, path)));
                 }
                 let mut m = Map::new();
                 m.insert("modified".into(), json!(0));
@@ -1366,7 +1377,7 @@ impl FileManager {
             }
         }
         self.sync_lock.setup("delete_file", Path::new(&full_path), false)?;
-        std::fs::remove_file(&full_path).map_err(|e| ServerError::new(py_os_error(&e, &full_path), 500))?;
+        std::fs::remove_file(&full_path).map_err(|e| ServerError::exc(py_os_error(&e, &full_path)))?;
         self.observer.on_item_delete(&root, &full_path, false);
         Ok(self.sched_changed_event("delete_file", &root, &full_path, None, None, false))
     }
@@ -1396,7 +1407,7 @@ impl FileManager {
         let n = notify.clone();
         let k = key.clone();
         let handle = spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
+            crate::utils::sleep_ordered(std::time::Duration::from_secs_f64(delay)).await;
             if let Some(fm) = fm.upgrade() {
                 fm.scheduled_notifications.borrow_mut().remove(&k);
             }
@@ -1485,15 +1496,16 @@ pub fn shutil_move(src: &str, dst: &str) -> Result<String, String> {
 }
 
 fn copy_with_meta(src: &str, dst: &str) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
     std::fs::copy(src, dst).map_err(|e| py_os_error(&e, src))?;
-    if let Ok(meta) = std::fs::metadata(src) {
-        if let (Ok(a), Ok(m)) = (meta.accessed(), meta.modified()) {
-            let f = std::fs::OpenOptions::new().write(true).open(dst);
-            if let Ok(f) = f {
-                let times = std::fs::FileTimes::new().set_accessed(a).set_modified(m);
-                let _ = f.set_times(times);
-            }
-        }
+    // copystat sets the times by path (os.utime); reopening the file for
+    // writing would emit a second inotify CLOSE_WRITE event
+    if let (Ok(meta), Ok(cdst)) = (std::fs::metadata(src), std::ffi::CString::new(dst)) {
+        let times = [
+            libc::timespec { tv_sec: meta.atime() as libc::time_t, tv_nsec: meta.atime_nsec() as _ },
+            libc::timespec { tv_sec: meta.mtime() as libc::time_t, tv_nsec: meta.mtime_nsec() as _ },
+        ];
+        unsafe { libc::utimensat(libc::AT_FDCWD, cdst.as_ptr(), times.as_ptr(), 0) };
     }
     Ok(())
 }

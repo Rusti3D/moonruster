@@ -1975,7 +1975,7 @@ fn shelly_state(res: &Value, timer: &str) -> String {
 fn loxone_state(res: &Value) -> Result<String, ServerError> {
     let v = &res["LL"]["value"];
     let n: i64 = match v {
-        Value::String(s) => s.trim().parse().map_err(|_| ServerError::new(format!("invalid literal for int() with base 10: '{}'", s), 500))?,
+        Value::String(s) => s.trim().parse().map_err(|_| ServerError::exc(format!("invalid literal for int() with base 10: '{}'", s)))?,
         Value::Number(n) => n.as_f64().unwrap_or(0.0) as i64,
         _ => return Err(PowerDevice::key_err("LL")),
     };

@@ -366,9 +366,9 @@ impl NetDeploy {
         }
         std::fs::create_dir(path)?;
         let file = std::fs::File::open(release_file)?;
-        let mut zf = zip::ZipArchive::new(file).map_err(|e| ServerError::new(e.to_string(), 500))?;
+        let mut zf = zip::ZipArchive::new(file).map_err(|e| ServerError::exc(e.to_string()))?;
         for i in 0..zf.len() {
-            let mut entry = zf.by_index(i).map_err(|e| ServerError::new(e.to_string(), 500))?;
+            let mut entry = zf.by_index(i).map_err(|e| ServerError::exc(e.to_string()))?;
             let rel = match entry.enclosed_name() {
                 Some(p) => p,
                 None => continue,
@@ -425,7 +425,7 @@ impl NetDeploy {
         if !rinfo.is_file() {
             return Ok(());
         }
-        let mut uinfo: Value = serde_json::from_str(&std::fs::read_to_string(&rinfo)?).map_err(|e| ServerError::new(e.to_string(), 500))?;
+        let mut uinfo: Value = serde_json::from_str(&std::fs::read_to_string(&rinfo)?).map_err(|e| ServerError::exc(e.to_string()))?;
         if uinfo.get("version").map(crate::pyfmt::py_str).as_deref() != Some(new_ver) {
             uinfo["version"] = json!(new_ver);
             std::fs::write(&rinfo, uinfo.to_string())?;
