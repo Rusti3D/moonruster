@@ -6,6 +6,7 @@ pub mod git_deploy;
 pub mod net_deploy;
 mod pk_enums;
 pub mod python_deploy;
+pub mod self_deploy;
 pub mod swu_deploy;
 pub mod system_deploy;
 
@@ -972,8 +973,8 @@ fn get_base_configuration(config: &ConfigHelper) -> Result<ConfigHelper, ConfigE
     m.insert("pip_environment_variables".into(), "SKIP_CYTHON=Y".into());
     m.insert("path".into(), String::new());
     m.insert("managed_services".into(), "moonraker".into());
-    // Moonruster is not a python source tree, it is never self updated
-    m.insert("type".into(), AppType::None.name().into());
+    // Moonruster updates itself from its GitHub releases (self_deploy.rs)
+    m.insert("type".into(), AppType::Executable.name().into());
     base.insert("moonraker".into(), m);
     let mut k = IndexMap::new();
     k.insert("moved_origin".into(), "https://github.com/kevinoconnor/klipper.git".into());
@@ -1185,12 +1186,7 @@ impl UpdateManager {
         }
         let mcfg = app_config.getsection("moonraker");
         let kcfg = app_config.getsection("klipper");
-        let mtype = mcfg.get("type")?;
-        let m = match get_deploy(&mtype, &mcfg, &cmd_helper)? {
-            Some(d) => d,
-            None => plain(&mcfg, &cmd_helper)?,
-        };
-        updaters.insert("moonraker".into(), m);
+        updaters.insert("moonraker".into(), Rc::new(self_deploy::SelfDeploy::new(&mcfg, &cmd_helper)?));
         let mut kdeploy = None;
         if Path::new(&kcfg.get("path")?).exists() && Path::new(&kcfg.get("env")?).exists() {
             kdeploy = get_deploy(&kcfg.get("type")?, &kcfg, &cmd_helper)?;

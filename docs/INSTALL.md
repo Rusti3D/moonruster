@@ -132,5 +132,9 @@ else needs Python.
 
 ## Updating
 
-Build or download the new binary and run `scripts/remote-install.sh` again. The update manager in
-Mainsail/Fluidd does not update Moonruster itself yet.
+From Mainsail/Fluidd: the update manager's `moonraker` entry shows the installed Moonruster version
+against the latest [release](https://github.com/shawn-makes-stuff/moonruster/releases). Updating
+downloads the binary for the printer's architecture, replaces the installed one (with sudo when
+its folder isn't writable, e.g. `/usr/local/bin`) and restarts the service.
+
+Or build/download the new binary and run `scripts/remote-install.sh` again.

@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Tag matches Cargo.toml
+        # the binary reports its Cargo version to the update manager
+        run: test "$GITHUB_REF_NAME" = "v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
       - name: Toolchain
         run: |
           rustup update stable

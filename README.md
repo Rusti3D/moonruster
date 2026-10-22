@@ -19,8 +19,8 @@ real smart plugs (only mocked), Spoolman and SimplyPrint cloud services.
 
 Known differences from Moonraker:
 
-- The update manager cannot update Moonruster itself (the `moonraker` entry is empty). Klipper,
-  web clients, other repos and system packages update normally.
+- The update manager's `moonraker` entry updates Moonruster from this repo's GitHub releases
+  (the binary for its architecture, then a service restart) instead of a git checkout.
 - Thumbnails generated for the 32x32 preview can differ by a few bytes from Pillow's output.
 - Pre-SQLite (LMDB) databases are not converted.
 - The `Server` header reports `Moonruster/<version>`.
