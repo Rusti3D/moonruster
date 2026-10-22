@@ -31,9 +31,10 @@ while getopts "b:s:d:r" arg; do
     esac
 done
 
-# one connection for all commands, so the password is asked once
+# one connection for all commands, so the password is asked once; accept-new
+# because the host key prompt has no usable tty when run from Windows
 CTL="/tmp/moonruster-ssh-$$"
-SSH_OPTS=(-o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=60)
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=60)
 trap 'ssh "${SSH_OPTS[@]}" -O exit "$HOST" 2>/dev/null || true' EXIT
 
 ssh "${SSH_OPTS[@]}" "$HOST" "cat > /tmp/moonruster-install.sh" < "$SRCDIR/scripts/install.sh"
