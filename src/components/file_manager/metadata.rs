@@ -1100,32 +1100,44 @@ fn process_objects(file_path: &Path, slicer: &mut Slicer) -> bool {
         logi(&format!("Object Processing Failed, slicer {}not supported", slicer.slicer_name));
         return false;
     };
-    // preprocess_cancellation is a python module, run it with the system
-    // interpreter exactly as moonraker would
     let fname = file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let script = format!(
-        "import sys, shutil, os, tempfile\ntry:\n    from preprocess_cancellation import {p}\nexcept ImportError:\n    sys.exit(3)\nsrc = sys.argv[1]\nd = tempfile.mkdtemp()\ntmp = os.path.join(d, os.path.basename(src))\nwith open(src, 'r') as fi, open(tmp, 'w') as fo:\n    for line in {p}(fi):\n        fo.write(line)\nif os.path.islink(src):\n    src = os.path.realpath(src)\nshutil.move(tmp, src)\nshutil.rmtree(d, ignore_errors=True)\n",
-        p = proc
-    );
-    let out = std::process::Command::new("python3").arg("-c").arg(&script).arg(file_path).output();
-    match out {
-        Ok(o) if o.status.code() == Some(3) => {
-            logi("Module 'preprocess-cancellation' failed to load");
-            false
+    logi(&format!("Performing Object Processing on file: {}, sliced by {}", fname, slicer.slicer_name));
+    let result = super::cancellation::read_text(file_path).and_then(|text| {
+        let lines = super::cancellation::split_lines(&text);
+        match proc {
+            "preprocess_m486" => super::cancellation::preprocess_m486(&lines),
+            "preprocess_slicer" => super::cancellation::preprocess_slicer(&lines),
+            "preprocess_cura" => super::cancellation::preprocess_cura(&lines),
+            _ => super::cancellation::preprocess_ideamaker(&lines),
         }
-        Ok(o) if o.status.success() => {
-            logi(&format!("Performing Object Processing on file: {}, sliced by {}", fname, slicer.slicer_name));
-            true
+    });
+    let out = match result {
+        Ok(o) => o,
+        Err(e) => {
+            logi(&format!("Object processing failed: {}", e));
+            return false;
         }
-        Ok(o) => {
-            logi(&format!("Object processing failed: {}", String::from_utf8_lossy(&o.stderr)));
-            false
-        }
-        Err(_) => {
-            logi("Module 'preprocess-cancellation' failed to load");
-            false
-        }
+    };
+    // written to a temporary directory, then moved over the original
+    let tmp_dir = std::env::temp_dir().join(format!("ppc-{}", uuid::Uuid::new_v4().simple()));
+    let tmp_file = tmp_dir.join(&fname);
+    let res = std::fs::create_dir(&tmp_dir).and_then(|_| std::fs::write(&tmp_file, out.as_bytes()));
+    if let Err(e) = res {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        logi(&format!("Object processing failed: {}", e));
+        return false;
     }
+    let mut dest = file_path.to_path_buf();
+    if dest.is_symlink() {
+        dest = std::fs::canonicalize(&dest).unwrap_or(dest);
+    }
+    let moved = super::shutil_move(&tmp_file.to_string_lossy(), &dest.to_string_lossy());
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    if let Err(e) = moved {
+        logi(&format!("Object processing failed: {}", e));
+        return false;
+    }
+    true
 }
 
 fn run_gcode_processors(path: &Path, slicer: &mut Slicer, processors: &[Value], check_objects: bool) -> (Vec<String>, bool) {

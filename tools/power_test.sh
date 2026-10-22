@@ -9,7 +9,8 @@ MOCK=$!
 sleep 1
 for i in ref rust; do
     D=~/mr/inst/$i
-    cp $D/config/moonraker.conf $D/config/moonraker.conf.bak
+    # keep an older backup: it is the original if a previous run was killed
+    [ -f $D/config/moonraker.conf.bak ] || cp $D/config/moonraker.conf $D/config/moonraker.conf.bak
     cat >> $D/config/moonraker.conf <<'EOF'
 
 [power tp]

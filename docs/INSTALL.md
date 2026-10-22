@@ -69,16 +69,16 @@ This creates `~/printer_data` with a basic `moonraker.conf`, the environment fil
 installs (needed for service control, reboot/shutdown and system updates without sudo). Klipper
 must be started with `-a ~/printer_data/comms/klippy.sock` (the default for KIAUH installs).
 
-## Optional Python features
+## Notifications (optional)
+
+`[notifier ...]` sections need the Apprise command line tool:
 
 ```bash
-sudo apt install apprise                                              # [notifier] sections
-sudo pip3 install preprocess-cancellation --break-system-packages    # enable_object_processing: True
+sudo apt install apprise
 ```
 
-Moonruster runs the `apprise` command (or `python3 -m apprise`) and the system `python3` for
-object processing, so both must be installed system wide, not in a user-only or pipx location the
-service can't see. Both are only needed for those features.
+Moonruster runs `apprise` (or `python3 -m apprise`), so it must be installed system wide, not in a
+user-only or pipx location the service can't see. Nothing else needs Python.
 
 ## Updating
 

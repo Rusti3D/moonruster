@@ -39,14 +39,14 @@ klippysocket, subscriptions, db backups; 36/37), power_test.sh + mock_power.py (
 shelly, smartthings, homeseer, homeassistant, loxone, hue incl. outgoing requests; 47/47),
 machine_test.sh systemd_cli|systemd_dbus (7/8, rest = component order), config_cmp.py (includes,
 comments, case, DEFAULT, duplicates, syntax error/backup, secrets; all identical), difftest 117/143.
-Run them with tools/run_all.sh (detached: nohup setsid). Pending: mqtt_tls_test.sh (script just
-fixed, not run yet), ldap_test.sh + mock_ldap.py (needs /tmp/ldapvenv with ldaptor; not run yet),
-re-run scenario/difftest after the latest fixes.
+Also identical: mqtt_tls_test.sh (TLS via system CA store), ldap_test.sh 9/9 (mock_ldap.py,
+needs /tmp/ldapvenv with ldaptor), ppc_test.sh 6/6 (native preprocess_cancellation port,
+byte-identical output). Run them with tools/run_all.sh (detached: nohup setsid).
 
 ## Not verified (no hardware / service here)
 gpio + button + rf + gpio power (no gpiochip in WSL), td1, wled serial, real Spoolman / SimplyPrint
 cloud, real smart plugs (mocked only), uhubctl,
-ldap, mqtt TLS, apprise delivery (list/config only).
+apprise delivery (list/config only).
 
 ## Known deliberate differences
 - Server header "Moonruster/x"; error "traceback" is synthetic.
@@ -54,5 +54,6 @@ ldap, mqtt TLS, apprise delivery (list/config only).
 - update_manager "moonraker" entry has type none (status {}): Moonruster is a binary, not a
   python git checkout. Klipper, clients and system updates work.
 - notifier delivers through the `apprise` CLI (needs the apprise python package installed).
-- preprocess_cancellation runs via system python3; libcamera list is always [];
+- preprocess_cancellation is ported (cancellation.rs, shapely hulls not supported, moonraker doesn't
+  install shapely); libcamera list is always [];
   thumbnail PNG bytes can differ from PIL.

@@ -17,8 +17,9 @@ systemctl daemon-reload
 systemctl start mrtest
 for i in ref rust; do
     D=~/mr/inst/$i
-    cp $D/config/moonraker.conf $D/config/moonraker.conf.bak
-    cp $D/moonraker.asvc $D/moonraker.asvc.bak
+    # keep an older backup: it is the original if a previous run was killed
+    [ -f $D/config/moonraker.conf.bak ] || cp $D/config/moonraker.conf $D/config/moonraker.conf.bak
+    [ -f $D/moonraker.asvc.bak ] || cp $D/moonraker.asvc $D/moonraker.asvc.bak
     printf "mrtest\n" >> $D/moonraker.asvc
     sed -i "s/^provider: none/provider: $PROV\nvalidate_service: False\nvalidate_config: False/" $D/config/moonraker.conf
 done

@@ -27,15 +27,12 @@ Known differences from Moonraker:
 
 ## Python
 
-The server itself does not need Python. Two optional features call out to Python packages, the same
-ones Moonraker uses:
+Moonruster does not need Python. Object processing for cancel-object (`enable_object_processing`)
+is built in, a port of the `preprocess-cancellation` package that produces byte-identical output.
 
-| Feature | Needs | Only when |
-| --- | --- | --- |
-| Notifications (`[notifier ...]`) | `apprise` command (`pip install apprise`) | a notifier section is configured |
-| Object processing for cancel-object | `preprocess-cancellation` | `enable_object_processing: True` in `[file_manager]` |
-
-Without them those two features log an error and everything else runs normally.
+The one exception is notifications: `[notifier ...]` sections deliver through the `apprise` command
+(`sudo apt install apprise`), the same Apprise library Moonraker uses. Without it notifications
+log an error and everything else runs normally.
 
 ## Install
 

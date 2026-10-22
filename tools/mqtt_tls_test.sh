@@ -23,7 +23,8 @@ MOSQ=$!
 sleep 1
 for i in ref rust; do
     D=~/mr/inst/$i
-    cp $D/config/moonraker.conf $D/config/moonraker.conf.bak
+    # keep an older backup: it is the original if a previous run was killed
+    [ -f $D/config/moonraker.conf.bak ] || cp $D/config/moonraker.conf $D/config/moonraker.conf.bak
     python3 - "$D/config/moonraker.conf" <<'PY'
 import sys
 p = sys.argv[1]
@@ -39,9 +40,10 @@ for i in ref rust; do
     echo "=== $i"
     grep -E "MQTT|mqtt" ~/mr/inst/$i/logs/moonraker.log | tail -3 | cut -c1-160
     mosquitto_sub --cafile $T/ca.pem -h localhost -p 8883 -t "$i/moonraker/api/response" -C 1 -W 5 > $T/resp_$i.txt &
+    SUB=$!
     sleep 0.5
     mosquitto_pub --cafile $T/ca.pem -h localhost -p 8883 -t "$i/moonraker/api/request" -m '{"jsonrpc":"2.0","method":"printer.objects.query","params":{"objects":{"webhooks":null}},"id":7}'
-    wait
+    wait $SUB
     sed -e 's/"eventtime":[0-9.]*//' $T/resp_$i.txt
 done
 for i in ref rust; do

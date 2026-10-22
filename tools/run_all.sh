@@ -12,6 +12,8 @@ for s in $SUITES; do
     machine_cli) timeout 900 bash machine_test.sh systemd_cli ;;
     machine_dbus) timeout 900 bash machine_test.sh systemd_dbus ;;
     mqtt_tls) timeout 600 bash mqtt_tls_test.sh ;;
+    ldap) timeout 600 bash ldap_test.sh ;;
+    ppc) timeout 600 bash ppc_test.sh ;;
     config) timeout 900 ~/mr/venv/bin/python config_cmp.py ;;
     scenario) bash reset_both.sh > /dev/null; timeout 1800 ~/mr/venv/bin/python scenario.py ;;
     ext) bash reset_both.sh > /dev/null; timeout 600 ~/mr/venv/bin/python ext_test.py ;;

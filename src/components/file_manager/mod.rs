@@ -1,6 +1,7 @@
 // Enhanced gcode file management and analysis
 // (port of moonraker/components/file_manager/file_manager.py)
 
+pub mod cancellation;
 pub mod metadata;
 pub mod observer;
 pub mod storage;
@@ -1496,16 +1497,17 @@ pub fn shutil_move(src: &str, dst: &str) -> Result<String, String> {
 }
 
 fn copy_with_meta(src: &str, dst: &str) -> Result<(), String> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::copy(src, dst).map_err(|e| py_os_error(&e, src))?;
-    // copystat sets the times by path (os.utime); reopening the file for
-    // writing would emit a second inotify CLOSE_WRITE event
-    if let (Ok(meta), Ok(cdst)) = (std::fs::metadata(src), std::ffi::CString::new(dst)) {
-        let times = [
-            libc::timespec { tv_sec: meta.atime() as libc::time_t, tv_nsec: meta.atime_nsec() as _ },
-            libc::timespec { tv_sec: meta.mtime() as libc::time_t, tv_nsec: meta.mtime_nsec() as _ },
-        ];
-        unsafe { libc::utimensat(libc::AT_FDCWD, cdst.as_ptr(), times.as_ptr(), 0) };
+    // copyfile + copystat.  The times are set on the open file before it is
+    // closed, so the single inotify CLOSE_WRITE already sees the copied mtime
+    // (python sets them by path right after closing, which usually wins the
+    // race with its observer)
+    let meta = std::fs::metadata(src).map_err(|e| py_os_error(&e, src))?;
+    let mut fin = std::fs::File::open(src).map_err(|e| py_os_error(&e, src))?;
+    let mut fout = std::fs::File::create(dst).map_err(|e| py_os_error(&e, dst))?;
+    std::io::copy(&mut fin, &mut fout).map_err(|e| py_os_error(&e, dst))?;
+    let _ = fout.set_permissions(meta.permissions());
+    if let (Ok(a), Ok(m)) = (meta.accessed(), meta.modified()) {
+        let _ = fout.set_times(std::fs::FileTimes::new().set_accessed(a).set_modified(m));
     }
     Ok(())
 }
