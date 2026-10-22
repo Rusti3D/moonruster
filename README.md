@@ -25,6 +25,45 @@ Known differences from Moonraker:
 - Pre-SQLite (LMDB) databases are not converted.
 - The `Server` header reports `Moonruster/<version>`.
 
+## Performance
+
+Synthetic benchmarks, Moonraker `9e676eba` (Python 3.13) vs Moonruster, same config, x86_64.
+"Own memory" is the process's anonymous memory (`Pss_Anon`); code mapped from the program files
+(about 15 MB for either) is left out because the kernel can drop it under memory pressure.
+
+With a fake Klipper streaming realistic print status (toolhead, extruder, bed, motion report...)
+to websocket clients subscribed like Mainsail, 30 s per run:
+
+| | Moonraker | Moonruster |
+| --- | --- | --- |
+| Idle, CPU | 0.08 s | 0.03 s |
+| 20 status updates/s, 2 clients, CPU | 0.57 s | 0.22 s |
+| Own memory | 35 MB | 3.6 MB |
+
+With 200 G-code files and no Klipper:
+
+| | Moonraker | Moonruster |
+| --- | --- | --- |
+| Startup CPU | 1.84 s | 0.39 s |
+| CPU for 3,500 API requests | 28.4 s | 2.6 s |
+| `/server/files/list` (200 files) | 18 req/s | 212 req/s |
+
+On a printer (Elegoo Centauri Carbon, armv7, 115 MB RAM, COSMOS firmware whose Moonraker already
+uses lazy imports) Moonraker's own memory was 22.0 MB (19.8 MB in RAM + 2.2 MB in zram swap) and
+Moonruster's 6.8 MB (5.6 + 1.2), leaving 10.3 MB more `MemAvailable` and half the zram use.
+
+Reproduce the first table with `tools/bench.sh` (it starts `tools/mock_klippy.py` and
+`tools/ws_clients.py`, which needs `tornado`, e.g. from Moonraker's virtualenv):
+
+```bash
+PY=~/moonraker-env/bin/python tools/bench.sh target/release/moonruster
+PY=~/moonraker-env/bin/python tools/bench.sh ~/moonraker-env/bin/python ~/moonraker/moonraker/moonraker.py
+RATE=0.001 CLIENTS=0 tools/bench.sh target/release/moonruster    # idle
+```
+
+On a printer, compare the running service's own memory with
+`grep -e Pss_Anon -e SwapPss /proc/$(pidof moonruster)/smaps_rollup` (or the Moonraker pid).
+
 ## Python
 
 Moonruster does not need Python. Object processing for cancel-object (`enable_object_processing`)
