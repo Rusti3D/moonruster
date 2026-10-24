@@ -34,10 +34,15 @@ fcall = _n.fcall
 new = _n.new
 
 
+# the mirror modules (install): a class defined in one is mirrored, any
+# other subclass of a mirrored class is a component's
+_mirror_modules = {}
+
+
 class Meta(type):
     def __init__(cls, name, bases, ns):
         super().__init__(name, bases, ns)
-        if not ns.get("__mr_mirror__", False):
+        if cls.__module__ not in _mirror_modules and not ns.get("__mr_mirror__", False):
             # a component's subclass of a mirrored class: its methods override
             for key in ns:
                 _n.patched_class(cls, key)
@@ -94,6 +99,14 @@ class Attr:
             del obj.__dict__[self.name]
         else:
             _n.delete(obj, self.id)
+
+
+def attrs(cls, ids):
+    """a mirrored class's instance attributes (generated at the module's end,
+    so its methods keep Moonraker's line numbers); type.__setattr__: Meta's
+    would report a patch"""
+    for name, id in ids.items():
+        type.__setattr__(cls, name, Attr(id, name))
 
 
 class LazyAttr:
@@ -180,26 +193,60 @@ class MirrorFinder:
 _unofficial = None
 
 
-def load_component(server, config, component_name):
-    """Moonraker's server.load_component (9e676eba) for a component file in
-    the Moonraker tree: import it, then load_component() with its section;
-    pip recovery and the retry run inside the except block, as there, so a
-    second failure's traceback chains to the first"""
-    full_name = f"moonraker.components.{component_name}"
+class TableView:
+    """Server.components / failed_components as Moonraker's own code uses
+    them (`name in`, `[name]`, `[name] = component`, `.append(name)`):
+    views of Moonruster's tables, through the server's handlers"""
+    __slots__ = ("_has", "_get", "_set", "_names")
+
+    def __init__(self, has, get, set, names):
+        self._has, self._get, self._set, self._names = has, get, set, names
+
+    def __contains__(self, key):
+        return self._has(key)
+
+    def __getitem__(self, key):
+        if not self._has(key):
+            raise KeyError(key)
+        return self._get(key)
+
+    def __setitem__(self, key, value):
+        self._set(key, value)
+
+    def get(self, key, default=None):
+        return self._get(key) if self._has(key) else default
+
+    def append(self, key):
+        self._set(key, None)
+
+    def __iter__(self):
+        return iter(self._names())
+
+    def __len__(self):
+        return len(self._names())
+
+    def keys(self):
+        return list(self._names())
+
+    def __repr__(self):
+        return repr(list(self._names()))
+
+
+async def deliver(aw, done):
+    """A task Rust awaits (futures.rs await_py): `await aw` as Moonraker's
+    caller does, so a value that is not awaitable raises Python's own
+    TypeError ("object dict can't be used in 'await' expression"). The
+    outcome reaches Rust in the step that finishes `aw`: Moonraker's caller
+    goes on in that step, before the tasks `aw` scheduled (a done callback
+    would come one loop iteration later, after them)"""
     try:
-        module = importlib.import_module(full_name)
-        config = config.getsection(component_name, None)
-        load_func = getattr(module, "load_component")
-        return load_func(config)
-    except Exception as e:
-        if (
-            isinstance(e, ModuleNotFoundError) and
-            full_name != e.name and
-            component_name not in (_unofficial or [])
-        ):
-            if server.try_pip_recovery(e.name or "unknown"):
-                return load_component(server, config, component_name)
-        raise
+        result = await aw
+    except BaseException as e:
+        done(False, e)
+        if not isinstance(e, Exception):
+            raise
+    else:
+        done(True, result)
 
 
 class LogHandler(logging.Handler):
@@ -223,6 +270,7 @@ def software_info():
 
 
 def install(moonraker_dir, modules, log_level):
+    _mirror_modules.update(modules)
     sys.meta_path.insert(0, MirrorFinder(moonraker_dir, dict(modules)))
     # as Moonraker's startup: get_software_info() runs before logging is set
     # up (an error there goes to stderr through the handler logging's

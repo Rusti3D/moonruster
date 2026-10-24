@@ -94,7 +94,7 @@ impl TrackingStrategy {
             _ => return Err(ServerError::bad(format!("No enum member named {}", s))),
         })
     }
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Basic => "basic",
             Self::Delta => "delta",
@@ -133,19 +133,20 @@ impl Tracker {
         Tracker { strategy, tracked_value, last_value: None, count: 0, initialized: false, exclude_paused, reset_callback }
     }
 
-    pub fn reset(&mut self) {
-        let cb = self.reset_callback.clone();
+    /// FieldTracker.reset with the reset callback's value (`cb`), called
+    /// by the caller before: the callback may read the tracker
+    pub fn reset(&mut self, cb: Option<Value>) {
         match self.strategy {
             TrackingStrategy::Basic => {
                 if let Some(cb) = cb {
-                    self.tracked_value = cb();
+                    self.tracked_value = cb;
                 }
             }
             TrackingStrategy::Delta => {
                 self.tracked_value = json!(0);
                 self.last_value = None;
                 if let Some(cb) = cb {
-                    let v = cb();
+                    let v = cb;
                     if is_num(&v) {
                         self.last_value = Some(v);
                     } else {
@@ -156,7 +157,7 @@ impl Tracker {
             TrackingStrategy::Accumulate | TrackingStrategy::Average => {
                 match cb {
                     Some(cb) => {
-                        let v = cb();
+                        let v = cb;
                         if is_num(&v) {
                             self.tracked_value = v;
                         } else {
@@ -175,7 +176,7 @@ impl Tracker {
                 self.initialized = false;
                 match cb {
                     Some(cb) => {
-                        let v = cb();
+                        let v = cb;
                         if is_num(&v) {
                             self.tracked_value = v;
                             self.initialized = true;
@@ -190,7 +191,7 @@ impl Tracker {
             }
             TrackingStrategy::Collect => match cb {
                 Some(cb) => {
-                    let v = cb();
+                    let v = cb;
                     if v.is_array() {
                         self.tracked_value = v;
                     } else {
@@ -314,6 +315,25 @@ impl HistoryFieldData {
 
     pub fn update(&self, value: Value) {
         self.tracker.borrow_mut().update(value);
+    }
+
+    /// the tracker's reset, its reset callback called outside the borrow
+    pub fn reset_tracker(&self) {
+        let cb = self.tracker.borrow().reset_callback.clone();
+        let v = cb.map(|c| c());
+        self.tracker.borrow_mut().reset(v);
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn provider(&self) -> &str {
+        &self.provider
+    }
+
+    pub fn strategy(&self) -> TrackingStrategy {
+        self.strategy
     }
 
     pub fn get_configuration(&self) -> Value {
@@ -500,8 +520,11 @@ impl SqlTableDefinition for HistorySqlDefinition {
 // ***** Printer Job *****
 
 #[derive(Clone)]
+/// The job being recorded: History holds it by Rc and updates it in place,
+/// so a component holding history.current_job sees it change, as in
+/// Moonraker
 pub struct PrinterJob {
-    fields: Map<String, Value>,
+    pub fields: RefCell<Map<String, Value>>,
 }
 
 impl PrinterJob {
@@ -517,32 +540,41 @@ impl PrinterJob {
         f.insert("total_duration".into(), json!(0.0));
         f.insert("auxiliary_data".into(), json!([]));
         f.insert("user".into(), json!("No User"));
-        let mut j = PrinterJob { fields: f };
+        let j = PrinterJob { fields: RefCell::new(f) };
         j.update_from_ps(data);
         j
     }
 
-    fn update_from_ps(&mut self, data: &Map<String, Value>) {
+    pub fn update_from_ps(&self, data: &Map<String, Value>) {
+        let mut f = self.fields.borrow_mut();
         for (k, v) in data {
-            if self.fields.contains_key(k) && !v.is_null() {
-                self.fields.insert(k.clone(), v.clone());
+            if f.contains_key(k) && !v.is_null() {
+                f.insert(k.clone(), v.clone());
             }
         }
     }
 
-    fn finish(&mut self, status: &str, ps: &Map<String, Value>) {
-        self.fields.insert("end_time".into(), crate::utils::float_value(crate::utils::time_now()));
-        self.fields.insert("status".into(), json!(status));
+    pub fn finish(&self, status: &str, ps: &Map<String, Value>) {
+        {
+            let mut f = self.fields.borrow_mut();
+            f.insert("end_time".into(), crate::utils::float_value(crate::utils::time_now()));
+            f.insert("status".into(), json!(status));
+        }
         self.update_from_ps(ps);
     }
 
-    fn get(&self, n: &str) -> Value {
-        self.fields.get(n).cloned().unwrap_or(Value::Null)
+    pub fn get(&self, n: &str) -> Value {
+        self.fields.borrow().get(n).cloned().unwrap_or(Value::Null)
     }
 
-    fn set(&mut self, n: &str, v: Value) {
-        if self.fields.contains_key(n) {
-            self.fields.insert(n.into(), v);
+    pub fn has(&self, n: &str) -> bool {
+        self.fields.borrow().contains_key(n)
+    }
+
+    pub fn set(&self, n: &str, v: Value) {
+        let mut f = self.fields.borrow_mut();
+        if f.contains_key(n) {
+            f.insert(n.into(), v);
         }
     }
 
@@ -558,7 +590,7 @@ pub struct History {
     auxiliary_fields: RefCell<Vec<Rc<HistoryFieldData>>>,
     job_totals: RefCell<Map<String, Value>>,
     aux_totals: RefCell<Vec<Value>>,
-    current_job: RefCell<Option<PrinterJob>>,
+    current_job: RefCell<Option<Rc<PrinterJob>>>,
     current_job_id: Cell<Option<i64>>,
     job_user: RefCell<String>,
     job_paused: Cell<bool>,
@@ -681,7 +713,7 @@ impl History {
                     .unwrap_or("No User")
                     .to_string();
                 *h.job_user.borrow_mut() = username.clone();
-                if let Some(j) = h.current_job.borrow_mut().as_mut() {
+                if let Some(j) = h.current_job.borrow().as_ref() {
                     j.set("user", json!(username));
                 }
             }
@@ -816,13 +848,12 @@ impl History {
 
     async fn add_job(&self, job: PrinterJob) {
         let _g = self.request_lock.lock().await;
-        let mut job = job;
         job.set("user", json!(self.job_user.borrow().clone()));
-        *self.current_job.borrow_mut() = Some(job);
+        *self.current_job.borrow_mut() = Some(Rc::new(job));
         self.current_job_id.set(None);
         self.grab_job_metadata();
         for f in self.auxiliary_fields.borrow().iter() {
-            f.tracker.borrow_mut().reset();
+            f.reset_tracker();
         }
         self.set_aux_data();
         let job = self.current_job.borrow().clone().unwrap();
@@ -842,7 +873,7 @@ impl History {
 
     fn set_aux_data(&self) {
         let data: Vec<Value> = self.auxiliary_fields.borrow().iter().map(|f| f.as_dict()).collect();
-        if let Some(j) = self.current_job.borrow_mut().as_mut() {
+        if let Some(j) = self.current_job.borrow().as_ref() {
             j.set("auxiliary_data", Value::Array(data));
         }
     }
@@ -893,8 +924,8 @@ impl History {
             }
         }
         {
-            let mut job = self.current_job.borrow_mut();
-            let j = job.as_mut().unwrap();
+            let job = self.current_job.borrow();
+            let j = job.as_ref().unwrap();
             j.set("user", json!(self.job_user.borrow().clone()));
             j.finish(status, &pstats);
         }
@@ -933,7 +964,7 @@ impl History {
                 }
             }
         }
-        if let Some(j) = self.current_job.borrow_mut().as_mut() {
+        if let Some(j) = self.current_job.borrow().as_ref() {
             j.set("metadata", md);
         }
     }
@@ -992,7 +1023,8 @@ impl History {
             (Some(j), Some(id)) => (j, id),
             _ => return,
         };
-        let job = self.prep_requested_job(job.fields, &format!("{:06X}", id));
+        let fields = job.fields.borrow().clone();
+        let job = self.prep_requested_job(fields, &format!("{:06X}", id));
         let _ = server().send_event("history:history_changed", vec![json!({"action": action, "job": job})]);
     }
 
@@ -1003,6 +1035,14 @@ impl History {
         job.insert("job_id".into(), json!(job_id));
         job.shift_remove("instance_id");
         Value::Object(job)
+    }
+
+    pub fn current_job(&self) -> Option<Rc<PrinterJob>> {
+        self.current_job.borrow().clone()
+    }
+
+    pub fn current_job_id(&self) -> Option<i64> {
+        self.current_job_id.get()
     }
 
     pub fn register_auxiliary_field(&self, field: Rc<HistoryFieldData>) -> Result<(), ServerError> {

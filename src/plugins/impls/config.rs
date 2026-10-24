@@ -74,10 +74,23 @@ pub fn register(r: &mut Registry) {
         let option = a.get(0, "option").ok_or_else(|| py_error("TypeError", "missing option".into()))?.as_string()?;
         Ok(py_bool(this(a)?.has_option(&option)))
     });
-    r.method(name!("has_section"), |a| {
-        let section = a.get(0, "section").ok_or_else(|| py_error("TypeError", "missing section".into()))?.as_string()?;
-        Ok(py_bool(this(a)?.has_section(&section)))
-    });
+    // instance attributes holding configparser's methods in Moonraker
+    // (self.has_section = self.config.has_section)
+    r.attr(
+        name!("has_section"),
+        |o| {
+            crate::plugins::native::bound_method(o, |a| {
+                let section = a.get(0, "section").ok_or_else(|| py_error("TypeError", "missing section".into()))?.as_string()?;
+                Ok(py_bool(this(a)?.has_section(&section)))
+            })
+        },
+        None,
+    );
+    r.attr(
+        name!("sections"),
+        |o| crate::plugins::native::bound_method(o, |a| to_py(&Value::from(this(a)?.sections()))),
+        None,
+    );
     r.method(name!("get_options"), |a| {
         let opts = this(a)?.get_options();
         to_py(&Value::Object(opts.into_iter().map(|(k, v)| (k, Value::String(v))).collect()))

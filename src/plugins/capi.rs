@@ -106,6 +106,7 @@ capi! {
     fn PyFloat_AsDouble(o: *mut PyObject) -> c_double;
     fn PyBool_FromLong(v: c_long) -> *mut PyObject;
     fn PyUnicode_FromStringAndSize(s: *const c_char, len: Py_ssize_t) -> *mut PyObject;
+    fn PyBytes_FromStringAndSize(s: *const c_char, len: Py_ssize_t) -> *mut PyObject;
     fn PyUnicode_AsUTF8AndSize(o: *mut PyObject, len: *mut Py_ssize_t) -> *const c_char;
     fn PyTuple_New(len: Py_ssize_t) -> *mut PyObject;
     fn PyTuple_SetItem(t: *mut PyObject, i: Py_ssize_t, v: *mut PyObject) -> c_int;

@@ -1001,6 +1001,9 @@ impl ApiTransport for MqttClient {
     fn transport_type(&self) -> TransportType {
         TransportType::MQTT
     }
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        Some((self, "moonraker.components.mqtt", "MQTTClient"))
+    }
 
     fn screen_rpc_request(&self, _api_def: &ApiDefinition, _rt: RequestType, args: &mut Args) -> Result<(), ServerError> {
         if let Some(ts) = args.shift_remove("mqtt_timestamp") {

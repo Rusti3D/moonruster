@@ -21,6 +21,9 @@ use std::rc::Rc;
 /// The arguments of a mirrored call: the Python object (methods), the
 /// positional arguments and the keyword arguments, as the mirror passed them
 pub struct Args {
+    /// the qualified name the call was made under (a handler registered
+    /// under several names: the built-in modules' load_component)
+    pub qualname: &'static str,
     pub slf: Option<PyRef>,
     pub args: Vec<PyRef>,
     pub kwargs: Vec<(String, PyRef)>,
@@ -54,6 +57,11 @@ pub enum Handler {
 pub struct Registry(HashMap<&'static str, Handler>);
 
 impl Registry {
+    #[cfg(test)]
+    pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.0.keys().copied()
+    }
+
     pub fn method(&mut self, name: &'static str, f: Method) {
         self.0.insert(name, Handler::Method(f));
     }
@@ -144,6 +152,30 @@ fn dispatch(f: impl FnOnce() -> PyResult<PyRef>) -> *mut PyObject {
     }
 }
 
+// A Rust method bound to an object, for attributes that hold a method in
+// Moonraker (ConfigHelper.has_section = configparser's has_section): self
+// is (obj, the method's address)
+unsafe extern "C" fn k_bound(slf: *mut PyObject, a: *const *mut PyObject, n: Py_ssize_t, kw: *mut PyObject) -> *mut PyObject {
+    dispatch(|| {
+        let (args, kwargs) = collect(a, n, kw)?;
+        let obj = PyRef::borrowed(PyTuple_GetItem(slf, 0));
+        let addr = PyRef::borrowed(PyTuple_GetItem(slf, 1)).as_i64()? as usize;
+        // SAFETY: the address is a `Method` that bound_method() stored
+        let f: Method = std::mem::transmute::<usize, Method>(addr);
+        f(&Args { qualname: "", slf: Some(obj), args, kwargs })
+    })
+}
+
+static BOUND: PyMethodDef =
+    PyMethodDef { ml_name: c"bound".as_ptr(), ml_meth: k_bound, ml_flags: METH_FASTCALL | METH_KEYWORDS, ml_doc: std::ptr::null() };
+
+/// A callable that calls `f` with `obj` as self
+pub fn bound_method(obj: &PyRef, f: Method) -> PyResult<PyRef> {
+    let slf = tuple(&[obj, &py_int(f as usize as i64)]);
+    // the function takes its own reference to self
+    PyRef::owned(unsafe { PyCMethod_New(&BOUND, slf.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) })
+}
+
 // _moonruster.call(obj, id, *args, **kw): a mirrored method
 unsafe extern "C" fn k_call(_s: *mut PyObject, a: *const *mut PyObject, n: Py_ssize_t, kw: *mut PyObject) -> *mut PyObject {
     dispatch(|| {
@@ -154,7 +186,7 @@ unsafe extern "C" fn k_call(_s: *mut PyObject, a: *const *mut PyObject, n: Py_ss
         let rest = pos.split_off(2);
         let id = pos[1].as_i64()? as usize;
         match handler(id)? {
-            Handler::Method(f) => f(&Args { slf: Some(pos[0].clone()), args: rest, kwargs }),
+            Handler::Method(f) => f(&Args { qualname: IDS[id], slf: Some(pos[0].clone()), args: rest, kwargs }),
             _ => Err(py_error("TypeError", format!("moonruster: {} is not a method", IDS[id]))),
         }
     })
@@ -170,7 +202,7 @@ unsafe extern "C" fn k_fcall(_s: *mut PyObject, a: *const *mut PyObject, n: Py_s
         let rest = pos.split_off(1);
         let id = pos[0].as_i64()? as usize;
         match handler(id)? {
-            Handler::Method(f) => f(&Args { slf: None, args: rest, kwargs }),
+            Handler::Method(f) => f(&Args { qualname: IDS[id], slf: None, args: rest, kwargs }),
             _ => Err(py_error("TypeError", format!("moonruster: {} is not a function", IDS[id]))),
         }
     })
@@ -187,7 +219,7 @@ unsafe extern "C" fn k_new(_s: *mut PyObject, a: *const *mut PyObject, n: Py_ssi
         let id = pos[1].as_i64()? as usize;
         match handler(id)? {
             Handler::Ctor(f) => {
-                let rust = f(&Args { slf: Some(pos[0].clone()), args: rest, kwargs })?;
+                let rust = f(&Args { qualname: IDS[id], slf: Some(pos[0].clone()), args: rest, kwargs })?;
                 objects::bind(&pos[0], rust)?;
                 Ok(none())
             }
@@ -249,6 +281,12 @@ unsafe extern "C" fn k_patched_instance(_s: *mut PyObject, a: *const *mut PyObje
         PATCHED.with(|p| p.borrow_mut().insert((format!("@{h}"), name)));
         Ok(none())
     })
+}
+
+/// An object released by objects.rs: its instance patches go with it
+pub fn forget_instance(handle: i64) {
+    let key = format!("@{handle}");
+    PATCHED.with(|p| p.borrow_mut().retain(|(k, _)| *k != key));
 }
 
 /// Whether a component replaced `name` on the class or on the object

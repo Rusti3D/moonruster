@@ -322,9 +322,9 @@ Built (`src/plugins/`, cargo feature `plugins`, on by default):
   per Rust object. Calls from other threads are refused: Moonruster's objects are single-threaded.
 - `component.rs`: `PyComponent` and its lifecycle (`component_init` / `on_exit` / `close`, awaited when they
   return an awaitable).
-- `prelude.py` `load_component`: Moonraker's own order. It imports, then `getsection`, then `load_component()`,
-  with pip recovery and the retry inside the `except` block, so a second failure chains like Moonraker's.
-  `Server.try_pip_recovery` is Moonraker's own code (verbatim).
+- Loading is Moonraker's own `Server.load_component` (verbatim since Phase 4): import, `getsection`,
+  `load_component()`, pip recovery with the retry inside the `except` block, and its log lines.
+  `Server.try_pip_recovery` is Moonraker's own code too.
 - `get_software_info()` runs at Python start before the log handler is set, as in Moonraker. Its errors go to
   stderr (`ERROR:root:...`), not to moonraker.log.
 - Handlers: `ConfigHelper` (get, getint, getfloat, getboolean, has_option, has_section, get_options,
@@ -347,6 +347,103 @@ Known differences the check normalises (none of them from the component layer):
 
 No cost without a Python component: libpython is not mapped, there are no extra threads, and own memory is
 unchanged (x86).
+
+## Phase 4 and 5 results (2026-10-24, handlers and corpus)
+
+**Checks.**
+- `tools/plugin_cmp.py` runs Python Moonraker and Moonruster, each with its own batch Klippy, on the test
+  components in `tools/plugin_tests/components`:
+  - endpoints over HTTP, JSON-RPC and websocket;
+  - events, notifications and remote methods;
+  - the database, `klippy_apis` and `shell_command`;
+  - the loader and `source_info`.
+
+  Result: **0 differences** in responses and in every log entry about the test components, message order
+  included.
+- `tools/corpus_cmp.py` runs both servers on the real corpus (`plugin_trace/setup_trace.sh`):
+  - the components: timelapse, Happy Hare's `mmu_server`, the three uboe plugins, helix and geeks3d;
+  - what it drives: every endpoint and remote method the Phase 0 trace recorded, uploads with metadata, a print
+    with pause and resume, a cancelled print, and a Klipper restart.
+
+  Result: **0 differences** in `/server/info`, every step's response, and every log entry the components wrote.
+  Both tools refuse to run while a server from an earlier run holds their port.
+- A cargo test (`handlers_name_mirrored_ids`) checks that every handler names something the mirror has.
+
+**How each area is built.** Where Moonraker's code is plain Python over one primitive, that code runs verbatim
+(`tools/mirror_verbatim.txt`) and only the primitive is Rust, so logging, events and checks are Moonraker's:
+- **Server.**
+  - `load_component` is Moonraker's own. `components` and `failed_components` are live views of Moonruster's
+    tables (prelude `TableView`), so failed loads produce Moonraker's exact log entries and tracebacks.
+  - A built-in module's `load_component(config)` creates the Rust component.
+  - `send_event` is Moonraker's own and schedules `_process_event`, which is Rust.
+  - Also Rust: `register_event_handler`, `register_notification`, `register_remote_method` (Klippy's call goes
+    through Moonraker's `EventLoop.register_callback`), `is_running`, `is_configured`, `app_args`.
+- **Events.** When Moonraker passes an object, Python handlers get that object:
+  - the connection for `websockets:client_*`, the same object on every event;
+  - `KlippyState` for `server:klippy_started`;
+  - `JobEvent` for `job_state:state_changed`;
+  - `UserInfo` for `klippy_apis:job_start_complete`.
+
+  Rust handlers keep their JSON values. Handler exceptions are logged as `_process_event` logs them.
+- **Awaiting Python from Rust.** `_mr.deliver` reports the result in the task step that finishes, not through a
+  done callback one iteration later. A response therefore leaves before notifications its callback sent, as in
+  Moonraker.
+- **database.**
+  - `NamespaceWrapper` is Moonraker's own; operations are Rust over Moonruster's SQLite.
+  - Before the provider "thread" starts (`component_init`), calls run in place and errors raise; after that
+    they return a future completed on a later loop iteration.
+  - `ns_items` returns `sqlite3.Row` objects. Moonraker's `ns_contains` bug, a missing `key` argument, is kept.
+  - `SqliteProvider` is a native class with `is_alive`.
+- **klippy_apis.** `run_gcode`, `start_print`, `pause_print` / `resume_print` / `cancel_print`, `query_objects`
+  and the rest are verbatim. `_send_klippy_request` and `subscribe_objects` (the shared host subscription and
+  status callbacks) are Rust.
+- **file_manager.**
+  - Handlers: `get_directory`, `register_directory`, `get_metadata_storage` / `gcode_metadata`, and
+    `MetadataStorage` `get` / `insert`.
+  - When a component replaces `file_manager.METADATA_SCRIPT` (Happy Hare), metadata runs as Moonraker runs it:
+    `sys.executable <script> -c <cfg>`.
+- **http_client.** `get`, `post` and `delete` are verbatim; `request` and `HttpResponse` are Rust. A JSON body is
+  encoded by Moonraker's `json_wrapper`, and `json()` decodes with it too. `headers` and `error` build tornado's
+  types only when read.
+- **shell_command.** `ShellCommand`, `ShellCommandProtocol` and the factory's builders are verbatim. The
+  factory's running commands are kept in Rust, so shutdown cancels them.
+- **history.** `current_job` and `current_job_id`; `PrinterJob` attributes and methods; `HistoryFieldData` and
+  its trackers (a Python reset callback runs outside the tracker borrow); `register_auxiliary_field`.
+- **webcam.** `get_webcams`, `webcams` and `get_cam_by_uid` return the manager's own cameras. WebCam fields are
+  attributes, updated in place.
+- **Also:** `spoolman` attributes; `ConfigHelper.has_section` and `sections`. These are instance attributes
+  holding methods in Moonraker, served by `native::bound_method`.
+
+**Shared objects.** `WebCam` and `PrinterJob` are now held by `Rc` and updated in place, so a component holding
+one sees it change, as in Moonraker.
+
+**Mirror line numbers.** Every definition in the mirror sits at Moonraker's own line:
+- the generator pads to anchors and puts instance attributes at the module's end;
+- a class counts as mirrored when it is defined in a mirror module, so no marker line is needed.
+
+Tracebacks through mirror code show Moonraker's line numbers and source lines. Verbatim code is exact; a stub
+shows its method's first statement.
+
+**Leaks fixed on the way** (measured flat over 40,000 calls of a Python endpoint):
+- **Object table.** `objects.rs` never released a pair. A sweep, run when the table doubles, now releases pairs
+  nobody else holds: the Rust side held only by the table, the Python side only by it too (refcount against
+  a fresh object's).
+- **`await_py`.** Passed `into_raw()` of an int to `PyCMethod_New`, which takes its own reference, leaking 32
+  bytes per call.
+
+**Known differences.**
+- Below a method Moonruster implements in Rust, Moonraker's traceback continues into its own Python internals
+  (`klippy_connection.request` and down). Moonruster's ends at the component-facing frame. The tools compare
+  the components' frames.
+- Moonruster's own (Rust) log lines name the module, not the function.
+- Load order is config order. Moonraker's is set order, which is random per run.
+- Native classes are not instances of the dropped base:
+  - `WebSocket`: tornado;
+  - `RPCHandler`: tornado;
+  - `SqliteProvider`: `Thread`.
+- A Python callback that fails inside a history tracker reset logs and leaves the tracker reset.
+- `HttpResponse.error` for a non-HTTP failure is an `Exception` carrying the message. Moonraker gives the
+  original exception type.
 
 ## Sharing with kaliru
 

@@ -1,8 +1,18 @@
 // What each mirrored Moonraker method does in Moonruster, by Moonraker
 // qualified name (native.rs Registry). Grown component by component, each
 // area with a parity case against Python Moonraker (docs/PLUGINS.md).
+pub mod announcements;
+pub mod application;
 pub mod config;
+pub mod database;
+pub mod file_manager;
+pub mod history;
+pub mod http_client;
+pub mod klippy_apis;
 pub mod server;
+pub mod shell_command;
+pub mod source_info;
+pub mod webcam;
 
 pub(crate) use super::convert::{from_py, to_py};
 pub(crate) use super::native::{py_error, Args, Registry};
@@ -12,8 +22,32 @@ pub(crate) use serde_json::Value;
 pub(crate) use std::rc::Rc;
 
 pub fn register(r: &mut Registry) {
+    announcements::register(r);
+    application::register(r);
     config::register(r);
+    database::register(r);
+    file_manager::register(r);
+    history::register(r);
+    http_client::register(r);
+    klippy_apis::register(r);
     server::register(r);
+    shell_command::register(r);
+    source_info::register(r);
+    webcam::register(r);
+}
+
+#[cfg(test)]
+mod tests {
+    /// every handler names a method, attribute or constructor the mirror
+    /// has (a typo would leave it NotImplementedError at run time)
+    #[test]
+    fn handlers_name_mirrored_ids() {
+        let mut r = super::Registry::default();
+        super::register(&mut r);
+        let ids: std::collections::HashSet<&str> = crate::plugins::mirror_ids::IDS.iter().copied().collect();
+        let unknown: Vec<&str> = r.names().filter(|n| !ids.contains(n)).collect();
+        assert!(unknown.is_empty(), "handlers for names the mirror does not have: {:?}", unknown);
+    }
 }
 
 /// Whether `v` is moonraker.utils.Sentinel.MISSING (a missing default)

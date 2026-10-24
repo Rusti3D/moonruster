@@ -142,6 +142,13 @@ impl HttpClient {
         })
     }
 
+    /// The cached response's ETag and Last-Modified for a URL (the request
+    /// headers a cached request sends)
+    pub fn cache_validators(&self, url: &str) -> Option<(Option<String>, Option<String>)> {
+        let key = url.split('?').next().unwrap_or(url);
+        self.response_cache.borrow().get(key).map(|c| (c.etag(), c.last_modified()))
+    }
+
     pub async fn request(&self, method: &str, url: &str, body: Body, headers: &[(String, String)], opts: RequestOpts) -> HttpResponse {
         let cache_key = url.split('?').next().unwrap_or(url).to_string();
         let method = method.to_uppercase();

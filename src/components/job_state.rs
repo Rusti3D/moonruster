@@ -2,7 +2,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, Component};
+use crate::server::{server, Component, EventObject};
 use serde_json::{json, Map, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -133,9 +133,10 @@ impl JobState {
             }
         };
         self.last_event.set(ev);
-        let _ = srv.send_event(
+        let _ = srv.send_event_object(
             "job_state:state_changed",
             vec![json!(ev.as_str()), Value::Object(prev_ps.clone()), Value::Object(new_ps.clone())],
+            EventObject::JobEvent(ev.as_str().to_string()),
         );
     }
 

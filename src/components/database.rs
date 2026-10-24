@@ -638,6 +638,79 @@ impl MoonrakerDatabase {
         }
     }
 
+    /// SqliteProvider.update_item: dict values merge into a dict record or
+    /// item, anything else replaces it
+    pub fn update_item_sync(&self, namespace: &str, key: &Value, value: Value) -> Result<(), ServerError> {
+        let key_list = parse_namespace_key(key)?;
+        let mut record = self.get_record_or_404(namespace, &key_list[0])?;
+        let merge = |slot: &mut Value, value: Value| match (slot.as_object_mut(), value) {
+            (Some(o), Value::Object(v)) => o.extend(v),
+            (_, v) => *slot = v,
+        };
+        if key_list.len() == 1 {
+            merge(&mut record, value);
+        } else {
+            let not_found = || ServerError::new(format!("Key '{}' in namespace '{}' not found", crate::pyfmt::py_str(key), namespace), 404);
+            if !record.is_object() {
+                return Err(not_found());
+            }
+            let mut item = &mut record;
+            for k in &key_list[1..key_list.len() - 1] {
+                item = item.as_object_mut().and_then(|o| o.get_mut(k)).ok_or_else(not_found)?;
+            }
+            let last = key_list.last().unwrap();
+            match item.as_object_mut().and_then(|o| o.get_mut(last)) {
+                Some(slot) => merge(slot, value),
+                None => {
+                    return Err(ServerError::bad(format!(
+                        "Item at key '{}' in namespace '{}'is not a dictionary object, cannot update",
+                        key_list[..key_list.len() - 1].join("."),
+                        namespace
+                    )))
+                }
+            }
+        }
+        if !self.insert_record(namespace, &key_list[0], &record) {
+            log::info!("Error updating key '{}' in namespace '{}'", crate::pyfmt::py_str(key), namespace);
+        }
+        Ok(())
+    }
+
+    /// SqliteProvider.insert_batch: every record in one transaction
+    pub fn insert_batch_sync(&self, namespace: &str, records: &Map<String, Value>) -> Result<(), ServerError> {
+        let encoded = records.iter().map(|(k, v)| Ok((k, encode_record(v)?))).collect::<Result<Vec<_>, ServerError>>()?;
+        let mut conn = self.conn.borrow_mut();
+        let tx = conn.transaction()?;
+        for (k, enc) in encoded {
+            tx.execute(
+                &format!("INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(namespace, key) DO UPDATE SET value=excluded.value", NAMESPACE_TABLE),
+                params![namespace, k, enc],
+            )?;
+        }
+        tx.commit()?;
+        self.namespaces.borrow_mut().insert(namespace.to_string());
+        Ok(())
+    }
+
+    /// SqliteProvider.sync_namespace: replaces the namespace's records. As
+    /// there, the values go in through sqlite3's adapters, not encode_record
+    pub fn sync_namespace_sync(&self, namespace: &str, values: &Map<String, Value>) -> Result<(), ServerError> {
+        let mut conn = self.conn.borrow_mut();
+        let tx = conn.transaction()?;
+        tx.execute(&format!("DELETE FROM {} WHERE namespace = ?", NAMESPACE_TABLE), params![namespace])?;
+        for (k, v) in values {
+            tx.execute(&format!("INSERT INTO {} VALUES(?, ?, ?)", NAMESPACE_TABLE), params![namespace, k, json_to_sql(v)])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// SqliteProvider.is_alive(): its thread starts in component_init, before
+    /// that calls run in place
+    pub fn is_alive(&self) -> bool {
+        self.initialized.get()
+    }
+
     pub fn move_batch_sync(&self, namespace: &str, source: &[String], dest: &[String]) -> Result<(), ServerError> {
         let mut conn = self.conn.borrow_mut();
         let tx = conn.transaction()?;
@@ -885,6 +958,18 @@ impl MoonrakerDatabase {
 
     pub fn namespaces(&self) -> Vec<String> {
         self.namespaces.borrow().iter().cloned().collect()
+    }
+
+    pub fn registered_namespaces(&self) -> Vec<String> {
+        self.registered_namespaces.borrow().iter().cloned().collect()
+    }
+
+    pub fn protected_namespaces(&self) -> Vec<String> {
+        self.protected_namespaces.borrow().iter().cloned().collect()
+    }
+
+    pub fn forbidden_namespaces(&self) -> Vec<String> {
+        self.forbidden_namespaces.borrow().iter().cloned().collect()
     }
 
     // ***** Endpoints *****

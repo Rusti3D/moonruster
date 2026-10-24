@@ -33,7 +33,7 @@ fn ws_error_string(e: &tokio_tungstenite::tungstenite::Error) -> String {
 }
 
 pub struct SpoolManager {
-    spoolman_url: String,
+    pub spoolman_url: String,
     ws_url: String,
     sync_rate_seconds: i64,
     pending_reports: RefCell<IndexMap<i64, f64>>,

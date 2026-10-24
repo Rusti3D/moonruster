@@ -113,6 +113,43 @@ pub fn started() -> bool {
     STARTED.load(Ordering::Relaxed)
 }
 
+/// `sys.executable METADATA_SCRIPT` when a component replaced
+/// file_manager.METADATA_SCRIPT (Happy Hare runs its own script): Moonraker
+/// then extracts metadata with that command. None while it is Moonraker's
+/// own metadata.py, which Moonruster's extractor stands in for
+pub fn metadata_script_override() -> Option<String> {
+    if !started() {
+        return None;
+    }
+    let r = (|| -> PyResult<Option<String>> {
+        let m = lookup("sys", "modules")?.call_method("get", &[&py_str("moonraker.components.file_manager.file_manager")])?;
+        if m.is_none() {
+            return Ok(None);
+        }
+        let script = m.getattr("METADATA_SCRIPT")?.str()?;
+        // the module's own value: os.path.abspath(os.path.join(os.path.dirname(__file__), "metadata.py"))
+        let dir = lookup("os.path", "dirname")?.call(&[&m.getattr("__file__")?])?;
+        let own = lookup("os.path", "join")?.call(&[&dir, &py_str("metadata.py")])?;
+        let own = lookup("os.path", "abspath")?.call(&[&own])?.str()?;
+        if script == own {
+            return Ok(None);
+        }
+        Ok(Some(format!("{} {}", lookup("sys", "executable")?.str()?, script)))
+    })();
+    r.unwrap_or_else(|e| {
+        log::error!("moonruster: reading file_manager.METADATA_SCRIPT\n{}", e.traceback);
+        None
+    })
+}
+
+/// ShellCommandFactory.close() for the commands Python components run
+/// (nothing to do when no component started the interpreter)
+pub async fn impls_cancel_shell_commands() {
+    if started() {
+        impls::shell_command::cancel_running().await;
+    }
+}
+
 /// tokio on_thread_park: release the GIL while the loop thread waits
 pub fn park_hook() {
     if started() {

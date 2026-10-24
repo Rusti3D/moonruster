@@ -220,7 +220,7 @@ pub struct SimplyPrint {
     layer_detect: RefCell<LayerDetect>,
     webcam_name: String,
     webcam_url: RefCell<String>,
-    webcam_cam: RefCell<Option<crate::components::webcam::WebCam>>,
+    webcam_cam: RefCell<Option<Rc<crate::components::webcam::WebCam>>>,
     webcam_connected: Cell<bool>,
     last_received_temps: RefCell<HashMap<String, f64>>,
     last_err_log_time: Cell<f64>,
@@ -1796,6 +1796,9 @@ impl SimplyPrint {
 }
 
 impl ApiTransport for SimplyPrint {
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        Some((self, "moonraker.components.simplyprint", "SimplyPrint"))
+    }
     fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {
         {
             let mut ps = self.printer_status.borrow_mut();

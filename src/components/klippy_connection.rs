@@ -3,7 +3,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component};
+use crate::server::{server, spawn, Component, EventObject};
 use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
 use indexmap::IndexMap;
@@ -596,7 +596,8 @@ impl KlippyConnection {
             self.request_initial_subscriptions().await;
             self.request_endpoints().await;
             let startup_state = self.state.get();
-            srv.send_event("server:klippy_started", vec![json!(startup_state.as_str())]).await;
+            let state = EventObject::KlippyState(startup_state.as_str().to_string(), self.state_message_for(startup_state));
+            srv.send_event_object("server:klippy_started", vec![json!(startup_state.as_str())], state).await;
             self.klippy_started.set(true);
             if self.state.get() != KlippyState::READY {
                 log::info!("\n{}", self.state_message());

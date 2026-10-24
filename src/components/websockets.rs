@@ -3,7 +3,7 @@
 use crate::common::*;
 use crate::components::application::{error_response, full_body, Body, HttpError, HttpRequest, HttpResponse};
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component};
+use crate::server::{server, spawn, Component, EventObject};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
@@ -292,6 +292,14 @@ impl ApiTransport for RemoteConnection {
     fn transport_type(&self) -> TransportType {
         TransportType::WEBSOCKET
     }
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        match self.kind {
+            ConnKind::WebSocket => Some((self, "moonraker.components.websockets", "WebSocket")),
+            ConnKind::UnixSocket => Some((self, "moonraker.components.extensions", "UnixSocketClient")),
+            // Moonraker's BridgeSocket is not an APITransport
+            ConnKind::Bridge => None,
+        }
+    }
     fn user_info(&self) -> Option<UserInfo> {
         self.get_user_info()
     }
@@ -412,14 +420,14 @@ impl WebsocketManager {
     pub fn add_client(&self, sc: Rc<RemoteConnection>) {
         let uid = sc.uid();
         self.clients.borrow_mut().insert(uid, sc.clone());
-        let _ = server().send_event("websockets:client_added", vec![json!(uid)]);
+        let _ = server().send_event_object("websockets:client_added", vec![json!(uid)], EventObject::Transport(sc));
         log::debug!("New Websocket Added: {}", uid);
     }
 
     pub fn remove_client(&self, sc: &RemoteConnection) {
         let old = self.clients.borrow_mut().shift_remove(&sc.uid());
-        if old.is_some() {
-            let _ = server().send_event("websockets:client_removed", vec![json!(sc.uid())]);
+        if let Some(old) = old {
+            let _ = server().send_event_object("websockets:client_removed", vec![json!(sc.uid())], EventObject::Transport(old));
             log::debug!("Websocket Removed: {}", sc.uid());
         }
         self.check_closed_event();
@@ -520,8 +528,9 @@ async fn handle_identify(req: WebRequest) -> ApiResult {
         version,
         client_type
     );
-    let _ = server().send_event("websockets:client_identified", vec![json!(sc.uid())]);
-    Ok(json!({"connection_id": sc.uid()}))
+    let uid = sc.uid();
+    let _ = server().send_event_object("websockets:client_identified", vec![json!(uid)], EventObject::Transport(sc));
+    Ok(json!({"connection_id": uid}))
 }
 
 // ***** Websocket HTTP handling *****

@@ -28,25 +28,34 @@ pub struct ServerError {
     /// A python exception that is not a ServerError (ValueError, KeyError,
     /// OSError...): http requests get a plain 500, json-rpc gets str(e)
     pub is_exc: bool,
+    /// A python TypeError from an API callback (JSON-RPC: -32602 Invalid params)
+    pub is_type_error: bool,
+    /// The traceback of an exception from a Python component (the uncaught
+    /// exception log of HTTP requests shows it)
+    pub traceback: Option<String>,
 }
 
 impl ServerError {
     pub fn new(message: impl Into<String>, status_code: i64) -> Self {
-        ServerError { message: message.into(), status_code, error_data: None, is_http: false, is_exc: false }
+        ServerError { message: message.into(), status_code, error_data: None, is_http: false, is_exc: false, is_type_error: false, traceback: None }
     }
     /// A non-ServerError python exception
     pub fn exc(message: impl Into<String>) -> Self {
-        ServerError { message: message.into(), status_code: 500, error_data: None, is_http: false, is_exc: true }
+        ServerError { message: message.into(), status_code: 500, error_data: None, is_http: false, is_exc: true, is_type_error: false, traceback: None }
     }
     /// tornado.web.HTTPError(code, log_message) raised from an API callback
     pub fn http(status_code: i64, log_message: impl Into<String>) -> Self {
-        ServerError { message: log_message.into(), status_code, error_data: None, is_http: true, is_exc: false }
+        ServerError { message: log_message.into(), status_code, error_data: None, is_http: true, is_exc: false, is_type_error: false, traceback: None }
     }
     pub fn bad(message: impl Into<String>) -> Self {
         Self::new(message, 400)
     }
+    /// A python TypeError raised by an API callback
+    pub fn type_error(message: impl Into<String>) -> Self {
+        ServerError { is_type_error: true, ..Self::exc(message) }
+    }
     pub fn agent(message: impl Into<String>, data: Value) -> Self {
-        ServerError { message: message.into(), status_code: 424, error_data: Some(data), is_http: false, is_exc: false }
+        ServerError { message: message.into(), status_code: 424, error_data: Some(data), is_http: false, is_exc: false, is_type_error: false, traceback: None }
     }
 }
 
@@ -455,6 +464,11 @@ pub trait ApiTransport {
     fn transport_id(&self) -> u64;
     /// Returns the remote connection if this transport is a websocket/unix connection
     fn as_remote(self: Rc<Self>) -> Option<Rc<crate::components::websockets::RemoteConnection>> {
+        None
+    }
+    /// The Moonraker object this transport is, for Python components
+    /// (WebRequest.transport): the Rust object, its module and class
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
         None
     }
 }
@@ -866,6 +880,10 @@ impl JsonRpc {
             }
         };
         match result {
+            // common.py JsonRPC.execute_method: except TypeError
+            Err(e) if e.is_type_error => {
+                Some(self.build_error(-32602, &format!("Invalid params:\n{}", e.message), req_id, Some(&e), method_name))
+            }
             Err(e) if e.is_http => {
                 let reason = crate::components::application::standard_reason(e.status_code as u16);
                 let msg = format!("HTTP {}: {} ({})", e.status_code, reason, e.message);

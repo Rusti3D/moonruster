@@ -53,6 +53,14 @@ def name_list(fname):
 
 # methods emitted as Moonraker's own code (one qualified name per line)
 VERBATIM = name_list("mirror_verbatim.txt")
+# classes on a third-party base that Moonruster implements: mirrored, the
+# third-party base dropped (WebSocket, RPCHandler: request transports)
+# "qualname: m1 m2" also names methods it inherits from a dropped base
+# (SqliteProvider: Thread.is_alive)
+NATIVE_CLASSES = {l.split(":")[0].strip(): l.split(":")[1].split() if ":" in l else []
+                  for l in name_list("mirror_native_classes.txt")}
+# every class Moonraker defines (a native class keeps only these as bases)
+MOONRAKER_CLASSES = set()
 VERBATIM_SEEN = set()
 # whole modules emitted as Moonraker's own source: pure helpers without
 # server state (utils.json_wrapper: its msgspec switch included)
@@ -121,13 +129,45 @@ def own_yields(fn):
     return any(isinstance(y, (ast.Yield, ast.YieldFrom)) and id(y) not in nested for y in ast.walk(fn))
 
 
+class Anchor:
+    """In the output: the next line belongs at this line of Moonraker's file.
+    Blank lines are added up to it when the output is not past it yet, so
+    tracebacks through mirror code show Moonraker's line numbers and source
+    lines (the module's __file__ is Moonraker's file)"""
+    __slots__ = ("line",)
+
+    def __init__(self, line):
+        self.line = line
+
+
+ALIGN_MISSES = []
+
+
+def assemble(parts, modname):
+    out = []
+    for p in parts:
+        if isinstance(p, Anchor):
+            if len(out) + 1 < p.line:
+                out.extend([""] * (p.line - 1 - len(out)))
+            elif len(out) + 1 > p.line:
+                ALIGN_MISSES.append((modname, p.line, len(out) + 1))
+        else:
+            out.extend(p.split("\n"))
+    return "\n".join(out)
+
+
 class Ids:
     def __init__(self):
         self.names = []
+        self.index = {}
 
     def new(self, qualname):
-        self.names.append(qualname)
-        return len(self.names) - 1
+        # one ID per name: a name defined twice (Python keeps the last
+        # definition) is the same handler
+        if qualname not in self.index:
+            self.index[qualname] = len(self.names)
+            self.names.append(qualname)
+        return self.index[qualname]
 
 
 def param_list(fn, src):
@@ -211,12 +251,15 @@ def is_dataclass(cls):
 
 
 def verbatim_classes(trees):
-    """names of classes kept as Moonraker's code, to a fixpoint across modules"""
+    """names of classes kept as Moonraker's code, to a fixpoint across modules
+    (not the NATIVE_CLASSES, which Moonruster implements)"""
     names = set()
     while True:
         before = len(names)
-        for tree, third in trees:
+        for modname, tree, third in trees:
             for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+                if f"{modname}.{cls.name}" in NATIVE_CLASSES:
+                    continue
                 bases = base_names(cls)
                 if is_dataclass(cls) or any(
                         b in VERBATIM_ROOTS or b.split(".")[-1] in names or b.split(".")[0] in third
@@ -259,6 +302,7 @@ class ModuleGen:
         self.lazy = {}          # name -> source run on first access
         self.startup = []       # third-party side effects (source)
         self.out = []
+        self.attr_lines = []
         self.needed = set()     # names the emitted code references at definition time
         self.bound = set()      # module constants emitted so far
 
@@ -368,12 +412,13 @@ class ModuleGen:
         return out
 
     def emit_source(self, node, indent=""):
-        """a node as Moonraker's source, re-indented"""
+        """a node as Moonraker's source, re-indented, at its own lines"""
         lines = ast.get_source_segment(self.src, node, padded=False).split("\n")
-        start = [ast.get_source_segment(self.src, d) for d in getattr(node, "decorator_list", [])]
-        for d in start:
-            self.out.append(indent + "@" + d)
+        for d in getattr(node, "decorator_list", []):
+            self.out.append(Anchor(d.lineno))
+            self.out.append(indent + "@" + ast.get_source_segment(self.src, d))
         shift = len(indent) - node.col_offset
+        self.out.append(Anchor(node.lineno))
         self.out.append(indent + lines[0])
         for l in lines[1:]:
             if not l.strip():
@@ -394,6 +439,7 @@ class ModuleGen:
         for d in fn.args.defaults + [d for d in fn.args.kw_defaults if d is not None]:
             self.needed |= names_in(d)
         for dec in fn.decorator_list:
+            self.out.append(Anchor(dec.lineno))
             self.out.append(indent + "@" + ast.unparse(dec))
             self.needed |= names_in(dec)
         fid = self.ids.new(qual)
@@ -413,12 +459,18 @@ class ModuleGen:
                 body = f"async for _x in {expr}:\n{indent}        yield _x" if is_async else f"yield from {expr}"
             else:
                 body = f"return await {expr}" if is_async else f"return {expr}"
+        self.out.append(Anchor(fn.lineno))
         self.out.append(f"{indent}{'async def' if is_async else 'def'} {fn.name}({params}){ret}:")
+        # the call at the original's first statement (after its docstring):
+        # a traceback through the stub shows a line of Moonraker's method
+        first = fn.body[1] if len(fn.body) > 1 and is_docstring(fn.body[0]) else fn.body[0]
+        self.out.append(Anchor(first.lineno))
         self.out.append(f"{indent}    {body}")
 
     def emit_class(self, cls):
         bases_src = [ast.unparse(b).split("[")[0].split(".")[0] for b in cls.bases]
-        if any(b in self.lazy for b in bases_src):
+        native = f"{self.modname}.{cls.name}" in NATIVE_CLASSES
+        if not native and any(b in self.lazy for b in bases_src):
             self.defer(cls)  # its base is defined on first access: so is it
             return
         qual = f"{self.modname}.{cls.name}"
@@ -445,6 +497,12 @@ class ModuleGen:
         # third-party bases (tornado's RequestHandler): a Moonruster object is
         # not one; the class roots at _mr.Object instead
         bases = [b for b in bases if b.split(".")[0] not in self.third_names | THIRD_PARTY]
+        if native:
+            # Moonruster's object: bases that exist only as Moonraker's tornado
+            # code (defined on first access) are dropped as well
+            bases = [b for b in bases if b.split("[")[0].split(".")[0] not in self.lazy]
+            # and stdlib bases (SqliteProvider's Thread): the object is not one
+            bases = [b for b in bases if b.split("[")[0].split(".")[-1] in MOONRAKER_CLASSES]
         for b in bases:
             self.needed |= names_in(ast.parse(b, mode="eval"))
         meta = [ast.unparse(k.value) for k in cls.keywords if k.arg == "metaclass"]
@@ -452,14 +510,20 @@ class ModuleGen:
             bases = [b for b in bases if b.split(".")[-1] != "ABC"] + ["metaclass=_mr.AbcMeta"]
         elif meta:
             raise SystemExit(f"{self.modname}.{cls.name}: metaclass {meta[0]} is not handled")
+        self.out.append(Anchor(cls.lineno))
         self.out.append(f"class {cls.name}({', '.join(bases) or '_mr.Object'}):")
-        self.out.append("    __mr_mirror__ = True")
         qual = f"{self.modname}.{cls.name}"
         attrs, methods, local = set(), set(), set()
         for node in cls.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 methods.add(node.name)
-                self.emit_function(node, "    ", f"{qual}.{node.name}", True)
+                # a property's setter / deleter is a method of its own
+                # (qualified name "<class>.<name>.setter")
+                accessor = [d.attr for d in node.decorator_list
+                            if isinstance(d, ast.Attribute) and d.attr in ("setter", "deleter")
+                            and isinstance(d.value, ast.Name) and d.value.id == node.name]
+                suffix = f".{accessor[0]}" if accessor else ""
+                self.emit_function(node, "    ", f"{qual}.{node.name}{suffix}", True)
                 if node.args.args:
                     me = node.args.args[0].arg
                     for sub in ast.walk(node):
@@ -485,9 +549,18 @@ class ModuleGen:
                     for name in names:
                         self.out.append(f"    {name} = _mr.LazyAttr({name!r}, {code!r})")
                 local |= set(names)
-        for a in sorted(attrs - methods - local):
-            aid = self.ids.new(f"{qual}.{a}")
-            self.out.append(f"    {a} = _mr.Attr({aid}, {a!r})")
+        for m in NATIVE_CLASSES.get(qual, []):
+            mid = self.ids.new(f"{qual}.{m}")
+            self.out.append(f"    def {m}(self, *args, **kwargs):")
+            self.out.append(f"        return _mr.call(self, {mid}, *args, **kwargs)")
+            methods.add(m)
+        # instance attributes: set on the class at the module's end (no lines
+        # in between Moonraker's definitions)
+        names = {a: self.ids.new(f"{qual}.{a}") for a in sorted(attrs - methods - local)}
+        if names:
+            self.attr_lines.append(f"_mr.attrs({cls.name}, {names!r})")
+        if not cls.body or all(isinstance(n, ast.Expr) for n in cls.body) and not methods:
+            self.out.append("    pass")
         self.out.append("")
 
     def generate(self):
@@ -543,7 +616,7 @@ class ModuleGen:
         for fn in self.verbatim_used:
             local = {a.arg for a in fn.args.args + fn.args.kwonlyargs + fn.args.posonlyargs}
             local |= {x.arg for x in (fn.args.vararg, fn.args.kwarg) if x}
-            local |= bound_names(fn) | {n.name for n in ast.walk(fn) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            local |= self.binds(fn) | {n.name for n in ast.walk(fn) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
             for sub in ast.walk(fn):
                 if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                     sa = sub.args
@@ -568,9 +641,9 @@ class ModuleGen:
             if full in self.all_modules:
                 stmt = f"import importlib as _mr_il\n{name} = _mr_il.import_module({full!r})"
             self.lazy[name] = stmt
-        tail = ["", f"_mr_lazy = {self.lazy!r}", f"_mr_startup = {self.startup!r}",
+        tail = [""] + self.attr_lines + [f"_mr_lazy = {self.lazy!r}", f"_mr_startup = {self.startup!r}",
                 "__getattr__ = _mr.module_getattr(__name__, _mr_lazy)", ""]
-        return "\n".join(head + self.out + tail)
+        return assemble(head + self.out + tail, self.modname)
 
 
 def main():
@@ -585,7 +658,8 @@ def main():
             parts.pop()
         src = path.read_text(encoding="utf-8")
         sources.append((".".join(parts), is_pkg, src))
-    trees = [(ast.parse(s), third_party_bound(ast.parse(s))) for _, _, s in sources]
+    trees = [(m, ast.parse(s), third_party_bound(ast.parse(s))) for m, _, s in sources]
+    MOONRAKER_CLASSES.update(n.name for _, t, _ in trees for n in ast.walk(t) if isinstance(n, ast.ClassDef))
     verbatim_names = verbatim_classes(trees)
     ids = Ids()
     mdir = out / "mirror"
@@ -688,6 +762,10 @@ def main():
           f"{len(verbatim_names)} verbatim classes", file=sys.stderr)
     for d in dropped:
         print(f"  dropped: {d}", file=sys.stderr)
+    # definitions placed after their Moonraker line (generated lines before
+    # them outnumber the original's): their tracebacks show other lines
+    for modname, want, got in ALIGN_MISSES:
+        print(f"  not at its line: {modname} line {want} (at {got})", file=sys.stderr)
 
 
 if __name__ == "__main__":

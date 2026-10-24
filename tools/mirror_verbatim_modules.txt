@@ -9,7 +9,6 @@ moonraker.utils.filelock
 moonraker.utils.ioctl_macros
 moonraker.utils.json_wrapper
 moonraker.utils.pip_utils
-moonraker.utils.source_info
 moonraker.utils.sysdeps_parser
 moonraker.utils.sysfs_devs
 moonraker.utils.versions

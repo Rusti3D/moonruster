@@ -66,19 +66,21 @@ impl Component for PyComponent {
     }
 }
 
-/// Import moonraker.components.<name> and call its load_component() with
-/// the [name] section. As in Moonraker, the module is imported before the
-/// section is taken (getsection records it), so a failed import leaves the
-/// parsed config alone. Err carries Moonraker's log text: the traceback.
-pub fn load(name: &str, root: &ConfigHelper) -> Result<Rc<PyComponent>, ConfigError> {
-    super::ensure_started().map_err(ConfigError)?;
+/// Load the Python component `name` with Moonraker's own
+/// Server.load_component (mirror_verbatim.txt): its import, getsection,
+/// load_component(config), pip recovery and log lines. It records the
+/// component, or the failure, in Moonruster's tables (Server.components /
+/// failed_components views)
+pub fn load(name: &str, root: &ConfigHelper) -> Result<(), ConfigError> {
+    if let Err(e) = super::ensure_started() {
+        log::error!("Unable to load component: ({})\n{}", name, e);
+        crate::server::server().set_failed_component(name);
+        return Err(ConfigError(e));
+    }
     let r = (|| {
-        // the prelude's load_component: Moonraker's import, getsection,
-        // load_component() and pip recovery, in Moonraker's order
         let srv = super::objects::wrap(crate::server::server())?;
         let cfg = super::objects::wrap(Rc::new(root.clone()))?;
-        let obj = lookup("_mr", "load_component")?.call(&[&srv, &cfg, &py_str(name)])?;
-        Ok(PyComponent::new(obj))
+        srv.call_method("load_component", &[&cfg, &py_str(name)])
     })();
-    r.map_err(|e: PyError| ConfigError(if e.traceback.is_empty() { format!("{}: {}", e.type_name, e.message) } else { e.traceback }))
+    r.map(|_| ()).map_err(|e: PyError| ConfigError(format!("{}: {}", e.type_name, e.message)))
 }

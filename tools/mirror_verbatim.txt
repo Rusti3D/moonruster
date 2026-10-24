@@ -6,3 +6,49 @@ moonraker.eventloop.EventLoop
 moonraker.eventloop.FlexTimer
 # Server.try_pip_recovery: Moonraker's own pip recovery (pip_utils, sys.executable)
 moonraker.server.Server.try_pip_recovery
+# Server.send_event: create_future + event_loop.register_callback(self._process_event, ...), Moonraker's
+# scheduling (the handlers run after the sender's step); _process_event is a Rust handler
+moonraker.server.Server.send_event
+# utils.source_info: Moonraker's stdlib-only functions; the importlib_metadata ones (load_distribution_info,
+# _load_*_json, is_vitualenv_project), read_asset and get_asset_path are Rust handlers, so the
+# module does not import importlib_metadata for every component
+moonraker.utils.source_info.package_path
+moonraker.utils.source_info.source_path
+moonraker.utils.source_info.is_git_repo
+moonraker.utils.source_info.find_git_repo
+moonraker.utils.source_info.is_dist_package
+moonraker.utils.source_info.package_version
+moonraker.utils.source_info.normalize_project_name
+# WebRequest: a plain holder of a request's data with pure accessors; Moonruster builds one per call
+moonraker.common.WebRequest
+# NamespaceWrapper: pure Python over MoonrakerDatabase's methods
+moonraker.components.database.NamespaceWrapper
+# KlippyAPI's request methods: Moonraker's own code over _send_klippy_request (a Rust handler), so their
+# logging, events and result checks are Moonraker's
+moonraker.components.klippy_apis.KlippyAPI.run_gcode
+moonraker.components.klippy_apis.KlippyAPI.start_print
+moonraker.components.klippy_apis.KlippyAPI.pause_print
+moonraker.components.klippy_apis.KlippyAPI.resume_print
+moonraker.components.klippy_apis.KlippyAPI.cancel_print
+moonraker.components.klippy_apis.KlippyAPI.do_restart
+moonraker.components.klippy_apis.KlippyAPI.list_endpoints
+moonraker.components.klippy_apis.KlippyAPI.emergency_stop
+moonraker.components.klippy_apis.KlippyAPI.get_klippy_info
+moonraker.components.klippy_apis.KlippyAPI.get_object_list
+moonraker.components.klippy_apis.KlippyAPI.query_objects
+moonraker.components.klippy_apis.KlippyAPI.subscribe_gcode_output
+moonraker.components.klippy_apis.KlippyAPI.register_method
+# HttpClient.get / post / delete: Moonraker's own code over request (a Rust handler)
+moonraker.components.http_client.HttpClient.get
+moonraker.components.http_client.HttpClient.post
+moonraker.components.http_client.HttpClient.delete
+# shell_command: ShellCommand and the factory's builders are Moonraker's own code (asyncio subprocesses);
+# the factory's running-command registry is a Rust handler, so shutdown cancels them
+moonraker.components.shell_command.ShellCommand
+moonraker.components.shell_command.ShellCommandProtocol
+moonraker.components.shell_command.ShellCommandFactory.build_shell_command
+moonraker.components.shell_command.ShellCommandFactory.run_cmd_async
+moonraker.components.shell_command.ShellCommandFactory.exec_cmd
+# Server.load_component: Moonraker's own loader (import, getsection, load_component(), pip recovery, its
+# log lines), over views of Moonruster's component table (Server.components / failed_components handlers)
+moonraker.server.Server.load_component

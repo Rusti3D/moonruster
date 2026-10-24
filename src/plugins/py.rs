@@ -184,6 +184,10 @@ pub fn py_str(s: &str) -> PyRef {
     PyRef(unsafe { PyUnicode_FromStringAndSize(s.as_ptr() as *const _, s.len() as Py_ssize_t) })
 }
 
+pub fn py_bytes(b: &[u8]) -> PyResult<PyRef> {
+    PyRef::owned(unsafe { PyBytes_FromStringAndSize(b.as_ptr() as *const _, b.len() as Py_ssize_t) })
+}
+
 pub fn tuple(items: &[&PyRef]) -> PyRef {
     unsafe {
         let t = PyTuple_New(items.len() as Py_ssize_t);
