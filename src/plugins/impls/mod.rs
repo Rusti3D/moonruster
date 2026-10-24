@@ -12,6 +12,7 @@ pub mod klippy_apis;
 pub mod server;
 pub mod shell_command;
 pub mod source_info;
+pub mod template;
 pub mod webcam;
 
 pub(crate) use super::convert::{from_py, to_py};
@@ -33,6 +34,7 @@ pub fn register(r: &mut Registry) {
     server::register(r);
     shell_command::register(r);
     source_info::register(r);
+    template::register(r);
     webcam::register(r);
 }
 

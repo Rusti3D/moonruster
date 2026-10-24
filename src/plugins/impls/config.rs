@@ -63,7 +63,98 @@ fn get_kind(a: &Args, kind: OptKind, numeric: bool) -> PyResult<PyRef> {
     to_py(&v)
 }
 
+/// A value as Moonraker records it in `parsed`: JSON types as they are,
+/// anything else as str(value)
+fn parsed_value(v: &PyRef) -> Value {
+    let json = ["NoneType", "int", "float", "bool", "str", "dict", "list"]
+        .iter()
+        .any(|t| v.getattr("__class__").and_then(|c| c.getattr("__name__")).and_then(|n| n.as_string()).map(|n| n == *t).unwrap_or(false));
+    if json {
+        if let Ok(j) = from_py(v) {
+            return j;
+        }
+    }
+    Value::String(v.str().unwrap_or_default())
+}
+
+/// configparser's missing option / section exceptions
+fn is_missing_option(e: &PyError) -> bool {
+    let is = |n: &str| match (&e.value, lookup("configparser", n)) {
+        (Some(v), Ok(c)) => v.is_instance(&c).unwrap_or(false),
+        _ => false,
+    };
+    is("NoOptionError") || is("NoSectionError")
+}
+
 pub fn register(r: &mut Registry) {
+    // ConfigHelper._get_option(func, option, default, above, below, minval,
+    // maxval, deprecate): Moonraker's getlists / getdict / gettemplate ...
+    // call it with their parse function
+    r.method(name!("_get_option"), |a| {
+        let cfg = this(a)?;
+        let func = a.get(0, "func").ok_or_else(|| py_error("TypeError", "missing func".into()))?.clone();
+        let option = a.get(1, "option").ok_or_else(|| py_error("TypeError", "missing option".into()))?.as_string()?;
+        let default = match a.get(2, "default") {
+            Some(d) if !is_missing(d)? => Some(d.clone()),
+            _ => None,
+        };
+        let bounds = Bounds {
+            above: opt_f64(a.get(3, "above"))?,
+            below: opt_f64(a.get(4, "below"))?,
+            minval: opt_f64(a.get(5, "minval"))?,
+            maxval: opt_f64(a.get(6, "maxval"))?,
+        };
+        let deprecate = match a.get(7, "deprecate") {
+            Some(d) => d.is_true()?,
+            None => false,
+        };
+        let fetch = |section: &str, opt: &str| -> Result<PyRef, Result<String, String>> {
+            func.call(&[&py_str(section), &py_str(opt)]).map_err(|e| {
+                let msg = e.value.as_ref().and_then(|v| v.str().ok()).unwrap_or(e.message.clone());
+                if is_missing_option(&e) {
+                    Ok(msg)
+                } else {
+                    Err(msg)
+                }
+            })
+        };
+        // isinstance(val, (int, float)): bounds apply (bool is an int)
+        let numeric = |v: &PyRef| -> Option<(f64, bool)> {
+            let int = v.is_instance(&lookup("builtins", "int").ok()?).ok()?;
+            let float = v.is_instance(&lookup("builtins", "float").ok()?).ok()?;
+            (int || float).then(|| (v.as_f64().unwrap_or(0.0), int))
+        };
+        cfg.get_option_with(&fetch, &option, default, Some((&numeric, bounds)), deprecate, &parsed_value).map_err(config_error)
+    });
+    r.attr(
+        name!("config"),
+        |o| {
+            lookup("_mr", "ConfigView")?.call(&[
+                &crate::plugins::native::bound_method(o, |a| {
+                    let section = a.get(0, "section").ok_or_else(|| py_error("TypeError", "missing section".into()))?.as_string()?;
+                    let option = a.get(1, "option").ok_or_else(|| py_error("TypeError", "missing option".into()))?.as_string()?;
+                    Ok(match this(a)?.raw_get(&section, &option) {
+                        Ok(v) => tuple(&[&py_int(0), &py_str(&v)]),
+                        Err(crate::confighelper::RawMissing::Section) => tuple(&[&py_int(1), &none()]),
+                        Err(crate::confighelper::RawMissing::Option) => tuple(&[&py_int(2), &none()]),
+                    })
+                })?,
+                &crate::plugins::native::bound_method(o, |a| to_py(&Value::from(this(a)?.sections())))?,
+                &crate::plugins::native::bound_method(o, |a| {
+                    let section = a.get(0, "section").ok_or_else(|| py_error("TypeError", "missing section".into()))?.as_string()?;
+                    Ok(py_bool(this(a)?.sections().contains(&section)))
+                })?,
+            ])
+        },
+        None,
+    );
+    r.attr(name!("section"), |o| Ok(py_str(objects::unwrap_as::<ConfigHelper>(o)?.get_name())), None);
+    r.attr(
+        name!("fallback_section"),
+        |o| Ok(objects::unwrap_as::<ConfigHelper>(o)?.fallback_section.as_deref().map(py_str).unwrap_or_else(none)),
+        None,
+    );
+    r.attr(name!("server"), |_| objects::wrap(crate::server::server()), None);
     r.method(name!("get_server"), |_| objects::wrap(crate::server::server()));
     r.method(name!("get_name"), |a| Ok(py_str(this(a)?.get_name())));
     r.method(name!("get"), |a| get_kind(a, OptKind::Str, false));

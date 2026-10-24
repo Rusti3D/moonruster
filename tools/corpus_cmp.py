@@ -146,7 +146,7 @@ def run(cmd, env, port, d):
             p.kill()
         k.kill()
         k.wait()
-    return info, (d / "logs/moonraker.log").read_text(errors="replace"), steps
+    return info, pc.read_log(d), steps
 
 
 def mask(s, name):
@@ -205,6 +205,37 @@ def own_frames(e):
     return "\n".join(keep)
 
 
+def load_order(log):
+    """the optional components in the order Moonraker loaded them (its
+    set order, random per run)"""
+    order = []
+    for m in re.finditer(r"(?:Component \((\w+)\) loaded|Unable to load component: \((\w+)\))", log):
+        name = m.group(1) or m.group(2)
+        if name not in order:
+            order.append(name)
+    return order
+
+
+def reorder_sections(conf_path, order):
+    """Moonruster loads optional components in config order: its config gets
+    the sections in the order Moonraker loaded them, so both load alike"""
+    blocks, cur = [], []
+    for line in conf_path.read_text().splitlines(keepends=True):
+        if line.startswith("[") and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        blocks.append(cur)
+
+    def key(block):
+        name = block[0].strip().strip("[]").split()[0] if block[0].startswith("[") else ""
+        return (order.index(name) if name in order else -1)
+    blocks.sort(key=key)  # stable: sections Moonraker did not name keep their places, first
+    text = "".join("".join(b) for b in blocks)
+    conf_path.write_text(text if text.endswith("\n") else text + "\n")
+
+
 def main():
     if not TREE.exists() or not TRACE_CONF.exists():
         raise SystemExit("run tools/plugin_trace/setup_trace.sh first")
@@ -213,6 +244,7 @@ def main():
     env = dict(os.environ)
     ref = run([str(pc.VENV_PY), "moonraker/moonraker.py", "-d", str(dref), "-l", str(dref / "logs/moonraker.log")],
               env, 7060, dref)
+    reorder_sections(drust / "config/moonraker.conf", load_order(ref[1]))
     renv = dict(env, MOONRUSTER_MOONRAKER_DIR=str(TREE), MOONRUSTER_PYTHON=str(pc.VENV_PY))
     rust = run([RUST, "-d", str(drust), "-l", str(drust / "logs/moonraker.log")], renv, 7070, drust)
     fails = 0

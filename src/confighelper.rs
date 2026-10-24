@@ -64,6 +64,12 @@ pub enum OptKind {
     Bool,
 }
 
+/// What raw_get did not find (configparser's NoSectionError / NoOptionError)
+pub enum RawMissing {
+    Section,
+    Option,
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct Bounds {
     pub above: Option<f64>,
@@ -250,6 +256,39 @@ impl ConfigHelper {
             entry.insert(option.to_string(), to_json(&val));
         }
         Ok(val)
+    }
+
+    /// configparser's get(section, option) on the parsed config, without
+    /// recording (ConfigHelper.config for Python components)
+    pub fn raw_get(&self, section: &str, option: &str) -> Result<String, RawMissing> {
+        let cfg = self.source.config.borrow();
+        if !cfg.contains(section) {
+            return Err(RawMissing::Section);
+        }
+        cfg.get(section, option).map_err(|_| RawMissing::Option)
+    }
+
+    /// Moonraker's _get_option with the caller's parse function (Python
+    /// components: getlists, getdict, gettemplate ... run as Moonraker's
+    /// own code over this). `fetch(section, option)` gives Err(Ok(message))
+    /// for a missing option or section, Err(Err(message)) for a parse error
+    #[allow(clippy::type_complexity)]
+    pub fn get_option_with<T>(
+        &self,
+        fetch: &dyn Fn(&str, &str) -> Result<T, Result<String, String>>,
+        option: &str,
+        default: Option<T>,
+        numeric: Option<(&dyn Fn(&T) -> Option<(f64, bool)>, Bounds)>,
+        deprecate: bool,
+        to_json: &dyn Fn(&T) -> Value,
+    ) -> CResult<T> {
+        let f = |_: &ConfigParser, s: &str, o: &str| -> Result<T, FetchErr> {
+            fetch(s, o).map_err(|e| match e {
+                Ok(m) => FetchErr::Missing(m),
+                Err(m) => FetchErr::Other(m),
+            })
+        };
+        self.get_option(&f, option, default, numeric, deprecate, to_json)
     }
 
     fn mark_error(&self) {

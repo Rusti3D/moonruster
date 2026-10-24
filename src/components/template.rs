@@ -83,9 +83,15 @@ impl TemplateFactory {
     }
 
     pub fn create_template(&self, source: &str, is_async: bool) -> Result<JinjaTemplate, ServerError> {
+        self.compile(source, is_async).map_err(|e| ServerError::new(format!("{}", e), 500))
+    }
+
+    /// create_template with the template engine's error (its kind and line:
+    /// Python components get Jinja2's exception type for a syntax error)
+    pub fn compile(&self, source: &str, is_async: bool) -> Result<JinjaTemplate, minijinja::Error> {
         if let Err(e) = self.jenv.template_from_str(source) {
             log::error!("Error creating template from source:\n{}\n{}", source, e);
-            return Err(ServerError::new(format!("{}", e), 500));
+            return Err(e);
         }
         Ok(JinjaTemplate { source: source.to_string(), env: self.jenv.clone(), is_async })
     }

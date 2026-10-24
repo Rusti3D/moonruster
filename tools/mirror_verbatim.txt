@@ -52,3 +52,16 @@ moonraker.components.shell_command.ShellCommandFactory.exec_cmd
 # Server.load_component: Moonraker's own loader (import, getsection, load_component(), pip recovery, its
 # log lines), over views of Moonruster's component table (Server.components / failed_components handlers)
 moonraker.server.Server.load_component
+# ConfigHelper's getters built on _get_option: Moonraker's own code; _get_option is a Rust handler (it records
+# parsed options for the unparsed-option warnings) and ConfigHelper.config a view of the parsed config
+moonraker.confighelper.ConfigHelper.getchoice
+moonraker.confighelper.ConfigHelper.getlists
+moonraker.confighelper.ConfigHelper.getlist
+moonraker.confighelper.ConfigHelper.getintlist
+moonraker.confighelper.ConfigHelper.getfloatlist
+moonraker.confighelper.ConfigHelper.getdict
+moonraker.confighelper.ConfigHelper.getgpioout
+moonraker.confighelper.ConfigHelper.getgpioevent
+moonraker.confighelper.ConfigHelper.gettemplate
+moonraker.confighelper.ConfigHelper.load_template
+moonraker.confighelper.ConfigHelper.getpath

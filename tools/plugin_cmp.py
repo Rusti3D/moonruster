@@ -58,6 +58,30 @@ bool_opt: true
 [mr_test_klippy]
 
 [mr_test_shell]
+
+[mr_test_config]
+a_list:
+  one
+  two
+csv: a, b, c
+ints: 1, 2, 3
+floats: 1.5, 2
+matrix:
+  1, 2
+  3, 4
+a_dict:
+  k1 = v1
+  k2=v2
+int_dict:
+  a = 1
+  b = 2
+bad_dict:
+  good = 1
+  lonely
+mode: fast
+tmpl: value {{ x * 2 }}
+a_path: ~/mr_test_dir/../sub
+flag: yes
 """
 
 # a batch Klippy behind each server (tools/start_klippy.sh), with a macro
@@ -111,6 +135,13 @@ def wait_klippy_ready(port, timeout=30):
             return
         time.sleep(0.2)
     raise SystemExit(f"klippy behind port {port} did not get ready")
+
+
+def read_log(d):
+    """the run's whole log: a run across midnight is split by the daily
+    rollover into moonraker.log.<date> and moonraker.log"""
+    logs = sorted((d / "logs").glob("moonraker.log.*")) + [d / "logs/moonraker.log"]
+    return "".join(p.read_text(errors="replace") for p in logs if p.exists())
 
 
 def port_free(port):
@@ -233,7 +264,7 @@ def run(cmd, env, port, d):
         p.kill()
     k.kill()
     k.wait()
-    return info, (d / "logs/moonraker.log").read_text(errors="replace"), responses
+    return info, read_log(d), responses
 
 
 def log_entries(text):

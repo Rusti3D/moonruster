@@ -366,7 +366,12 @@ unchanged (x86).
     with pause and resume, a cancelled print, and a Klipper restart.
 
   Result: **0 differences** in `/server/info`, every step's response, and every log entry the components wrote.
-  Both tools refuse to run while a server from an earlier run holds their port.
+  The same holds for the filaman variant (`setup_trace.sh filaman`), where FilaMan registers itself as
+  `spoolman`.
+  - Moonraker loads optional components in set order, which is random per run. The tool reads the order Python
+    Moonraker used and writes Moonruster's config with its sections in that order, so both load alike.
+  - Both tools read the rotated `moonraker.log.<date>` too, for a run across midnight, and refuse to run while
+    a server from an earlier run holds their port.
 - A cargo test (`handlers_name_mirrored_ids`) checks that every handler names something the mirror has.
 
 **How each area is built.** Where Moonraker's code is plain Python over one primitive, that code runs verbatim
@@ -411,8 +416,17 @@ unchanged (x86).
   its trackers (a Python reset callback runs outside the tracker borrow); `register_auxiliary_field`.
 - **webcam.** `get_webcams`, `webcams` and `get_cam_by_uid` return the manager's own cameras. WebCam fields are
   attributes, updated in place.
-- **Also:** `spoolman` attributes; `ConfigHelper.has_section` and `sections`. These are instance attributes
-  holding methods in Moonraker, served by `native::bound_method`.
+- **ConfigHelper.**
+  - `getchoice`, `getlists` / `getlist` / `getintlist` / `getfloatlist`, `getdict`, `getgpioout`,
+    `getgpioevent`, `gettemplate`, `load_template` and `getpath` are Moonraker's own code.
+  - `_get_option` is Rust, so parsed options are recorded for the unparsed-option warnings.
+  - `config` is a view whose `get`, `getint`, `getfloat` and `getboolean` raise configparser's own exceptions.
+- **Templates.** `TemplateFactory.create_template` and `JinjaTemplate.render` / `render_async`. A syntax error
+  raises Jinja2's `TemplateSyntaxError`.
+- **Also:**
+  - `spoolman` attributes and `Announcements.register_feed`;
+  - `ConfigHelper.has_section` and `sections`, instance attributes holding methods in Moonraker, served by
+    `native::bound_method`.
 
 **Shared objects.** `WebCam` and `PrinterJob` are now held by `Rc` and updated in place, so a component holding
 one sees it change, as in Moonraker.
@@ -444,6 +458,8 @@ shows its method's first statement.
 - A Python callback that fails inside a history tracker reset logs and leaves the tracker reset.
 - `HttpResponse.error` for a non-HTTP failure is an `Exception` carrying the message. Moonraker gives the
   original exception type.
+- Template error messages are minijinja's, Moonruster's template engine, not Jinja2's. The exception type is
+  Jinja2's.
 
 ## Sharing with kaliru
 

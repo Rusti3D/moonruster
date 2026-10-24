@@ -193,6 +193,52 @@ class MirrorFinder:
 _unofficial = None
 
 
+class ConfigView:
+    """ConfigHelper.config: the parser Moonraker's getters read through.
+    Values and errors are configparser's own (get / getint / getfloat /
+    getboolean); `raw(section, option)` gives (0, value), (1, None) for a
+    missing section, (2, None) for a missing option"""
+    __slots__ = ("_raw", "_sections", "_has")
+
+    def __init__(self, raw, sections, has):
+        self._raw, self._sections, self._has = raw, sections, has
+
+    def get(self, section, option, **kwargs):
+        import configparser
+        status, value = self._raw(section, option)
+        if status == 1:
+            raise configparser.NoSectionError(section)
+        if status == 2:
+            raise configparser.NoOptionError(option, section)
+        return value
+
+    def getint(self, section, option, **kwargs):
+        return int(self.get(section, option))
+
+    def getfloat(self, section, option, **kwargs):
+        return float(self.get(section, option))
+
+    def getboolean(self, section, option, **kwargs):
+        import configparser
+        value = self.get(section, option)
+        states = configparser.RawConfigParser.BOOLEAN_STATES
+        if value.lower() not in states:
+            raise ValueError('Not a boolean: %s' % value)
+        return states[value.lower()]
+
+    def sections(self):
+        return self._sections()
+
+    def has_section(self, section):
+        return section in self._sections()
+
+    def has_option(self, section, option):
+        return self._raw(section, option)[0] == 0
+
+    def __contains__(self, section):
+        return self._has(section)
+
+
 class TableView:
     """Server.components / failed_components as Moonraker's own code uses
     them (`name in`, `[name]`, `[name] = component`, `.append(name)`):
