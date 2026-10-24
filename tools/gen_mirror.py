@@ -383,11 +383,24 @@ class ModuleGen:
             self.dropped_imports |= self.binds(node) - bound_names(node)
             return
         if not names:
-            self.startup.append(self.with_imports(node, src))
+            # it runs once a module it imports is imported (prelude
+            # run_startup): until a component uses that package, nobody can
+            # observe the side effect, and the package is not loaded for it
+            triggers = sorted({self.import_module_of(n) for n in statement_loads(node)
+                               if n in self.imports and self.import_module_of(n)})
+            self.startup.append((triggers, self.with_imports(node, src)))
             return
         code = self.with_imports(node, src)
         for name in names:
             self.lazy[name] = code
+
+    def import_module_of(self, name):
+        """the module a name's import statement imports (`from tornado.httpclient
+        import AsyncHTTPClient`: tornado.httpclient), None for a relative one"""
+        node = ast.parse(self.imports[name]).body[0]
+        if isinstance(node, ast.ImportFrom):
+            return node.module if node.level == 0 else None
+        return node.names[0].name
 
     def with_imports(self, node, src):
         """src preceded by the imports and lazy statements it needs. It runs

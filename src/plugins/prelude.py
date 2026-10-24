@@ -145,13 +145,76 @@ def module_getattr(modname, lazy):
     return __getattr__
 
 
+class _HookLoader:
+    """A module's own loader, with code to run after the module executed"""
+
+    def __init__(self, loader, hooks):
+        self.loader = loader
+        self.hooks = hooks
+
+    def create_module(self, spec):
+        return self.loader.create_module(spec)
+
+    def exec_module(self, module):
+        # the module sees its own loader, as without the hook
+        module.__spec__.loader = self.loader
+        module.__loader__ = self.loader
+        self.loader.exec_module(module)
+        for hook in self.hooks:
+            hook()
+
+    def __getattr__(self, name):
+        return getattr(self.loader, name)
+
+
+class PostImportHooks:
+    """Code to run once a module is first imported (sys.meta_path, ahead of
+    the finders that find it)"""
+
+    def __init__(self):
+        self.hooks = {}
+
+    def add(self, module, hook):
+        self.hooks.setdefault(module, []).append(hook)
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname not in self.hooks:
+            return None
+        hooks = self.hooks.pop(fullname)
+        for finder in sys.meta_path[sys.meta_path.index(self) + 1:]:
+            find = getattr(finder, "find_spec", None)
+            spec = find(fullname, path, target) if find is not None else None
+            if spec is not None:
+                if spec.loader is not None:
+                    spec.loader = _HookLoader(spec.loader, hooks)
+                return spec
+        return None
+
+
+_post_import = PostImportHooks()
+
+
 def run_startup(modnames):
-    """Replay the third-party side effects of the modules Moonraker imports
-    at startup (`_mr_startup`: http_client's AsyncHTTPClient.configure)"""
+    """Moonraker's import-time side effects that need a third-party package
+    (`_mr_startup`: http_client's AsyncHTTPClient.configure). Each runs once
+    a module it imports is imported: before anything can use that package,
+    without loading the package for components that never do"""
+    if _post_import not in sys.meta_path:
+        sys.meta_path.insert(0, _post_import)
     for name in modnames:
         mod = importlib.import_module(name)
-        for code in mod.__dict__.get("_mr_startup", ()):
-            exec(code, mod.__dict__)
+        for triggers, code in mod.__dict__.get("_mr_startup", ()):
+            done = []
+
+            def run(code=code, g=mod.__dict__, done=done):
+                if not done:
+                    done.append(True)
+                    exec(code, g)
+            if not triggers or any(t in sys.modules for t in triggers):
+                run()
+            else:
+                for t in triggers:
+                    _post_import.add(t, run)
 
 
 # The finder and loader are plain classes: the import system calls

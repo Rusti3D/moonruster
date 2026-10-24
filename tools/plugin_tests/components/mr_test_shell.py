@@ -34,6 +34,12 @@ class MrTestShell:
         out["run"] = await outcome(scmd.run(timeout=10.))
         out["run_lines"] = [bytes(x).decode() if not isinstance(x, str) else x for x in lines]
         out["return_code"] = scmd.get_return_code()
+        # tornado's AsyncHTTPClient as Moonraker configured it (http_client's
+        # import-time configure)
+        from tornado.httpclient import AsyncHTTPClient
+        client = AsyncHTTPClient()
+        out["tornado_client"] = [type(client).__name__, client.defaults.get("user_agent"),
+                                 getattr(client, "max_body_size", None)]
         scmd2 = sc.build_shell_command("echo resp")
         out["run_with_response"] = await outcome(scmd2.run_with_response(timeout=10.))
         for k, v in out.items():
