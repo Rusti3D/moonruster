@@ -103,6 +103,14 @@ impl RemoteConnection {
         })
     }
 
+    pub fn connected_time(&self) -> f64 {
+        self.connected_time.get()
+    }
+
+    pub fn ip(&self) -> Option<IpAddr> {
+        self.ip
+    }
+
     pub fn uid(&self) -> u64 {
         self.uid
     }
@@ -398,6 +406,27 @@ impl WebsocketManager {
 
     pub fn get_client(&self, uid: u64) -> Option<Rc<RemoteConnection>> {
         self.clients.borrow().get(&uid).cloned()
+    }
+
+    pub fn has_socket(&self, ws_id: u64) -> bool {
+        self.clients.borrow().contains_key(&ws_id)
+    }
+
+    pub fn get_clients_by_name(&self, name: &str) -> Vec<Rc<RemoteConnection>> {
+        if name.is_empty() {
+            return Vec::new();
+        }
+        let name = name.to_lowercase();
+        self.clients
+            .borrow()
+            .values()
+            .filter(|sc| sc.client_data.borrow().get("name").map(|n| n.to_lowercase() == name).unwrap_or(false))
+            .cloned()
+            .collect()
+    }
+
+    pub fn get_unidentified_clients(&self) -> Vec<Rc<RemoteConnection>> {
+        self.clients.borrow().values().filter(|sc| sc.client_data.borrow().is_empty()).cloned().collect()
     }
 
     pub fn get_client_ws(&self, ws_id: u64) -> Option<Rc<RemoteConnection>> {

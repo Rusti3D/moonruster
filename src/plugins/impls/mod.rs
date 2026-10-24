@@ -11,10 +11,12 @@ pub mod http_client;
 pub mod klippy_apis;
 pub mod klippy_connection;
 pub mod server;
+pub mod services;
 pub mod shell_command;
 pub mod source_info;
 pub mod template;
 pub mod webcam;
+pub mod websockets;
 
 pub(crate) use super::convert::{from_py, to_py};
 pub(crate) use super::native::{py_error, Args, Registry};
@@ -34,10 +36,12 @@ pub fn register(r: &mut Registry) {
     klippy_apis::register(r);
     klippy_connection::register(r);
     server::register(r);
+    services::register(r);
     shell_command::register(r);
     source_info::register(r);
     template::register(r);
     webcam::register(r);
+    websockets::register(r);
 }
 
 #[cfg(test)]

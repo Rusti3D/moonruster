@@ -59,6 +59,8 @@ bool_opt: true
 
 [mr_test_shell]
 
+[mr_test_services]
+
 [mr_test_config]
 a_list:
   one
@@ -184,6 +186,7 @@ REQUESTS = [
     ("POST", "/server/mr_test/db", None),
     ("POST", "/server/mr_test/klippy", None),
     ("POST", "/server/mr_test/shell", None),
+    ("POST", "/server/mr_test/services", None),
 ]
 
 
@@ -204,7 +207,8 @@ def call(port, method, path, body):
     return {"status": status, "content_type": ctype, "body": content}
 
 
-NOTIFICATIONS = ("notify_notify", "notify_mr_test_named")
+NOTIFICATIONS = ("notify_notify", "notify_mr_test_named", "notify_mr_test_direct", "notify_mr_test_all",
+                 "notify_mr_test_masked")
 
 
 async def ws_session(port):

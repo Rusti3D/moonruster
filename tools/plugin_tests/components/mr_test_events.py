@@ -64,6 +64,17 @@ class MrTestEvents:
 
     def _client_identified(self, sc):
         logging.info(f"mr_test_events: client_identified {type(sc).__name__} same {sc is self.added}")
+        wsm = self.server.lookup_component("websockets")
+        logging.info(
+            "mr_test_events: connection "
+            f"{[sc.identified, sc.client_data, sc.user_info is None, sc.need_auth, type(sc.start_time).__name__]} "
+            f"{[str(sc.transport_type), str(sc.ip_addr), wsm.get_count(), wsm.has_socket(sc.uid)]} "
+            f"{[wsm.get_client(sc.uid) is sc, [c is sc for c in wsm.get_clients_by_name('MR_TEST')]]} "
+            f"{[[c is sc for c in wsm.get_clients_by_type('web')], len(wsm.get_unidentified_clients())]}"
+        )
+        sc.send_notification("mr_test_direct", [1, "two"])
+        wsm.notify_clients("mr_test_all", [{"x": 1}])
+        wsm.notify_clients("mr_test_masked", [], [sc.uid])
 
     def _client_removed(self, sc):
         logging.info(f"mr_test_events: client_removed {type(sc).__name__} same {sc is self.added}")

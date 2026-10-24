@@ -36,6 +36,33 @@ pub fn user_info(u: &UserInfo) -> PyResult<PyRef> {
     ])
 }
 
+/// A Rust UserInfo of Moonraker's UserInfo (dataclass)
+pub fn user_info_from_py(u: &PyRef) -> PyResult<UserInfo> {
+    let s = |n: &str| u.getattr(n)?.as_string();
+    let opt = |n: &str| -> PyResult<Option<String>> {
+        let v = u.getattr(n)?;
+        if v.is_none() {
+            Ok(None)
+        } else {
+            Ok(Some(v.as_string()?))
+        }
+    };
+    let groups = match from_py(&u.getattr("groups")?)? {
+        Value::Array(g) => g.iter().map(crate::pyfmt::py_str).collect(),
+        _ => vec![],
+    };
+    Ok(UserInfo {
+        username: s("username")?,
+        password: s("password")?,
+        created_on: u.getattr("created_on")?.as_f64()?,
+        salt: s("salt")?,
+        source: s("source")?,
+        jwt_secret: opt("jwt_secret")?,
+        jwk_id: opt("jwk_id")?,
+        groups,
+    })
+}
+
 /// Moonraker's WebRequest of a Rust request: endpoint, args, request type,
 /// the transport's Moonraker object, the client address
 /// (utils.parse_ip_address) and the user
