@@ -6,7 +6,6 @@ pub mod git_deploy;
 pub mod net_deploy;
 mod pk_enums;
 pub mod python_deploy;
-pub mod swu_deploy;
 pub mod system_deploy;
 
 use crate::common::*;
@@ -1023,7 +1022,6 @@ fn get_deploy(
         }
         Some(AppType::GitRepo) => Rc::new(git_deploy::GitDeploy::new(cfg, cmd_helper)?),
         Some(AppType::Python) => Rc::new(python_deploy::PythonDeploy::new(cfg, cmd_helper)?),
-        Some(AppType::Swupdate) => Rc::new(swu_deploy::SwuDeploy::new(cfg, cmd_helper)?),
         _ => return Ok(None),
     }))
 }

@@ -149,48 +149,6 @@ pub fn float_value(f: f64) -> Value {
     serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
 }
 
-/// Whether this is a COSMOS printer (OpenCentauri: /etc/os-release ID=cosmos),
-/// or a system derived from it that says so the os-release way (ID_LIKE
-/// lists cosmos: Rusticc, the Rust port of COSMOS, can set ID=rusticc
-/// ID_LIKE=cosmos). COSMOS's own Moonraker carries patches (web_client,
-/// webcam_redirect, the sysvinit provider, swupdate updates, ":port" webcam
-/// URLs) that upstream Moonraker does not have: Moonruster behaves like each
-/// one on its platform. MOONRUSTER_COSMOS=1/0 overrides the detection.
-pub fn is_cosmos() -> bool {
-    static COSMOS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *COSMOS.get_or_init(|| match std::env::var("MOONRUSTER_COSMOS").as_deref() {
-        Ok("1") => true,
-        Ok("0") => false,
-        _ => std::fs::read_to_string("/etc/os-release").map(|s| os_release_is_cosmos(&s)).unwrap_or(false),
-    })
-}
-
-/// ID=cosmos, or cosmos in the space-separated ID_LIKE (os-release(5))
-fn os_release_is_cosmos(text: &str) -> bool {
-    text.lines().any(|l| {
-        let Some((key, val)) = l.trim().split_once('=') else { return false };
-        let val = val.trim_matches('"').trim_matches('\'');
-        match key {
-            "ID" => val == "cosmos",
-            "ID_LIKE" => val.split_whitespace().any(|v| v == "cosmos"),
-            _ => false,
-        }
-    })
-}
-
-#[cfg(test)]
-mod cosmos_tests {
-    #[test]
-    fn os_release() {
-        let t = super::os_release_is_cosmos;
-        assert!(t("ID=cosmos\nNAME=\"OpenCentauri Cosmos\""));
-        assert!(t("ID=\"cosmos\""));
-        assert!(t("ID=rusticc\nID_LIKE=\"cosmos openembedded\""));
-        assert!(!t("ID=ubuntu\nID_LIKE=debian"));
-        assert!(!t("ID=cosmosx"));
-    }
-}
-
 pub fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| {
         unsafe {

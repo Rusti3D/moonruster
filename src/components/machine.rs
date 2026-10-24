@@ -30,13 +30,6 @@ const SYSTEMD_MGR: &str = "org.freedesktop.systemd1.Manager";
 const LOGIN_BUS: &str = "org.freedesktop.login1";
 const LOGIN_PATH: &str = "/org/freedesktop/login1";
 const LOGIN_MGR: &str = "org.freedesktop.login1.Manager";
-// sysvinit provider (COSMOS patch to moonraker)
-const SYSV_INIT_PATH: &str = "/etc/init.d";
-const SYSV_PID_PATH: &str = "/var/run";
-const SYSV_ACTIONS: [&str; 3] = ["start", "stop", "restart"];
-const SYSV_ACTION_TIMEOUT: f64 = 60.0;
-const SYSV_STATUS_TIMEOUT: f64 = 5.0;
-const SYSV_STATUS_SEQUENCE: u64 = 5;
 
 pub type SudoCallback = Rc<dyn Fn() -> LocalBoxFuture<'static, Result<(String, bool), ServerError>>>;
 
@@ -173,7 +166,6 @@ pub enum ProviderKind {
     SystemdCli,
     SystemdDbus,
     SupervisordCli,
-    Sysvinit,
 }
 
 pub struct Provider {
@@ -181,8 +173,6 @@ pub struct Provider {
     shutdown_action: String,
     available_services: RefCell<IndexMap<String, Value>>,
     svc_cmd: RefCell<Option<Rc<ShellCommand>>>,
-    status_cmds: RefCell<IndexMap<String, Rc<ShellCommand>>>,
-    status_pidfiles: RefCell<IndexMap<String, PathBuf>>,
     spv_conf: String,
     dbus_ready: Cell<bool>,
     login_mgr: Cell<bool>,
@@ -235,58 +225,7 @@ impl Provider {
                 self.update_service_status(0, true).await;
                 self.register_status_cb();
             }
-            ProviderKind::Sysvinit => {
-                let machine: Rc<Machine> = match server().lookup_component("machine") {
-                    Some(m) => m,
-                    None => return,
-                };
-                // COSMOS's zram script replaces /sbin/init with a shell shim,
-                // which trips container detection
-                machine.inside_container.set(false);
-                for svc in machine.allowed_services.borrow().iter() {
-                    let script = Path::new(SYSV_INIT_PATH).join(svc);
-                    if script.is_file() && crate::utils::access_exec(&script) {
-                        self.available_services
-                            .borrow_mut()
-                            .insert(svc.clone(), json!({"active_state": "unknown", "sub_state": "unknown"}));
-                        let cmd = self.shell().build_shell_command(&format!("{}/{} status", SYSV_INIT_PATH, svc), None, None, None, false, None);
-                        self.status_cmds.borrow_mut().insert(svc.clone(), cmd);
-                        if let Some(pidfile) = std::fs::read_to_string(&script).ok().and_then(|t| sysv_status_pidfile(&t)) {
-                            self.status_pidfiles.borrow_mut().insert(svc.clone(), pidfile);
-                        }
-                    }
-                }
-                if !self.available_services.borrow().is_empty() {
-                    self.update_service_status(0, true).await;
-                    self.register_status_cb();
-                }
-            }
         }
-    }
-
-    async fn update_sysv_state(&self, svc: &str, notify: bool) {
-        let pidfile = self.status_pidfiles.borrow().get(svc).cloned();
-        let running = match pidfile {
-            // what the script's status does, without starting a shell
-            Some(p) => std::fs::read_to_string(&p)
-                .ok()
-                .and_then(|t| t.trim().parse::<libc::pid_t>().ok())
-                .map(|pid| unsafe { libc::kill(pid, 0) } == 0)
-                .unwrap_or(false),
-            None => {
-                let cmd = match self.status_cmds.borrow().get(svc) {
-                    Some(c) => c.clone(),
-                    None => return,
-                };
-                cmd.run(&self.shell(), SYSV_STATUS_TIMEOUT, false, false, 1, None, None).await
-            }
-        };
-        let new_state = if running {
-            json!({"active_state": "active", "sub_state": "running"})
-        } else {
-            json!({"active_state": "inactive", "sub_state": "dead"})
-        };
-        self.apply_state(svc, new_state, notify);
     }
 
     fn register_status_cb(self: &Rc<Self>) {
@@ -534,15 +473,6 @@ impl Provider {
     }
 
     async fn update_service_status(&self, sequence: u64, notify: bool) {
-        if self.kind == ProviderKind::Sysvinit {
-            if sequence % SYSV_STATUS_SEQUENCE == 0 {
-                let svcs: Vec<String> = self.available_services.borrow().keys().cloned().collect();
-                for svc in svcs {
-                    self.update_sysv_state(&svc, notify).await;
-                }
-            }
-            return;
-        }
         if sequence % 2 != 0 {
             return;
         }
@@ -599,9 +529,6 @@ impl Provider {
     }
 
     pub async fn shutdown(&self) -> Result<(), ServerError> {
-        if self.kind == ProviderKind::Sysvinit {
-            return self.shell().exec(&self.shutdown_action, 2.0).await.map(|_| ()).map_err(ServerError::from);
-        }
         if self.kind == ProviderKind::SystemdDbus && self.login_mgr.get() {
             let method = if self.shutdown_action == "poweroff" { "PowerOff" } else { "Halt" };
             let dbus = self.dbus().ok_or_else(|| ServerError::new("DBus Not Connected, ", 503))?;
@@ -621,9 +548,6 @@ impl Provider {
     }
 
     pub async fn reboot(&self) -> Result<(), ServerError> {
-        if self.kind == ProviderKind::Sysvinit {
-            return self.shell().exec("reboot", 2.0).await.map(|_| ()).map_err(ServerError::from);
-        }
         if self.kind == ProviderKind::SystemdDbus && self.login_mgr.get() {
             let dbus = self.dbus().ok_or_else(|| ServerError::new("DBus Not Connected, ", 503))?;
             let _: () = dbus.call(LOGIN_BUS, LOGIN_PATH, LOGIN_MGR, "Reboot", &(false,)).await?;
@@ -642,33 +566,6 @@ impl Provider {
             ProviderKind::None => Err(ServerError::new("Service Actions Not Available", 503)),
             ProviderKind::SystemdCli => self.exec_sudo(&format!("systemctl {} {}", action, service_name)).await.map(|_| ()),
             ProviderKind::SupervisordCli => self.exec_supervisorctl(&format!("{} {}", action, service_name), 1, 6.0, None).await.map(|_| ()),
-            ProviderKind::Sysvinit => {
-                if !SYSV_ACTIONS.contains(&action) {
-                    return Err(ServerError::bad(format!("Invalid service action '{}'", action)));
-                }
-                if !self.is_service_available(service_name) {
-                    return Err(ServerError::bad(format!("Service '{}' not available", service_name)));
-                }
-                let script = format!("{}/{}", SYSV_INIT_PATH, service_name);
-                let machine: Option<Rc<Machine>> = server().lookup_component("machine");
-                if machine.map(|m| m.unit_name() == service_name).unwrap_or(false) {
-                    // the init script stops us, so it must outlive this process
-                    use std::os::unix::process::CommandExt;
-                    std::process::Command::new(&script)
-                        .arg(action)
-                        .stdin(std::process::Stdio::null())
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .process_group(0)
-                        .spawn()?;
-                    return Ok(());
-                }
-                self.shell()
-                    .exec_cmd(&format!("{} {}", script, action), ExecOpts { timeout: SYSV_ACTION_TIMEOUT, log_complete: false, ..Default::default() })
-                    .await?;
-                self.update_sysv_state(service_name, true).await;
-                Ok(())
-            }
             ProviderKind::SystemdDbus => {
                 let dbus = match self.dbus() {
                     Some(d) if d.is_connected() && self.dbus_ready.get() => d,
@@ -692,9 +589,7 @@ impl Provider {
 
     pub async fn check_virt_status(&self) -> Value {
         match self.kind {
-            ProviderKind::None | ProviderKind::SupervisordCli | ProviderKind::Sysvinit => {
-                json!({"virt_type": "unknown", "virt_identifier": "unknown"})
-            }
+            ProviderKind::None | ProviderKind::SupervisordCli => json!({"virt_type": "unknown", "virt_identifier": "unknown"}),
             ProviderKind::SystemdCli => {
                 let mut virt_id = "none".to_string();
                 let mut virt_type = "none".to_string();
@@ -827,23 +722,6 @@ impl Provider {
                 }
             }
             ProviderKind::SupervisordCli => self.extract_spv_info(service_name, pid).await,
-            ProviderKind::Sysvinit => {
-                let pid_file = Path::new(SYSV_PID_PATH).join(format!("{}.pid", service_name));
-                let file_pid = std::fs::read_to_string(&pid_file).ok().and_then(|s| s.trim().parse::<i64>().ok());
-                if file_pid == Some(pid) {
-                    return json!({
-                        "unit_name": service_name,
-                        "is_default": true,
-                        "manager": "sysvinit",
-                        "properties": {
-                            "InitScript": format!("{}/{}", SYSV_INIT_PATH, service_name),
-                            "PIDFile": pid_file.to_string_lossy(),
-                        }
-                    });
-                }
-                log::info!("Unable to locate service info for {}, pid: {}", service_name, pid);
-                json!({})
-            }
         }
     }
 
@@ -1043,8 +921,6 @@ impl Machine {
             "systemd_cli" => ProviderKind::SystemdCli,
             "systemd_dbus" => ProviderKind::SystemdDbus,
             "supervisord_cli" => ProviderKind::SupervisordCli,
-            // COSMOS only: upstream Moonraker rejects it (Invalid Provider)
-            "sysvinit" if crate::utils::is_cosmos() => ProviderKind::Sysvinit,
             other => return Err(ConfigHelper::error(format!("Invalid Provider: {}", other))),
         };
         let shutdown_action = config.getchoice("shutdown_action", &["halt", "poweroff"], Some("poweroff"), true)?;
@@ -1055,8 +931,6 @@ impl Machine {
             shutdown_action,
             available_services: RefCell::new(IndexMap::new()),
             svc_cmd: RefCell::new(None),
-            status_cmds: RefCell::new(IndexMap::new()),
-            status_pidfiles: RefCell::new(IndexMap::new()),
             spv_conf,
             dbus_ready: Cell::new(false),
             login_mgr: Cell::new(false),
@@ -1233,6 +1107,8 @@ impl Machine {
         self.provider.extract_service_info(name, pid, None, false).await
     }
 
+    // Moonraker's Machine.get_system_provider (Python components, docs/PLUGINS.md)
+    #[allow(dead_code)]
     pub fn get_system_provider(&self) -> Rc<Provider> {
         self.provider.clone()
     }
@@ -1760,20 +1636,6 @@ impl Machine {
         }
         let _ = std::fs::write(&usb_ids_path, &resp.content);
     }
-}
-
-/// The pid file of an init script whose `status)` is only the usual
-/// `[ -f $PIDFILE ] && kill -0 $(cat $PIDFILE)` check
-fn sysv_status_pidfile(script: &str) -> Option<PathBuf> {
-    let pidfile = script.lines().find_map(|l| l.trim().strip_prefix("PIDFILE="))?.trim_matches('"').to_string();
-    if !pidfile.starts_with('/') || pidfile.contains('$') {
-        return None;
-    }
-    let status = script.split_once("status)")?.1;
-    let status = status.split(";;").next()?;
-    let only_pid_check = status.contains("kill -0")
-        && status.lines().filter(|l| l.contains("kill -0")).all(|l| l.contains("PIDFILE") || l.contains(&pidfile));
-    only_pid_check.then(|| PathBuf::from(pidfile))
 }
 
 /// The interfaces `ip -json -det address` reports: up, ethernet type, with
@@ -2552,20 +2414,4 @@ fn check_path_bare(path: &Path) -> bool {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<Machine>, crate::confighelper::ConfigError> {
     Machine::new(config)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sysv_status_pidfile_detection() {
-        let klipper = "PIDFILE=\"/var/run/klipper.pid\"\ncase \"$1\" in\n    status)\n        if [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null; then\n            echo running\n        else\n            exit 1\n        fi\n        ;;\nesac\n";
-        assert_eq!(sysv_status_pidfile(klipper), Some(PathBuf::from("/var/run/klipper.pid")));
-        let gui = "PIDFILE=/var/run/gui.pid\n    status)\n        if [ -f \"/var/run/gui.pid\" ] && kill -0 \"$(cat \"/var/run/gui.pid\")\" 2>/dev/null; then\n        fi\n        ;;\n";
-        assert_eq!(sysv_status_pidfile(gui), Some(PathBuf::from("/var/run/gui.pid")));
-        let gpio = "PIDFILE=/var/run/x.pid\n    status)\n        gpio_value=$(cat /sys/class/gpio/gpio1/value)\n        ;;\n";
-        assert_eq!(sysv_status_pidfile(gpio), None);
-        assert_eq!(sysv_status_pidfile("PIDFILE=$RUN/x.pid\nstatus)\nkill -0 $(cat $PIDFILE)\n;;"), None);
-    }
 }
