@@ -66,6 +66,15 @@ class MrTestServices:
         tmpl = lc("template")
         ui = tmpl.create_ui_template("hello {{ name }}")
         out["ui_template"] = await outcome(ui.render_async({"name": "mr"}))
+        m = lc("machine")
+        out["machine"] = [await outcome(m.wait_for_init(5.)), m.unit_name, m.linux_user, m.sudo_requested,
+                          m.sudo_request_messages, m.is_service_allowed("moonraker"), m.is_service_allowed("nope"),
+                          m.validation_enabled(), m.is_inside_container(), m.get_provider_type(),
+                          type(m.public_ip).__name__, sorted(m.get_system_info().keys()),
+                          sorted(m.get_moonraker_service_info().keys())]
+        out["devices"] = [type((await m.detect_serial_devices())).__name__,
+                          sorted((await m.detect_video_devices()).keys()),
+                          type(await m.detect_usb_devices()).__name__]
         out["power"] = pw is not None
         if pw is not None:
             out["power_bad_state"] = now(lambda: pw.set_device_power("mr_dev", "maybe"))

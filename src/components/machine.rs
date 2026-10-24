@@ -1236,12 +1236,19 @@ impl Machine {
     }
 
     async fn handle_serial_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
-        let _g = self.periph_lock.lock().await;
-        let devs = tokio::task::spawn_blocking(crate::sysfs_devs::find_serial_devices).await.unwrap_or_default();
-        Ok(json!({"serial_devices": devs}))
+        Ok(json!({"serial_devices": self.detect_serial_devices().await}))
     }
 
     async fn handle_usb_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
+        Ok(json!({"usb_devices": self.detect_usb_devices().await}))
+    }
+
+    pub async fn detect_serial_devices(&self) -> Value {
+        let _g = self.periph_lock.lock().await;
+        json!(tokio::task::spawn_blocking(crate::sysfs_devs::find_serial_devices).await.unwrap_or_default())
+    }
+
+    pub async fn detect_usb_devices(&self) -> Value {
         let _g = self.periph_lock.lock().await;
         let usb_ids = PathBuf::from(server().data_path()).join("misc/usb.ids");
         let devs = tokio::task::spawn_blocking(move || {
@@ -1274,20 +1281,41 @@ impl Machine {
         })
         .await
         .unwrap_or_default();
-        Ok(json!({"usb_devices": devs}))
+        json!(devs)
     }
 
     async fn handle_can_query(self: Rc<Self>, req: WebRequest) -> ApiResult {
         let iface = req.get_str_or("interface", "can0");
+        Ok(json!({"can_uuids": self.query_can_uuids(&iface).await?}))
+    }
+
+    pub async fn query_can_uuids(&self, iface: &str) -> Result<Value, ServerError> {
         let _g = self.periph_lock.lock().await;
-        let uuids = crate::sysfs_devs::query_can_uuids(&iface).await?;
-        Ok(json!({"can_uuids": uuids}))
+        Ok(json!(crate::sysfs_devs::query_can_uuids(iface).await?))
     }
 
     async fn handle_video_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
+        Ok(self.detect_video_devices().await)
+    }
+
+    pub async fn detect_video_devices(&self) -> Value {
         let _g = self.periph_lock.lock().await;
         let devs = tokio::task::spawn_blocking(crate::sysfs_devs::find_video_devices).await.unwrap_or_default();
-        Ok(json!({"v4l2_devices": devs, "libcamera_devices": []}))
+        json!({"v4l2_devices": devs, "libcamera_devices": []})
+    }
+
+    /// Machine.wait_for_init: component_init finished, or the timeout passed
+    pub async fn wait_for_init(&self, timeout: Option<f64>) {
+        let n = self.init_notify.notified();
+        if self.init_done.get() {
+            return;
+        }
+        match timeout {
+            Some(t) => {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs_f64(t.max(0.0)), n).await;
+            }
+            None => n.await,
+        }
     }
 
     pub fn get_system_info(&self) -> Map<String, Value> {
