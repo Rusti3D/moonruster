@@ -339,7 +339,7 @@
                     <h1>Announcements</h1>
                     <div class="content">
                         {% for item in announcements %}
-                            {% set id = "announcement-" + item["entry_id"]|replace("/", "-") %}
+                            {% set id = "announcement-" + item["entry_id"].replace("/", "-") %}
                             <article class="item announcement" id="{{ id }}">
                                 {% set url = item["url"] %}
                                 <a href="{{ url }}" class="clickable">{{ item["title"] }}</a>

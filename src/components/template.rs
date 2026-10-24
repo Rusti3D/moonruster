@@ -33,8 +33,29 @@ fn log_debug(msg: minijinja::Value) -> String {
     String::new()
 }
 
+/// Output of `{{ value }}` as Jinja2 writes it: str(value). Strings and
+/// undefined (empty) as minijinja does; plain data with Python's str()
+/// (pyfmt); anything else (functions, objects) with minijinja's default.
+fn py_formatter(out: &mut minijinja::Output, state: &minijinja::State, value: &minijinja::Value) -> Result<(), Error> {
+    use minijinja::value::ValueKind;
+    match value.kind() {
+        ValueKind::Undefined | ValueKind::String => minijinja::escape_formatter(out, state, value),
+        ValueKind::None | ValueKind::Bool | ValueKind::Number | ValueKind::Seq | ValueKind::Map => {
+            match serde_json::to_value(value) {
+                Ok(v) => write!(out, "{}", crate::pyfmt::py_str(&v)).map_err(Error::from),
+                Err(_) => minijinja::escape_formatter(out, state, value),
+            }
+        }
+        _ => minijinja::escape_formatter(out, state, value),
+    }
+}
+
 fn base_env(secrets: &Value, custom: bool) -> Environment<'static> {
     let mut env = Environment::new();
+    // Jinja2 runs on Python objects: their methods (str.replace, dict.items...)
+    env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
+    // ...and prints them with str(): True, None, ['a', 'b'], {'k': 1}
+    env.set_formatter(py_formatter);
     if custom {
         let syntax = SyntaxConfig::builder()
             .block_delimiters("{%", "%}")
@@ -332,4 +353,31 @@ pub fn get_factory(config: &ConfigHelper) -> Result<Rc<TemplateFactory>, crate::
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<TemplateFactory>, crate::confighelper::ConfigError> {
     TemplateFactory::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(env: &Environment, src: &str, ctx: minijinja::Value) -> String {
+        env.render_str(src, ctx).unwrap()
+    }
+
+    #[test]
+    fn python_methods() {
+        // Jinja2 templates call methods of Python objects; Moonraker's own
+        // welcome.html does: item["entry_id"].replace("/", "-")
+        let env = base_env(&serde_json::json!({}), false);
+        let ctx = minijinja::context! { item => minijinja::context! { entry_id => "arksine/moonraker/issue/1" }, d => minijinja::context! { a => 1 } };
+        assert_eq!(render(&env, r#"{{ "announcement-" + item["entry_id"].replace("/", "-") }}"#, ctx.clone()), "announcement-arksine-moonraker-issue-1");
+        assert_eq!(render(&env, r#"{{ "abc".upper() }} {{ "a,b".split(",") }}"#, ctx.clone()), "ABC ['a', 'b']");
+        assert_eq!(render(&env, r#"{% for k, v in d.items() %}{{ k }}={{ v }}{% endfor %}"#, ctx), "a=1");
+        // values print as Jinja2 prints them (Python str(), checked against
+        // jinja2 3.1.6: "['a', 'b']|True|None|{'a': 1}|1.0")
+        let vals = minijinja::context! { x => true, n => (), d => minijinja::context! { a => 1 }, f => 1.0 };
+        assert_eq!(render(&env, r#"{{ "a,b".split(",") }}|{{ x }}|{{ n }}|{{ d }}|{{ f }}"#, vals), "['a', 'b']|True|None|{'a': 1}|1.0");
+        // the config templates' syntax ({ } variables) gets them too
+        let cenv = base_env(&serde_json::json!({}), true);
+        assert_eq!(render(&cenv, r#"{"on".upper()}"#, minijinja::context! {}), "ON");
+    }
 }

@@ -43,7 +43,7 @@ pub fn py_float_repr(f: f64) -> String {
     }
 }
 
-fn py_str_repr(s: &str) -> String {
+pub fn py_str_repr(s: &str) -> String {
     // Python prefers single quotes unless the string contains single quotes
     // and no double quotes
     let quote = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };

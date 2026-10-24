@@ -25,6 +25,8 @@ indexmap = { version = "2", features = ["serde"] }
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled", "backup", "column_decltype"] }
 minijinja = { version = "2", features = ["loader", "json", "urlencode", "custom_syntax", "loop_controls"] }
+# Jinja2 templates call Python methods ("x".replace(...), d.items()): minijinja's pycompat
+minijinja-contrib = { version = "2", features = ["pycompat"] }
 chrono = { version = "0.4", features = ["clock"] }
 sha2 = "0.10"
 sha1 = "0.10"
