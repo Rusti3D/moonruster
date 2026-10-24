@@ -12,6 +12,11 @@ fn context(a: &Args) -> PyResult<Value> {
 }
 
 pub fn register(r: &mut Registry) {
+    r.method("moonraker.components.template.TemplateFactory.create_ui_template", |a| {
+        let source = a.get(0, "source").ok_or_else(|| py_error("TypeError", "missing argument 'source'".into()))?.as_string()?;
+        let t = a.this::<TemplateFactory>()?.create_ui_template(&source).map_err(|e| server_error(&e.message, e.status_code))?;
+        objects::wrap_class(Rc::new(t), "moonraker.components.template", "JinjaTemplate")
+    });
     r.method("moonraker.components.template.TemplateFactory.create_template", |a| {
         let source = a.get(0, "source").ok_or_else(|| py_error("TypeError", "missing argument 'source'".into()))?.as_string()?;
         let is_async = match a.get(1, "is_async") {

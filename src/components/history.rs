@@ -1041,6 +1041,20 @@ impl History {
         self.current_job.borrow().clone()
     }
 
+    /// History.get_job: the job's row as stored (None when there is none)
+    pub fn get_job(&self, job_id: i64) -> Result<Option<Map<String, Value>>, ServerError> {
+        let rows = server()
+            .database()
+            .sql_query(&format!("SELECT * FROM {} WHERE job_id = ?", HIST_TABLE), &[rusqlite::types::Value::Integer(job_id)])?;
+        Ok(rows.into_iter().next())
+    }
+
+    /// History.delete_job
+    pub fn delete_job(&self, job_id: i64) -> Result<(), ServerError> {
+        server().database().sql_execute(&format!("DELETE FROM {} WHERE job_id = ?", HIST_TABLE), &[rusqlite::types::Value::Integer(job_id)])?;
+        Ok(())
+    }
+
     pub fn current_job_id(&self) -> Option<i64> {
         self.current_job_id.get()
     }

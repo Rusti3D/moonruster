@@ -116,6 +116,30 @@ pub fn register(r: &mut Registry) {
         |o| Ok(objects::unwrap_as::<History>(o)?.current_job_id().map(py_int).unwrap_or_else(none)),
         None,
     );
+    // get_job / delete_job: an int, or the hex string the API uses
+    fn job_id(v: &PyRef) -> PyResult<i64> {
+        if v.is_instance(&lookup("builtins", "str")?)? {
+            lookup("builtins", "int")?.call(&[v, &py_int(16)])?.as_i64()
+        } else {
+            v.as_i64()
+        }
+    }
+    r.method(hist!("get_job"), |a| {
+        let id = job_id(arg(a, 0, "job_id")?)?;
+        let h = a.this::<History>()?;
+        crate::plugins::futures::rust_future(async move {
+            match h.get_job(id).map_err(|e| server_error(&e.message, e.status_code))? {
+                Some(row) => to_py(&Value::Object(row)),
+                None => Ok(none()),
+            }
+        })
+    });
+    r.method(hist!("delete_job"), |a| {
+        let id = job_id(arg(a, 0, "job_id")?)?;
+        let h = a.this::<History>()?;
+        crate::plugins::futures::rust_future(async move { h.delete_job(id).map(|_| none()).map_err(|e| server_error(&e.message, e.status_code)) })
+    });
+    r.method(hist!("tracking_enabled"), |a| Ok(py_bool(a.this::<History>()?.tracking_enabled(arg(a, 0, "check_paused")?.is_true()?))));
     r.method(hist!("register_auxiliary_field"), |a| {
         let field = objects::unwrap_as::<HistoryFieldData>(arg(a, 0, "new_field")?)?;
         a.this::<History>()?.register_auxiliary_field(field).map_err(|e| server_error(&e.message, e.status_code))?;

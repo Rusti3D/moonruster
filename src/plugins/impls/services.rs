@@ -29,6 +29,39 @@ fn str_or_list(v: &PyRef) -> PyResult<Vec<String>> {
 }
 
 pub fn register(r: &mut Registry) {
+    // proc_stats: a callback per stat update, awaited when it returns an
+    // awaitable (Moonraker's _handle_stat_update)
+    r.method("moonraker.components.proc_stats.ProcStats.register_stat_callback", |a| {
+        let cb = arg(a, 0, "callback")?.clone();
+        let callback: crate::components::proc_stats::StatCallback = Rc::new(move |seq: u64| {
+            match cb.call(&[&py_int(seq as i64)]) {
+                Ok(ret) if !ret.is_none() => Some(Box::pin(async move {
+                    if let Err(e) = crate::plugins::futures::await_py(ret).await {
+                        log::error!("proc_stats callback failed\n{}", e.traceback);
+                    }
+                })),
+                Ok(_) => None,
+                Err(e) => {
+                    log::error!("proc_stats callback failed\n{}", e.traceback);
+                    None
+                }
+            }
+        });
+        a.this::<crate::components::proc_stats::ProcStats>()?.register_stat_callback(callback);
+        Ok(none())
+    });
+    // spoolman
+    r.method("moonraker.components.spoolman.SpoolManager.set_active_spool", |a| {
+        let id = match arg(a, 0, "spool_id")? {
+            v if v.is_none() => None,
+            v => Some(v.as_i64()?),
+        };
+        a.this::<crate::components::spoolman::SpoolManager>()?.set_active_spool(id);
+        Ok(none())
+    });
+    r.method("moonraker.components.spoolman.SpoolManager.connected", |a| {
+        Ok(py_bool(a.this::<crate::components::spoolman::SpoolManager>()?.connected()))
+    });
     // job_state
     r.method("moonraker.components.job_state.JobState.get_last_stats", |a| {
         to_py(&Value::Object(a.this::<JobState>()?.get_last_stats()))

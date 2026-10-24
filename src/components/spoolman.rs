@@ -368,6 +368,10 @@ impl SpoolManager {
         *self.pending_reports.borrow_mut().entry(spool_id).or_insert(0.0) += used_length;
     }
 
+    pub fn connected(&self) -> bool {
+        self.ws_connected.get()
+    }
+
     pub fn set_active_spool(&self, spool_id: Option<i64>) {
         if self.spool_id.get() == spool_id {
             log::info!("Spool ID already set to: {}", spool_id.map(|i| i.to_string()).unwrap_or("None".into()));
