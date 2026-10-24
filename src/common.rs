@@ -751,6 +751,10 @@ impl JsonRpc {
         self.methods.borrow_mut().insert(name.to_string(), (request_type, api_def));
     }
 
+    pub fn remove_method(&self, name: &str) {
+        self.methods.borrow_mut().remove(name);
+    }
+
     pub fn get_method(&self, name: &str) -> Option<(RequestType, Rc<ApiDefinition>)> {
         self.methods.borrow().get(name).cloned()
     }

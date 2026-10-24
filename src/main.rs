@@ -10,6 +10,7 @@ mod loghelper;
 #[cfg(feature = "plugins")]
 mod plugins;
 mod pyfmt;
+mod pymimetypes;
 mod server;
 mod sysfs_devs;
 mod utils;

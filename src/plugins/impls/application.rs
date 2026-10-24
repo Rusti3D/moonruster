@@ -147,6 +147,33 @@ fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
 }
 
 pub fn register(r: &mut Registry) {
+    r.method(app!("route_prefix"), |_| Ok(py_str(server().app().route_prefix())));
+    r.method(app!("parse_endpoint"), |a| Ok(py_str(&server().app().parse_endpoint(&arg(a, 0, "http_path")?.as_string()?))));
+    r.method(app!("get_server"), |_| objects::wrap(server()));
+    r.method(app!("https_enabled"), |_| Ok(py_bool(server().app().https_enabled())));
+    r.method(app!("register_static_file_handler"), |a| {
+        let pattern = arg(a, 0, "pattern")?.as_string()?;
+        let path = arg(a, 1, "file_path")?.str()?;
+        let force = match a.get(2, "force") {
+            Some(v) => v.is_true()?,
+            None => false,
+        };
+        server().app().register_static_file_handler(&pattern, &path, force);
+        Ok(none())
+    });
+    r.method(app!("register_upload_handler"), |a| {
+        let pattern = arg(a, 0, "pattern")?.as_string()?;
+        let prefix = match a.get(1, "location_prefix") {
+            Some(v) => v.as_string()?,
+            None => "server/files".to_string(),
+        };
+        server().app().register_upload_handler(&pattern, &prefix);
+        Ok(none())
+    });
+    r.method(app!("remove_endpoint"), |a| {
+        server().app().remove_endpoint(&arg(a, 0, "endpoint")?.as_string()?);
+        Ok(none())
+    });
     // Server.__init__: self.register_endpoint = app.register_endpoint
     r.attr(srv!("register_endpoint"), |_| objects::wrap(server().app())?.getattr("register_endpoint"), None);
     r.attr(srv!("register_debug_endpoint"), |_| objects::wrap(server().app())?.getattr("register_debug_endpoint"), None);

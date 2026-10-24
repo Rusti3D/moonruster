@@ -787,6 +787,20 @@ impl MoonrakerApp {
         Ok(())
     }
 
+    /// MoonrakerApp.remove_endpoint: the definition, its HTTP route and its
+    /// JSON-RPC methods go
+    pub fn remove_endpoint(&self, endpoint: &str) {
+        let api_def = self.api_cache.borrow_mut().remove(endpoint);
+        if let Some(api_def) = api_def {
+            log::debug!("Removing Endpoint: {}", endpoint);
+            self.registered_base_handlers.borrow_mut().retain(|p| *p != api_def.http_path);
+            self.remove_handler(&format!("{}{}", self.route_prefix, api_def.http_path));
+            for method in &api_def.rpc_methods {
+                self.json_rpc.remove_method(method);
+            }
+        }
+    }
+
     pub fn register_debug_endpoint(
         &self,
         endpoint: &str,
@@ -1636,19 +1650,10 @@ fn parse_request_range(range_header: &str) -> Option<(Option<i64>, Option<i64>)>
     Some((start, end))
 }
 
+/// tornado StaticFileHandler.get_content_type: Python's mimetypes, with
+/// Moonraker's own additions (pymimetypes.rs)
 pub fn guess_content_type(path: &str) -> String {
-    let lower = path.to_lowercase();
-    let ext = utils::splitext_ext(&lower);
-    match ext.as_str() {
-        ".gz" | ".tgz" => return "application/gzip".into(),
-        ".bz2" | ".xz" | ".br" | ".z" => return "application/octet-stream".into(),
-        ".log" | ".gcode" | ".cfg" | ".txt" | ".conf" => return "text/plain".into(),
-        _ => {}
-    }
-    match mime_guess::from_path(path).first() {
-        Some(m) => m.essence_str().to_string(),
-        None => "application/octet-stream".into(),
-    }
+    crate::pymimetypes::content_type(path)
 }
 
 async fn file_stream_body(mut file: tokio::fs::File, start: u64, len: u64) -> Body {

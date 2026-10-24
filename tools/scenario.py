@@ -319,10 +319,6 @@ def nrm(v, key=None):
     if isinstance(v, dict):
         return {k: nrm(x, k) for k, x in v.items()}
     if isinstance(v, list):
-        if key in ("auxiliary_data", "auxiliary_totals"):
-            # in the order components registered the fields: Moonraker loads
-            # optional components in set order (random per run)
-            v = sorted(v, key=lambda f: (str(f.get("provider")), str(f.get("field", f.get("name")))))
         return [nrm(x, key) for x in v]
     return v
 

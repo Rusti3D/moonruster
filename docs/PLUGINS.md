@@ -423,6 +423,49 @@ unchanged (x86).
   - `config` is a view whose `get`, `getint`, `getfloat` and `getboolean` raise configparser's own exceptions.
 - **Templates.** `TemplateFactory.create_template` and `JinjaTemplate.render` / `render_async`. A syntax error
   raises Jinja2's `TemplateSyntaxError`.
+- **More components:**
+  - **klippy_connection:**
+    - state properties: `state` as `KlippyState`, `klippy_info`, `path`, `executable` and the rest;
+    - `is_connected`, `is_ready`, `is_printing`, `wait_connected`, `get_subscription_cache`;
+    - `register_remote_method`, `unregister_method`.
+  - **machine:**
+    - properties, `get_system_info`, `wait_for_init`;
+    - service actions;
+    - sudo: `register_sudo_request` with a Python callback, `check_sudo_access`, `exec_sudo_command`;
+    - `get_public_network`, device detection, `query_can_uuids`.
+  - **mqtt:**
+    - `publish_topic` encodes payloads as paho does: bytes, dict and list through `json_wrapper`, lowercase bools,
+      `str()`;
+    - `subscribe_topic` delivers a message with `register_callback(callback, payload)`;
+    - also `unsubscribe`, `wait_connection`, `get_instance_name`;
+    - `publish_topic_with_response` is verbatim.
+  - **websockets:**
+    - `notify_clients` with mask, `register_notification`;
+    - client lookups by uid, type and name;
+    - connection objects: `uid`, `client_data`, `user_info`, `transport_type`, `ip_addr`, `queue_message`,
+      `send_notification`, `call_method(_with_response)`, `close_socket`.
+  - **job_state, job_queue, secrets, power:** what components call. `set_device_power` normalises state as
+    Moonraker does.
+  - **announcements:** add, remove, dismiss, list, `register_feed`.
+  - **history:** `get_job` and `delete_job` (an int or the hex id), `tracking_enabled`.
+  - **proc_stats:** `register_stat_callback`.
+  - **template:** `create_ui_template`.
+  - **spoolman:** `set_active_spool`, `connected`.
+  - **application:** `register_static_file_handler`, `register_upload_handler`, `remove_endpoint` (new in Rust:
+    the definition, its route and its JSON-RPC methods go), `route_prefix`, `parse_endpoint`, `https_enabled`.
+- **Fixes found on the way:**
+  - **Waking the loop.** Python code that Rust ran outside the asyncio loop's own iteration (an MQTT message, a
+    remote method, an event from a Rust task) could schedule work that then waited for the next timer. A
+    Rust-to-Python call outside the iteration now wakes the driver.
+  - **Static file Content-Type.** It is Python's `mimetypes.guess_type`, as tornado uses it (`pymimetypes.rs`):
+    - CPython 3.15's default tables;
+    - then the same mime.types files in the same order;
+    - then Moonraker's `.log` / `.gcode` / `.cfg`.
+
+    It was the `mime_guess` crate, which differed (a `.py` file: `text/plain` instead of `text/x-python`).
+  - **Tornado.** The import-time tornado configuration (`AsyncHTTPClient.configure`) runs when
+    `tornado.httpclient` is first imported (a post-import hook), so components that never use tornado do not load
+    it (-2.8 MB).
 - **Also:**
   - `spoolman` attributes and `Announcements.register_feed`;
   - `ConfigHelper.has_section` and `sections`, instance attributes holding methods in Moonraker, served by
@@ -460,6 +503,41 @@ shows its method's first statement.
   original exception type.
 - Template error messages are minijinja's, Moonruster's template engine, not Jinja2's. The exception type is
   Jinja2's.
+
+## Resource gates (2026-10-25, CC1)
+
+Measured on the CC1 with `tools/cc1_plugins_measure.sh`:
+- the printer's CPython 3.15.0;
+- side port 7301; the printer's own Moonruster and klippy untouched;
+- a 60 s settle, then a 60 s window;
+- "load" is 20 status updates/s from a mock Klippy to 2 websocket clients subscribed like Mainsail;
+- own memory is `Pss_Anon + SwapPss`; CPU is utime + stime ticks per 60 s;
+- two runs each.
+
+**Without Python components (the build choice):**
+
+| build | idle own | idle CPU | load own | load CPU |
+|---|---|---|---|---|
+| static musl (no plugin layer) | 856-860 kB | 18-20 | 1196 kB | 152-153 |
+| glibc, non-PIE, tuned malloc | 968-1036 kB | 18-19 | 1316-1436 kB | 145-146 |
+
+glibc costs about 140 kB idle and 120-240 kB under load, and uses about 5 % less CPU under load. That confirms
+decision 5: release binaries are glibc, so Python components can load.
+
+Build note: zig's armv7 glibc link (`cargo zigbuild --target armv7-unknown-linux-gnueabihf.2.36`)
+segfaulted at start on the CC1. The GNU cross toolchain works: `arm-linux-gnueabihf-gcc` as the linker, glibc
+2.39, `-C relocation-model=static`.
+
+**With a Python component** (timelapse; the same Moonraker tree and config for both):
+
+| server | idle own | idle CPU | load own | load CPU |
+|---|---|---|---|---|
+| Python Moonraker (the CC1's own tree) | 24.98-25.25 MB | 78-82 | 24.98-25.06 MB | 546-549 |
+| Moonruster (glibc) | 13.62-13.76 MB | 19 | 13.70-13.83 MB | 242-244 |
+
+Moonruster uses 0.55x the memory, 0.24x the idle CPU and 0.44x the CPU under load, with the same updates
+delivered. On x86 with the whole corpus loaded: 26.8 MB vs 39.6 MB own memory (0.68x) and 0.38x idle CPU
+(`tools/plugin_mem.py`).
 
 ## Sharing with kaliru
 

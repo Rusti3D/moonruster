@@ -18,6 +18,8 @@ class MrTestEndpoints:
         reg("/server/mr_test/typeerror", RequestType.GET, self._typeerror)
         reg("/server/mr_test/notasync", RequestType.GET, self._notasync)
         reg("/server/mr_test/none", RequestType.POST, self._none)
+        reg("/server/mr_test/removable", RequestType.GET, self._info)
+        reg("/server/mr_test/app", RequestType.POST, self._app)
         try:
             reg("/server/mr_test/info", RequestType.GET, self._info)
         except self.server.error as e:
@@ -33,6 +35,17 @@ class MrTestEndpoints:
             "ip": str(web_request.get_ip_address()),
             "user": None if web_request.get_current_user() is None else web_request.get_current_user().username,
             "args": web_request.get_args(),
+        }
+
+    async def _app(self, web_request):
+        app = self.server.lookup_component("application")
+        app.remove_endpoint("/server/mr_test/removable")
+        app.register_static_file_handler("/server/mr_test/static", __file__)
+        return {
+            "route_prefix": app.route_prefix,
+            "parse": app.parse_endpoint("/server/mr_test/x"),
+            "https": app.https_enabled(),
+            "server": app.get_server() is self.server,
         }
 
     async def _args(self, web_request):
