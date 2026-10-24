@@ -149,6 +149,22 @@ pub fn float_value(f: f64) -> Value {
     serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
 }
 
+/// Whether this is a COSMOS printer (OpenCentauri: /etc/os-release ID=cosmos).
+/// COSMOS's own Moonraker carries patches (web_client, webcam_redirect, the
+/// sysvinit provider, swupdate updates, ":port" webcam URLs) that upstream
+/// Moonraker does not have: Moonruster behaves like each one on its platform.
+/// MOONRUSTER_COSMOS=1/0 overrides the detection (tests).
+pub fn is_cosmos() -> bool {
+    static COSMOS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *COSMOS.get_or_init(|| match std::env::var("MOONRUSTER_COSMOS").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => std::fs::read_to_string("/etc/os-release")
+            .map(|s| s.lines().any(|l| l.trim() == "ID=cosmos" || l.trim() == "ID=\"cosmos\""))
+            .unwrap_or(false),
+    })
+}
+
 pub fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| {
         unsafe {

@@ -1043,7 +1043,8 @@ impl Machine {
             "systemd_cli" => ProviderKind::SystemdCli,
             "systemd_dbus" => ProviderKind::SystemdDbus,
             "supervisord_cli" => ProviderKind::SupervisordCli,
-            "sysvinit" => ProviderKind::Sysvinit,
+            // COSMOS only: upstream Moonraker rejects it (Invalid Provider)
+            "sysvinit" if crate::utils::is_cosmos() => ProviderKind::Sysvinit,
             other => return Err(ConfigHelper::error(format!("Invalid Provider: {}", other))),
         };
         let shutdown_action = config.getchoice("shutdown_action", &["halt", "poweroff"], Some("poweroff"), true)?;

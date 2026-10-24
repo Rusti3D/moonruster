@@ -1010,7 +1010,13 @@ fn get_deploy(
     cfg: &ConfigHelper,
     cmd_helper: &Rc<CommandHelper>,
 ) -> Result<Option<Rc<dyn Deployer>>, ConfigError> {
+    // AppType.from_string raises for an unknown name: the extension then
+    // fails to load ("Invalid type" is only for a known type without a
+    // deployer, such as "none")
     let t = AppType::from_string(app_type);
+    if t.is_none() {
+        return Err(ConfigError(format!("No enum member named {}", app_type)));
+    }
     Ok(Some(match t {
         Some(AppType::Web) | Some(AppType::Zip) | Some(AppType::Executable) => {
             Rc::new(net_deploy::NetDeploy::new(cfg, cmd_helper)?) as Rc<dyn Deployer>

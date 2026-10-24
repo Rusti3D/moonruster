@@ -85,16 +85,19 @@ impl WebCam {
 
     pub fn as_dict(&self) -> Value {
         let mut data = self.fields.clone();
-        for key in ["stream_url", "snapshot_url"] {
-            if let Some(Value::String(url)) = data.get(key) {
-                let expanded = Self::expand_url(url);
-                data.insert(key.into(), json!(expanded));
+        if crate::utils::is_cosmos() {
+            for key in ["stream_url", "snapshot_url"] {
+                if let Some(Value::String(url)) = data.get(key) {
+                    let expanded = Self::expand_url(url);
+                    data.insert(key.into(), json!(expanded));
+                }
             }
         }
         Value::Object(data)
     }
 
-    /// ":8080/stream" -> default host on port 8080 (COSMOS patch to moonraker)
+    /// ":8080/stream" -> default host on port 8080 (COSMOS patch to moonraker;
+    /// applied on COSMOS only, upstream Moonraker keeps the URL as given)
     fn expand_url(url: &str) -> String {
         static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| crate::utils::regex(r"^:(\d+)(/.*)?$"));
         match RE.captures(url) {
@@ -118,7 +121,7 @@ impl WebCam {
         if url.is_empty() {
             return Err(ServerError::bad("Empty URL Provided"));
         }
-        let mut url = Self::expand_url(url);
+        let mut url = if crate::utils::is_cosmos() { Self::expand_url(url) } else { url.to_string() };
         if !crate::utils::regex(r"^\w+://[^/]+").is_match(&url) {
             let host = DEFAULT_HOST.with(|h| h.borrow().clone());
             url = format!("{}/{}", host, url.trim_start_matches('/'));

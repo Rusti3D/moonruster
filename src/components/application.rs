@@ -452,9 +452,12 @@ impl MoonrakerApp {
             home_pattern = format!("{}/?", route_prefix);
         }
         let max_ws_conns = config.getint_or("max_websocket_connections", MAX_WS_CONNS_DEFAULT)?;
-        // Optional static web client: a full path, or a name under /var/www
+        // Optional static web client: a full path, or a name under /var/www.
+        // COSMOS only: upstream Moonraker has neither option, and reading one
+        // would list it in /server/config
+        let cosmos = utils::is_cosmos();
         let mut web_client_path = None;
-        if let Some(mut wcp) = config.get_opt("web_client")? {
+        if let Some(mut wcp) = if cosmos { config.get_opt("web_client")? } else { None } {
             if !wcp.starts_with('/') && !wcp.starts_with('~') {
                 wcp = format!("/var/www/{}", wcp);
             }
@@ -466,7 +469,7 @@ impl MoonrakerApp {
                 log::warn!("web_client '{}' is not a valid directory, static file serving disabled", wcp);
             }
         }
-        let webcam_redirect = config.get_opt("webcam_redirect")?;
+        let webcam_redirect = if cosmos { config.get_opt("webcam_redirect")? } else { None };
         let app = Rc::new(MoonrakerApp {
             json_rpc: json_rpc.clone(),
             api_cache: RefCell::new(HashMap::new()),
