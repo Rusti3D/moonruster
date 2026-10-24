@@ -183,6 +183,14 @@ impl KlippyConnection {
         Value::Object(self.klippy_info.borrow().clone())
     }
 
+    pub fn peer_credentials(&self) -> Map<String, Value> {
+        self.peer_cred.borrow().clone()
+    }
+
+    pub fn service_info(&self) -> Value {
+        self.service_info.borrow().clone()
+    }
+
     pub fn missing_requirements(&self) -> Vec<String> {
         self.missing_reqs.borrow().clone()
     }
@@ -212,6 +220,18 @@ impl KlippyConnection {
             *self.executable.borrow_mut() = PathBuf::from(p);
         }
         *self.service_info.borrow_mut() = kc_info.get("service_info").cloned().unwrap_or(json!({}));
+    }
+
+    /// Moonraker's wait_connected: the connection attempt in progress, if
+    /// any, finished; whether Klippy is connected
+    pub async fn wait_connected(self: &Rc<Self>) -> bool {
+        let n = self.connection_done.borrow().clone();
+        if let Some(n) = n {
+            if self.connecting.get() {
+                n.notified().await;
+            }
+        }
+        self.is_connected()
     }
 
     pub async fn wait_started(self: &Rc<Self>, timeout: f64) -> bool {

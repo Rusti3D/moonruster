@@ -182,16 +182,7 @@ pub fn register(r: &mut Registry) {
     });
     r.method(name!("register_remote_method"), |a| {
         let method = arg(a, 0, "method_name")?.as_string()?;
-        let cb = arg(a, 1, "cb")?.clone();
-        // Klippy's call runs as Moonraker runs it: event_loop.register_callback(cb, **params)
-        let remote: crate::components::klippy_connection::RemoteMethod = Rc::new(move |params| {
-            let r = to_py(&Value::Object(params))
-                .and_then(|kw| event_loop()?.getattr("register_callback")?.call_kw(&[&cb], &kw));
-            if let Err(e) = r {
-                log::error!("moonruster: remote method callback failed\n{}", e.traceback);
-            }
-            None
-        });
+        let remote = python_remote_method(arg(a, 1, "cb")?.clone());
         server().register_remote_method(&method, remote).map_err(|e| server_error(&e.message, e.status_code))?;
         Ok(none())
     });
@@ -278,6 +269,18 @@ pub fn register(r: &mut Registry) {
             }
         }
     }
+}
+
+/// A component's remote method: Klippy's call runs as Moonraker runs it,
+/// event_loop.register_callback(cb, **params)
+pub fn python_remote_method(cb: PyRef) -> crate::components::klippy_connection::RemoteMethod {
+    Rc::new(move |params| {
+        let r = to_py(&Value::Object(params)).and_then(|kw| event_loop()?.getattr("register_callback")?.call_kw(&[&cb], &kw));
+        if let Err(e) = r {
+            log::error!("moonruster: remote method callback failed\n{}", e.traceback);
+        }
+        None
+    })
 }
 
 /// Server.register_component / components[name] = component: a built-in's

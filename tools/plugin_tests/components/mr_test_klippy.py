@@ -58,6 +58,20 @@ class MrTestKlippy:
         out["pause"] = await outcome(k.pause_print())
         out["pause_default"] = await outcome(k.pause_print(default="no print"))
         out["remote"] = await outcome(k.run_gcode("MR_TEST_REMOTE"))
+        kc = self.server.lookup_component("klippy_connection")
+        out["kc_state"] = [type(kc.state).__name__, str(kc.state), kc.state_message]
+        out["kc_flags"] = [kc.is_connected(), kc.is_ready(), kc.is_printing()]
+        out["kc_info_keys"] = sorted(kc.klippy_info.keys())
+        out["kc_misc"] = [kc.missing_requirements, kc.unit_name, type(kc.path).__name__,
+                          type(kc.executable).__name__, sorted(kc.peer_credentials.keys()),
+                          kc.klippy_apis is self.kapis]
+        out["kc_cache_keys"] = sorted(kc.get_subscription_cache().keys())
+        out["kc_wait_connected"] = await outcome(kc.wait_connected())
+        try:
+            kc.register_remote_method("mr_late", self._remote)
+            out["kc_register_late"] = ["ok"]
+        except Exception as e:
+            out["kc_register_late"] = ["err", type(e).__name__, str(e)]
         await asyncio.sleep(1.0)
         out["status_callbacks"] = self.status_seen
         for key, v in out.items():

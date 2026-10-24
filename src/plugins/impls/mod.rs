@@ -9,6 +9,7 @@ pub mod file_manager;
 pub mod history;
 pub mod http_client;
 pub mod klippy_apis;
+pub mod klippy_connection;
 pub mod server;
 pub mod shell_command;
 pub mod source_info;
@@ -31,6 +32,7 @@ pub fn register(r: &mut Registry) {
     history::register(r);
     http_client::register(r);
     klippy_apis::register(r);
+    klippy_connection::register(r);
     server::register(r);
     shell_command::register(r);
     source_info::register(r);
