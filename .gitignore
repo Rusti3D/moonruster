@@ -1,8 +1,9 @@
 /target
 /ref
-tools/scratch*.sh
+tools/scratch*
 tools/samples/
 /dist
 tools/plugin_trace/trace.jsonl
 tools/plugin_trace/static.json
 src/plugins/mirror/
+__pycache__/
