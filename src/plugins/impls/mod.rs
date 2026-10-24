@@ -10,6 +10,7 @@ pub mod history;
 pub mod http_client;
 pub mod klippy_apis;
 pub mod klippy_connection;
+pub mod mqtt;
 pub mod server;
 pub mod services;
 pub mod shell_command;
@@ -35,6 +36,7 @@ pub fn register(r: &mut Registry) {
     http_client::register(r);
     klippy_apis::register(r);
     klippy_connection::register(r);
+    mqtt::register(r);
     server::register(r);
     services::register(r);
     shell_command::register(r);

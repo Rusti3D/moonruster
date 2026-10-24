@@ -2,8 +2,40 @@
 // (docs/PLUGINS.md). Every function here runs with the GIL held: on the
 // loop thread that is whenever tokio is not parked.
 use super::capi::*;
+use std::cell::{Cell, RefCell};
 use std::ffi::CString;
 use std::ptr::null_mut;
+use std::rc::Rc;
+
+thread_local! {
+    // set while the asyncio loop runs one iteration (mod.rs Loop::drive)
+    static IN_STEP: Cell<bool> = const { Cell::new(false) };
+    static WAKE: RefCell<Option<Rc<tokio::sync::Notify>>> = const { RefCell::new(None) };
+}
+
+/// The asyncio driver's wake-up (mod.rs Loop::start)
+pub fn set_wake(n: Rc<tokio::sync::Notify>) {
+    WAKE.with(|w| *w.borrow_mut() = Some(n));
+}
+
+/// Mark the asyncio loop's iteration (mod.rs Loop::drive)
+pub fn set_in_step(v: bool) {
+    IN_STEP.with(|s| s.set(v));
+}
+
+/// After Rust called Python outside the loop's own iteration (an MQTT
+/// message, a remote method, an event from a Rust task): what it scheduled
+/// with call_soon / create_task must run now, as it would in Moonraker's
+/// loop; asyncio itself only wakes its selector for other threads
+fn wake_after_call() {
+    if !IN_STEP.with(|s| s.get()) {
+        WAKE.with(|w| {
+            if let Some(n) = w.borrow().as_ref() {
+                n.notify_one();
+            }
+        });
+    }
+}
 
 /// A Python exception taken off the interpreter: its class name, str(), and
 /// the traceback text traceback.format_exception() gives (what Moonraker's
@@ -75,12 +107,16 @@ impl PyRef {
 
     pub fn call(&self, args: &[&PyRef]) -> PyResult<PyRef> {
         let t = tuple(args);
-        PyRef::owned(unsafe { PyObject_CallObject(self.0, t.0) })
+        let r = PyRef::owned(unsafe { PyObject_CallObject(self.0, t.0) });
+        wake_after_call();
+        r
     }
 
     pub fn call_kw(&self, args: &[&PyRef], kwargs: &PyRef) -> PyResult<PyRef> {
         let t = tuple(args);
-        PyRef::owned(unsafe { PyObject_Call(self.0, t.0, kwargs.0) })
+        let r = PyRef::owned(unsafe { PyObject_Call(self.0, t.0, kwargs.0) });
+        wake_after_call();
+        r
     }
 
     pub fn call_method(&self, name: &str, args: &[&PyRef]) -> PyResult<PyRef> {

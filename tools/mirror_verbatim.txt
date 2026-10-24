@@ -65,3 +65,5 @@ moonraker.confighelper.ConfigHelper.getgpioevent
 moonraker.confighelper.ConfigHelper.gettemplate
 moonraker.confighelper.ConfigHelper.load_template
 moonraker.confighelper.ConfigHelper.getpath
+# MQTTClient.publish_topic_with_response: Moonraker's own code over subscribe_topic / publish_topic / unsubscribe
+moonraker.components.mqtt.MQTTClient.publish_topic_with_response

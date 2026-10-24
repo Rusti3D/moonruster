@@ -280,6 +280,7 @@ impl Loop {
         let loop_ = driver.getattr("loop")?;
         let fd = driver.call_method("fileno", &[])?.as_i64()? as RawFd;
         let l = Rc::new(Loop { driver, loop_, wake: Rc::new(Notify::new()) });
+        py::set_wake(l.wake.clone());
         LOOP.with(|x| *x.borrow_mut() = Some(l.clone()));
         crate::server::spawn(async move { l.drive(fd).await });
         Ok(())
@@ -296,7 +297,10 @@ impl Loop {
             }
         };
         loop {
-            let next = match self.driver.call_method("step", &[]).and_then(|v| v.as_f64()) {
+            py::set_in_step(true);
+            let step = self.driver.call_method("step", &[]).and_then(|v| v.as_f64());
+            py::set_in_step(false);
+            let next = match step {
                 Ok(v) => v,
                 Err(e) => {
                     log::error!("asyncio loop step failed\n{}", e.traceback);

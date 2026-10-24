@@ -59,6 +59,12 @@ bool_opt: true
 
 [mr_test_shell]
 
+[mqtt]
+address: localhost
+instance_name: mr_test_cmp
+
+[mr_test_mqtt]
+
 [mr_test_services]
 
 [mr_test_config]
@@ -187,6 +193,7 @@ REQUESTS = [
     ("POST", "/server/mr_test/klippy", None),
     ("POST", "/server/mr_test/shell", None),
     ("POST", "/server/mr_test/services", None),
+    ("POST", "/server/mr_test/mqtt", None),
 ]
 
 

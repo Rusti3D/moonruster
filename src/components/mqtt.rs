@@ -723,6 +723,26 @@ impl MqttClient {
         }
     }
 
+    pub fn qos(&self) -> u8 {
+        self.qos
+    }
+
+    pub fn get_instance_name(&self) -> String {
+        self.instance_name.clone()
+    }
+
+    /// Moonraker's wait_connection: whether the client connected within the
+    /// timeout (None: no limit)
+    pub async fn wait_connection(&self, timeout: Option<f64>) -> bool {
+        match timeout {
+            Some(t) => tokio::time::timeout(Duration::from_secs_f64(t.max(0.0)), self.connect_evt.wait()).await.is_ok(),
+            None => {
+                self.connect_evt.wait().await;
+                true
+            }
+        }
+    }
+
     pub fn is_connected(&self) -> bool {
         self.connect_evt.is_set()
     }
@@ -826,6 +846,25 @@ impl MqttClient {
             Value::String(s) => s.clone().into_bytes(),
             Value::Number(_) => crate::pyfmt::py_str(&payload).into_bytes(),
         };
+        self.publish_bytes(topic, data, Some(qos), retain)
+    }
+
+    /// publish_topic of a payload already encoded (Python components encode
+    /// it as Moonraker does, json_wrapper for dicts and lists)
+    pub fn publish_bytes(
+        &self,
+        topic: &str,
+        data: Vec<u8>,
+        qos: Option<u8>,
+        retain: bool,
+    ) -> LocalBoxFuture<'static, Result<(), ServerError>> {
+        let qos = match qos {
+            Some(q) if q != 0 => q,
+            _ => self.qos,
+        };
+        if qos > 2 {
+            return Box::pin(async { Err(ServerError::bad("QOS must be between 0 and 2")) });
+        }
         if topic.is_empty() || topic.contains('+') || topic.contains('#') || data.len() > 268435455 {
             return Box::pin(async { Err(ServerError::new("MQTT Message Queue Full", 529)) });
         }
