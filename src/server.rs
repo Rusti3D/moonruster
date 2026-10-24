@@ -47,6 +47,11 @@ pub trait Component: Any {
     }
     async fn on_exit(self: Rc<Self>) {}
     async fn close(self: Rc<Self>) {}
+    /// The Python traceback of a failed component_init (Python components:
+    /// Moonraker logs its warning with exc_info)
+    fn take_traceback(&self) -> Option<String> {
+        None
+    }
 }
 
 thread_local! {
@@ -93,6 +98,7 @@ pub trait LifecycleDyn {
     fn init(self: Rc<Self>) -> LocalBoxFuture<'static, Result<(), ServerError>>;
     fn exit(self: Rc<Self>) -> LocalBoxFuture<'static, ()>;
     fn close_comp(self: Rc<Self>) -> LocalBoxFuture<'static, ()>;
+    fn take_traceback(&self) -> Option<String>;
 }
 
 impl<T: Component + 'static> LifecycleDyn for T {
@@ -107,6 +113,9 @@ impl<T: Component + 'static> LifecycleDyn for T {
     }
     fn close_comp(self: Rc<Self>) -> LocalBoxFuture<'static, ()> {
         self.close()
+    }
+    fn take_traceback(&self) -> Option<String> {
+        Component::take_traceback(self)
     }
 }
 
@@ -348,8 +357,19 @@ impl Server {
 
     async fn initialize_component(self: &Rc<Self>, name: String, comp: Rc<dyn LifecycleDyn>) {
         log::info!("Performing Component Post Init: [{}]", name);
+        let c2 = comp.clone();
         if let Err(e) = comp.init().await {
-            self.add_warning(&format!("Component '{}' failed to load with error: {}", name, e), None, true);
+            let msg = format!("Component '{}' failed to load with error: {}", name, e);
+            match c2.take_traceback() {
+                // logging.warning(warning, exc_info=e): one entry with the traceback
+                Some(tb) => {
+                    self.add_warning(&msg, None, false);
+                    log::warn!("{}\n{}", msg, tb);
+                }
+                None => {
+                    self.add_warning(&msg, None, true);
+                }
+            }
             self.set_failed_component(&name);
         }
     }
@@ -388,6 +408,24 @@ impl Server {
         }
         if self.failed_components.borrow().iter().any(|c| c == name) {
             return Err(ConfigError(format!("Component {} previously failed to load", name)));
+        }
+        // a Python component in the Moonraker tree's moonraker/components
+        // (docs/PLUGINS.md)
+        #[cfg(feature = "plugins")]
+        if !crate::components::COMPONENT_NAMES.contains(&name) && crate::plugins::component_exists(name) {
+            return match crate::plugins::component::load(name, config) {
+                Ok(comp) => {
+                    self.components.borrow_mut().insert(name.to_string(), comp.clone() as Rc<dyn Any>);
+                    self.lifecycle.borrow_mut().insert(name.to_string(), comp as Rc<dyn LifecycleDyn>);
+                    log::info!("Component ({}) loaded", name);
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!("Unable to load component: ({})\n{}", name, e.0);
+                    self.set_failed_component(name);
+                    Err(e)
+                }
+            };
         }
         // python imports the module before calling getsection(), an unknown
         // component never adds its section to the parsed config
@@ -430,6 +468,24 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
     pub fn lookup_component<T: 'static>(&self, name: &str) -> Option<Rc<T>> {
         let any = self.components.borrow().get(name).cloned()?;
         any.downcast::<T>().ok()
+    }
+
+    /// A component of any type (Python components: plugins)
+    pub fn component_any(&self, name: &str) -> Option<Rc<dyn Any>> {
+        self.components.borrow().get(name).cloned()
+    }
+
+    /// register_component() of an untyped component (Python components),
+    /// with its lifecycle when it has one
+    pub fn register_component_any(&self, name: &str, comp: Rc<dyn Any>, lc: Option<Rc<dyn LifecycleDyn>>) -> Result<(), ServerError> {
+        if self.components.borrow().contains_key(name) {
+            return Err(ServerError::bad(format!("Component '{}' already registered", name)));
+        }
+        self.components.borrow_mut().insert(name.to_string(), comp);
+        if let Some(lc) = lc {
+            self.lifecycle.borrow_mut().insert(name.to_string(), lc);
+        }
+        Ok(())
     }
 
     pub fn has_component(&self, name: &str) -> bool {

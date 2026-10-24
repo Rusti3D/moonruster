@@ -60,6 +60,13 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 rustls-native-certs = "0.8"
 mdns-sd = "0.21"
 socket2 = { version = "0.6", features = ["all"] }
+# mirror.bin (Python components); already built for zip / reqwest
+flate2 = "1"
+
+[features]
+# Python components (docs/PLUGINS.md): needs a dynamically linked glibc build
+default = ["plugins"]
+plugins = []
 
 [profile.release]
 # small binaries for printer hosts with little storage

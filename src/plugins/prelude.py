@@ -177,18 +177,61 @@ class MirrorFinder:
         return spec
 
 
+_unofficial = None
+
+
+def load_component(server, config, component_name):
+    """Moonraker's server.load_component (9e676eba) for a component file in
+    the Moonraker tree: import it, then load_component() with its section;
+    pip recovery and the retry run inside the except block, as there, so a
+    second failure's traceback chains to the first"""
+    full_name = f"moonraker.components.{component_name}"
+    try:
+        module = importlib.import_module(full_name)
+        config = config.getsection(component_name, None)
+        load_func = getattr(module, "load_component")
+        return load_func(config)
+    except Exception as e:
+        if (
+            isinstance(e, ModuleNotFoundError) and
+            full_name != e.name and
+            component_name not in (_unofficial or [])
+        ):
+            if server.try_pip_recovery(e.name or "unknown"):
+                return load_component(server, config, component_name)
+        raise
+
+
 class LogHandler(logging.Handler):
+    """Moonraker's file handler, through Moonruster's log writer: the
+    record's own file, function and line, and the message with the
+    traceback appended (logging.Formatter('%(message)s') does that)"""
+
     def emit(self, record):
         try:
-            _n.log(record.levelno, self.format(record))
+            _n.log(record.levelno, record.filename, record.funcName, record.lineno, self.format(record))
         except Exception:
             self.handleError(record)
 
 
-def install(moonraker_dir, modules, log_level, log_format):
+def software_info():
+    """Moonraker's get_software_info(), which it runs at startup (its
+    unofficial_components decide pip recovery)"""
+    global _unofficial
+    from moonraker.utils import get_software_info
+    _unofficial = get_software_info().get("unofficial_components", [])
+
+
+def install(moonraker_dir, modules, log_level):
     sys.meta_path.insert(0, MirrorFinder(moonraker_dir, dict(modules)))
-    handler = LogHandler()
-    handler.setFormatter(logging.Formatter(log_format))
+    # as Moonraker's startup: get_software_info() runs before logging is set
+    # up (an error there goes to stderr through the handler logging's
+    # module-level functions add), then loghelper removes that handler
+    software_info()
     root = logging.getLogger()
+    while root.hasHandlers():
+        root.removeHandler(root.handlers[0])
+    handler = LogHandler()
+    handler.setFormatter(logging.Formatter("%(message)s"))
     root.addHandler(handler)
     root.setLevel(log_level)

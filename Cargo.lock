@@ -1393,6 +1393,7 @@ dependencies = [
  "chrono",
  "ed25519-dalek",
  "fancy-regex",
+ "flate2",
  "futures",
  "glob",
  "hex",

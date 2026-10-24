@@ -251,8 +251,9 @@ Debian bookworm 2.36 and bullseye 2.31. zig can target an older glibc.
 
 ## Phase 2 results (2026-10-24, mirror)
 
-`tools/gen_mirror.py ref/moonraker OUT` generates 72 modules and 3188 IDs; 76 classes are Moonraker's own
-code. `mirror.bin` is 131 kB compressed. Changes from kaliru's generator, each one forced by something in
+`tools/gen_mirror.py ref/moonraker OUT` generates 72 modules and 2950 IDs, the Moonraker methods Moonruster
+implements in Rust; 76 classes and 13 whole modules are Moonraker's own code. `mirror.bin` is about 130 kB
+compressed. Changes from kaliru's generator, each one forced by something in
 Moonraker's source:
 - **Coroutines and generators.** Async methods `return await _mr.call(...)`, so they stay coroutine
   functions. The 5 generator and async-generator methods keep iterator semantics.
@@ -261,9 +262,18 @@ Moonraker's source:
   and classes on stdlib or third-party bases, transitively across modules. Their runtime globals are bound at
   import, because a function's globals are a plain dict lookup that never reaches the module's `__getattr__`.
   Dataclasses also get `ClassVar`/`InitVar`.
-- **Whole modules kept verbatim:** `utils.json_wrapper`, which keeps its msgspec switch,
-  `utils.ioctl_macros` (the V4L2 constants are computed with it at import) and
-  `components.file_manager.metadata` (Moonraker's standalone metadata script).
+- **Whole modules kept verbatim** (`tools/mirror_verbatim_modules.txt`):
+  - every module of `moonraker.utils`. It is server-independent utility code (json_wrapper's msgspec switch,
+    the V4L2 constants of ioctl_macros/sysfs_devs, source_info's paths, git repo info, pip_utils), and
+    Moonraker's own code is the most faithful version of it;
+  - `components.file_manager.metadata`, Moonraker's standalone metadata script.
+- **Verbatim classes and methods** (`tools/mirror_verbatim.txt`): `eventloop.EventLoop` and `FlexTimer` are
+  pure Python over asyncio, which is CPython's real loop here.
+- **Generated tables** in `mirror_ids.rs`:
+  - `COMPONENT_CLASSES`: each component's class, read from what its `load_component()` returns, so
+    `lookup_component()` hands a built-in component to Python as its Moonraker class;
+  - `STARTUP_MODULES`: modules with startup side effects. The generator fails if one is not a module of a
+    component Moonraker always loads.
 - **Anything that needs a third-party package is lazy:** a statement, class or class attribute that needs one
   is Moonraker's own statement, run on first access.
   - Examples: `WATCH_FLAGS`, paho's tables, mqtt's `ExtPahoClient`, tornado's handler classes,
@@ -296,6 +306,47 @@ Memory, x86 CPython 3.12, loading **all** 72 mirror modules (a component imports
 - the prelude plus every mirror module: 4.7-5.2 MB.
 
 The prelude does not import `importlib.abc`, which alone costs 4.1 MB.
+
+Open memory item (Phase 6): verbatim `moonraker.utils` imports `source_info`, which imports
+`importlib_metadata`. That costs 2.9 MB on x86 (`importlib.metadata` 2.5 MB + `importlib_metadata` 0.4 MB) for
+every component, as it does in Moonraker. A lazy module proxy for `source_info` (as PEP 810's lazy imports
+would do) would make it cost only when `source_info` is used. To be measured on the CC1 first.
+
+## Phase 3 status (2026-10-24, loader)
+
+Built (`src/plugins/`, cargo feature `plugins`, on by default):
+- `capi.rs`: the C API table (3.10+); `py.rs`: owned references, exceptions with Moonraker-format tracebacks;
+  `convert.rs`: Python <-> JSON values.
+- `mod.rs`: interpreter start as the venv's python, the asyncio driver, the GIL park hooks (main.rs).
+- `native.rs`, `objects.rs`: the `_moonruster` module, the handler registry by Moonraker name, one Python object
+  per Rust object. Calls from other threads are refused: Moonruster's objects are single-threaded.
+- `component.rs`: `PyComponent` and its lifecycle (`component_init` / `on_exit` / `close`, awaited when they
+  return an awaitable).
+- `prelude.py` `load_component`: Moonraker's own order. It imports, then `getsection`, then `load_component()`,
+  with pip recovery and the retry inside the `except` block, so a second failure chains like Moonraker's.
+  `Server.try_pip_recovery` is Moonraker's own code (verbatim).
+- `get_software_info()` runs at Python start before the log handler is set, as in Moonraker. Its errors go to
+  stderr (`ERROR:root:...`), not to moonraker.log.
+- Handlers: `ConfigHelper` (get, getint, getfloat, getboolean, has_option, has_section, get_options,
+  get_prefix_sections, getsection, get_name, get_server), and on `Server`: `get_app_args`, `get_host_info`,
+  `get_event_loop` (Moonraker's own EventLoop), `lookup_component`, `register_component`,
+  `pip_recovery_attempted`.
+- `server.rs`: a name that is not built in but has a file in the components directory loads as a Python
+  component. A failed `component_init` is logged with its traceback, as Moonraker's warning with exc_info.
+
+Check: `tools/plugin_cmp.py` runs Python Moonraker and Moonruster on `tools/plugin_tests/components` (a working
+component, one failing at import, one failing in `component_init`). **0 differences** in failed_components,
+warnings, components, and every log entry about them: config values, defaults, bounds and required errors,
+`lookup_component`, `get_app_args`, enums, the event loop, `component_init`, `on_exit`, `close`, and pip recovery.
+
+Known differences the check normalises (none of them from the component layer):
+- **Moonruster's own log lines** name the module, not the function (`[server.py:server()]`); this predates the
+  plugin work.
+- **Tracebacks** start at the component's frame. Moonraker's also show its own `server.py` and importlib frames.
+- **Entry order:** Moonraker loads optional components in random `set` order.
+
+No cost without a Python component: libpython is not mapped, there are no extra threads, and own memory is
+unchanged (x86).
 
 ## Sharing with kaliru
 

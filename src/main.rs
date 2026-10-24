@@ -7,6 +7,8 @@ mod configparser;
 mod confighelper;
 mod components;
 mod loghelper;
+#[cfg(feature = "plugins")]
+mod plugins;
 mod pyfmt;
 mod server;
 mod sysfs_devs;
@@ -130,6 +132,14 @@ fn parse_args(argv: &[String]) -> Args {
 }
 
 fn main() {
+    // glibc's malloc keeps 128 kB padding on top of the heap and trims only
+    // past 128 kB free: about 0.8 MB more own memory than musl for the same
+    // allocations (docs/PLUGINS.md "Build"); return freed memory promptly
+    #[cfg(target_env = "gnu")]
+    unsafe {
+        libc::mallopt(libc::M_TOP_PAD, 0);
+        libc::mallopt(libc::M_TRIM_THRESHOLD, 0);
+    }
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(|a| a == "--metadata").unwrap_or(false) {
         std::process::exit(components::file_manager::metadata::main(&argv[2..]));
@@ -199,7 +209,12 @@ fn main() {
         startup_warnings.push(json!(w));
     }
     app_args.insert("startup_warnings".into(), Value::Array(startup_warnings));
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    builder.enable_all();
+    // Python components: the GIL is released while the loop thread waits
+    #[cfg(feature = "plugins")]
+    builder.on_thread_park(plugins::park_hook).on_thread_unpark(plugins::unpark_hook);
+    let rt = builder.build().expect("tokio runtime");
     let local = tokio::task::LocalSet::new();
     let status = local.block_on(&rt, launch_server(app_args));
     match status {

@@ -421,7 +421,10 @@ class ModuleGen:
         if any(b in self.lazy for b in bases_src):
             self.defer(cls)  # its base is defined on first access: so is it
             return
-        if cls.name in self.verbatim_names:
+        qual = f"{self.modname}.{cls.name}"
+        if cls.name in self.verbatim_names or qual in VERBATIM:
+            if qual in VERBATIM:
+                VERBATIM_SEEN.add(qual)
             if definition_names(cls) & self.third_names:
                 # Moonraker's own class on a third-party base (mqtt's
                 # ExtPahoClient): defined on first access
@@ -620,6 +623,63 @@ def main():
         f.write("pub static IDS: &[&str] = &[\n")
         for n in ids.names:
             f.write(f'    "{n}",\n')
+        f.write("];\n")
+    # component name -> the class its load_component() returns (lookup_component
+    # hands Moonruster's built-in components to Python as these classes)
+    srcs = {m: s for m, _, s in sources}
+
+    def returned_class(modname):
+        """(module, class) load_component() of `modname` returns: `return
+        Class(config)`, or a package's `return fm.load_component(config)`
+        with `from . import file_manager as fm`"""
+        tree = ast.parse(srcs[modname])
+        aliases = {}
+        for n in tree.body:
+            if isinstance(n, ast.ImportFrom) and n.level == 1 and n.module is None:
+                for a in n.names:
+                    aliases[a.asname or a.name] = f"{modname}.{a.name}"
+        for n in tree.body:
+            if isinstance(n, ast.FunctionDef) and n.name == "load_component":
+                for r in ast.walk(n):
+                    if isinstance(r, ast.Return) and isinstance(r.value, ast.Call):
+                        f = r.value.func
+                        if isinstance(f, ast.Name):
+                            return modname, f.id
+                        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in aliases:
+                            return returned_class(aliases[f.value.id])
+        raise SystemExit(f"{modname}: no `return Class(config)` in load_component")
+
+    comp_classes = []
+    for modname, is_pkg, src in sources:
+        if modname.startswith("moonraker.components.") and modname.count(".") == 2:
+            comp_classes.append((modname.rsplit(".", 1)[1],) + returned_class(modname))
+    # modules with third-party side effects (_mr_startup) must be modules
+    # Moonraker imports at every start: those of the components server.py
+    # always loads (CORE_COMPONENTS, SERVER_COMPONENTS, database)
+    always = {"database"}
+    for n in ast.parse(srcs["moonraker.server"]).body:
+        if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") in ("CORE_COMPONENTS", "SERVER_COMPONENTS"):
+            always |= set(ast.literal_eval(n.value))
+    startup_modules = []
+    for modname, _, _ in sources:
+        text = (mdir / (modname + ".py")).read_text(encoding="utf-8")
+        if "\n_mr_startup = []" in text or modname in VERBATIM_MODULES:
+            continue
+        comp = next((c for c in always if modname == f"moonraker.components.{c}"
+                     or modname.startswith(f"moonraker.components.{c}.")), None)
+        if comp is None and not modname.startswith(("moonraker.server", "moonraker.common")):
+            raise SystemExit(f"{modname} has startup side effects but is not a module Moonraker always imports")
+        startup_modules.append(modname)
+    with open(out / "mirror_ids.rs", "a", encoding="utf-8", newline="\n") as f:
+        f.write("\n/// modules whose third-party side effects (_mr_startup) run when Python starts\n")
+        f.write("pub static STARTUP_MODULES: &[&str] = &[\n")
+        for m in startup_modules:
+            f.write(f'    "{m}",\n')
+        f.write("];\n")
+        f.write("\n/// component name -> (module, class) of what its load_component() returns\n")
+        f.write("pub static COMPONENT_CLASSES: &[(&str, &str, &str)] = &[\n")
+        for n, m, c in comp_classes:
+            f.write(f'    ("{n}", "{m}", "{c}"),\n')
         f.write("];\n")
     missing = VERBATIM - VERBATIM_SEEN
     if missing:

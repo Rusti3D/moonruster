@@ -133,12 +133,21 @@ def main():
     if mode == "real":
         repo = sys.argv[2]
         sys.path.insert(0, repo)
+        # third-party packages Moonraker imports with moonraker.utils, which
+        # every Moonraker module imports: the mirror may import these too
+        before = set(sys.modules)
+        importlib.import_module("moonraker.utils")
+        utils_third = sorted({m.split(".")[0] for m in set(sys.modules) - before}
+                             - {"moonraker"} - set(sys.stdlib_module_names))
         res = dump(module_names(os.path.join(repo, "moonraker")))
+        res["utils_third_party"] = utils_third
     elif mode == "mirror":
         mr_dir, out_dir, tree = sys.argv[2], sys.argv[3], sys.argv[4]
         mirror = os.path.join(out_dir, "mirror")
         modules = {}
-        for line in open(os.path.join(out_dir, "mirror_ids.rs")):
+        text = open(os.path.join(out_dir, "mirror_ids.rs")).read()
+        block = text[text.index("pub static MODULES"):]
+        for line in block[: block.index("];")].splitlines():
             line = line.strip()
             if line.startswith('("'):
                 name, pkg = line.strip("(),").split(", ")
@@ -160,7 +169,7 @@ def main():
         exec(compile(src, "prelude.py", "exec"), prelude.__dict__)
         sys.modules["_mr"] = prelude
         # the reference tree: its paths become the mirror modules' __file__
-        prelude.install(os.path.join(tree, "moonraker"), modules, 20, "%(message)s")
+        prelude.install(os.path.join(tree, "moonraker"), modules, 20)
         before = set(sys.modules)
         if resolve:
             # with the venv: evaluate every lazy name and class attribute, so
@@ -205,8 +214,9 @@ def diff(real, mirror):
         problems.append(f"real import error {m}: {e}")
     for m, e in mirror["errors"].items():
         problems.append(f"mirror import error {m}: {e}")
-    if mirror.get("third_party_imported"):
-        problems.append(f"mirror imported third-party packages: {mirror['third_party_imported']}")
+    extra = sorted(set(mirror.get("third_party_imported", [])) - set(real.get("utils_third_party", [])))
+    if extra:
+        problems.append(f"mirror imported third-party packages Moonraker's utils does not: {extra}")
 
     def cmp(path, a, b):
         if isinstance(a, dict) and isinstance(b, dict):

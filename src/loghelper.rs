@@ -202,39 +202,7 @@ impl log::Log for MoonLogger {
         let file = record.file().map(|f| f.rsplit('/').next().unwrap_or(f)).unwrap_or("");
         let file = file.replace(".rs", ".py");
         let func = target.rsplit("::").next().unwrap_or(target);
-        let msg = record.args().to_string();
-        println!("[{}:{}()] - {}", file, func, msg);
-        let mut guard = match STATE.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        if let Some(state) = guard.as_mut() {
-            let today = chrono::Local::now().date_naive();
-            let need_rollover = match state.max_bytes {
-                Some(max) => state
-                    .file
-                    .as_ref()
-                    .and_then(|f| f.file.as_ref())
-                    .and_then(|f| f.metadata().ok())
-                    .map(|m| m.len() >= max)
-                    .unwrap_or(false),
-                None => state.file.as_ref().map(|f| f.day != today).unwrap_or(false),
-            };
-            if need_rollover {
-                state.do_rollover();
-            }
-            let structured = state.structured;
-            if let Some(fs) = state.file.as_mut() {
-                if let Some(f) = fs.file.as_mut() {
-                    let line = if structured {
-                        structured_line(level_name(record.level()), &file, func, record.line().unwrap_or(0), &msg)
-                    } else {
-                        format!("{} [{}:{}()] - {}", format_asctime(), file, func, msg)
-                    };
-                    let _ = writeln!(f, "{}", line);
-                }
-            }
-        }
+        emit(record.level(), &file, func, record.line().unwrap_or(0), &record.args().to_string());
     }
 
     fn flush(&self) {
@@ -245,6 +213,44 @@ impl log::Log for MoonLogger {
                         let _ = f.flush();
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Write one record to stdout and the log file: Moonruster's own (MoonLogger)
+/// and Python components' (their file, function and line, as Moonraker's
+/// handler writes them)
+pub fn emit(level: log::Level, file: &str, func: &str, line: u32, msg: &str) {
+    println!("[{}:{}()] - {}", file, func, msg);
+    let mut guard = match STATE.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    if let Some(state) = guard.as_mut() {
+        let today = chrono::Local::now().date_naive();
+        let need_rollover = match state.max_bytes {
+            Some(max) => state
+                .file
+                .as_ref()
+                .and_then(|f| f.file.as_ref())
+                .and_then(|f| f.metadata().ok())
+                .map(|m| m.len() >= max)
+                .unwrap_or(false),
+            None => state.file.as_ref().map(|f| f.day != today).unwrap_or(false),
+        };
+        if need_rollover {
+            state.do_rollover();
+        }
+        let structured = state.structured;
+        if let Some(fs) = state.file.as_mut() {
+            if let Some(f) = fs.file.as_mut() {
+                let out = if structured {
+                    structured_line(level_name(level), file, func, line, msg)
+                } else {
+                    format!("{} [{}:{}()] - {}", format_asctime(), file, func, msg)
+                };
+                let _ = writeln!(f, "{}", out);
             }
         }
     }

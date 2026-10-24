@@ -55,6 +55,15 @@ impl From<CpError> for FetchErr {
     }
 }
 
+/// The value type of a get_py() option
+#[derive(Clone, Copy)]
+pub enum OptKind {
+    Str,
+    Int,
+    Float,
+    Bool,
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct Bounds {
     pub above: Option<f64>,
@@ -289,6 +298,30 @@ impl ConfigHelper {
             }
         }
         Ok(())
+    }
+
+    /// Moonraker's get / getint / getfloat / getboolean for Python components
+    /// (plugins): the same parsing, errors, bounds, deprecation warning and
+    /// recording as the getters below; `default` None is Sentinel.MISSING,
+    /// else Python's default value, recorded as the parsed value
+    pub fn get_py(&self, kind: OptKind, option: &str, default: Option<Value>, bounds: Bounds, deprecate: bool) -> CResult<Value> {
+        let ex = |v: &Value| -> Option<(f64, bool)> {
+            match (kind, v) {
+                (OptKind::Int, Value::Number(n)) => n.as_f64().map(|f| (f, true)),
+                (OptKind::Float, Value::Number(n)) => n.as_f64().map(|f| (f, false)),
+                _ => None,
+            }
+        };
+        let numeric = matches!(kind, OptKind::Int | OptKind::Float).then_some((&ex as &dyn Fn(&Value) -> Option<(f64, bool)>, bounds));
+        let fetch = move |c: &ConfigParser, s: &str, o: &str| -> Result<Value, FetchErr> {
+            Ok(match kind {
+                OptKind::Str => Value::String(c.get(s, o)?),
+                OptKind::Int => Value::from(Self::parse_int(c, s, o)?),
+                OptKind::Float => utils::float_value(Self::parse_float(c, s, o)?),
+                OptKind::Bool => Value::Bool(Self::parse_bool(c, s, o)?),
+            })
+        };
+        self.get_option(&fetch, option, default, numeric, deprecate, &|v| v.clone())
     }
 
     // ***** String options *****

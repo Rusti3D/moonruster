@@ -1,5 +1,17 @@
 # Moonraker modules the mirror emits whole, as Moonraker's own source: pure helpers
 # without server state. One module name per line.
-moonraker.utils.json_wrapper
+# moonraker.utils: every module is server-independent utility code
+moonraker.utils
+moonraker.utils.async_serial
+moonraker.utils.cansocket
+moonraker.utils.exceptions
+moonraker.utils.filelock
 moonraker.utils.ioctl_macros
+moonraker.utils.json_wrapper
+moonraker.utils.pip_utils
+moonraker.utils.source_info
+moonraker.utils.sysdeps_parser
+moonraker.utils.sysfs_devs
+moonraker.utils.versions
+# Moonraker's standalone metadata script
 moonraker.components.file_manager.metadata

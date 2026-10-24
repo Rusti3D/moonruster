@@ -1,2 +1,8 @@
-# Moonraker methods the mirror emits as Moonraker's own code instead of a call into
-# Moonruster: derived helpers built on mirrored primitives. One qualified name per line.
+# Moonraker methods or whole classes the mirror emits as Moonraker's own code instead of
+# calls into Moonruster: code built on primitives that already work in the
+# component layer. One qualified name per line.
+# EventLoop / FlexTimer: pure Python over asyncio, which is CPython's real loop here
+moonraker.eventloop.EventLoop
+moonraker.eventloop.FlexTimer
+# Server.try_pip_recovery: Moonraker's own pip recovery (pip_utils, sys.executable)
+moonraker.server.Server.try_pip_recovery
