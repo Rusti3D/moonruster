@@ -3,3 +3,5 @@
 tools/scratch*.sh
 tools/samples/
 /dist
+tools/plugin_trace/trace.jsonl
+tools/plugin_trace/static.json
