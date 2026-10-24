@@ -1,0 +1,2 @@
+# Moonraker methods the mirror emits as Moonraker's own code instead of a call into
+# Moonruster: derived helpers built on mirrored primitives. One qualified name per line.

@@ -123,11 +123,22 @@ What the trace established beyond points 1-6 above (each one checked in the trac
 
 ## Design (kaliru's approach)
 
-1. **Interpreter.** The host's CPython, loaded with `dlopen` the first time a config section names a component
-   that Moonruster does not have built in. The interpreter is the one Moonraker would run under: the
-   virtualenv `python` from the replaced service (`~/moonraker-env`), so Moonraker's dependencies (tornado and
-   the rest) are importable as they are under Moonraker. The libpython loader is copied from kaliru
-   (`src/plugins/capi.rs`).
+1. **Interpreter** (proven in Phase 1). The host's CPython, loaded with `dlopen` the first time a config section
+   names a component that Moonruster does not have built in. It is the Python Moonraker ran under: the
+   virtualenv's `python` (`~/moonraker-env`), or the system `python3` where Moonraker had no virtualenv (COSMOS).
+   - **Finding libpython.** Moonruster asks that `python` once for `sysconfig` `LIBDIR`/`INSTSONAME` and its
+     identity; for relocated builds it uses `<base_prefix>/lib`.
+   - **Starting it.** `Py_SetProgramName(<that python>)`, then `Py_InitializeEx(0)`. CPython then finds
+     `pyvenv.cfg` itself, as the real executable does. Executable, prefixes, `sys.path`, `sys.flags` and
+     version match `python -c` exactly on 3.10, 3.11, 3.12, 3.13 and 3.15. The only module difference is
+     `_signal`, which `initsigs=1` imports.
+   - **Future fallback.** If a later CPython removes `Py_SetProgramName`, PEP 741's `PyInitConfig` (3.14+) is
+     the replacement. It starts from the isolated configuration, so `isolated=0`, `use_environment=1`,
+     `user_site_directory=1` and `safe_path=0` are set; that path also matches exactly (checked on 3.15).
+   - **The C-API table** is copied from kaliru (`capi.rs`) and cut down to functions every CPython from 3.10
+     on exports (Moonraker's `requires-python`; checked with `nm -D` on each version).
+   - **Linking.** Moonruster must be a dynamically linked glibc executable: a static musl binary cannot load
+     libpython at all ("Dynamic loading not supported", tested). See "Build" below.
 2. **Discovery.** The loader no longer stops at the fixed `COMPONENT_NAMES`:
    - a name Moonruster has built in loads the Rust component, as now;
    - otherwise Moonruster looks for `<name>.py` or `<name>/__init__.py` in the components directory of the
@@ -147,18 +158,26 @@ What the trace established beyond points 1-6 above (each one checked in the trac
    - **overrides:** Object/Meta/Attr as in kaliru's prelude. Instance or class patches and Python subclasses
      of mirrored classes are reported to Moonruster, which calls the Python replacement from its own call
      sites too.
-5. **asyncio on Moonruster's loop.** Moonruster is single-threaded (tokio `current_thread` + `LocalSet`,
-   `main.rs:202`), so Python coroutines run on the same thread. Kaliru's greenlet thread-state swapping is not
-   needed. Plan, to be proven in Phase 1:
-   - run CPython's own asyncio event loop, not a reimplementation, so its behaviour is asyncio's;
-   - tokio drives it: wait on the loop selector's fd and the loop's next timer, then run one iteration;
-   - Rust async calls return real `asyncio.Future`s, and Python coroutines that Rust awaits complete a tokio
-     oneshot through `add_done_callback`.
-6. **GIL and threads.** The loop thread holds the GIL except while tokio parks, as kaliru's reactor does in
-   poll. Python threads (`run_in_thread`, executors, component threads) then run where they would under
-   Moonraker. Candidate hook: tokio `on_thread_park`/`on_thread_unpark`. The current-thread scheduler calls them
-   around its park (tokio 1.53.1 `runtime/scheduler/current_thread/mod.rs:413, 438`; Moonruster locks 1.54.0).
-   Whether they fire on every blocking park is proven in Phase 1.
+5. **asyncio on Moonruster's loop** (proven in Phase 1, `pybridge/src/aio.py`, `lib.rs`). Moonruster is
+   single-threaded (tokio `current_thread` + `LocalSet`, `main.rs:202`), so Python coroutines run on the same
+   thread, and kaliru's greenlet thread-state swapping is not needed.
+   - **The loop.** CPython's own `SelectorEventLoop`, Moonraker's default: its installer leaves uvloop out
+     (`SPEEDUPS=n`), and `MOONRAKER_ENABLE_UVLOOP=n` is documented. COSMOS installs uvloop; it has the same API but
+     no step function, so it cannot be driven from outside.
+   - **Only the selector differs:** its `select()` never blocks.
+   - **Setup:** the loop is set up exactly as `run_forever()` sets it up. 3.13+ call `_run_forever_setup()`,
+     which exists for loops integrated with another event loop (its docstring). 3.10-3.12 repeat the same
+     inline steps (checked in each version's `base_events.py`).
+   - **Waiting:** tokio waits on the selector's epoll fd (`AsyncFd`), the next asyncio timer and a `Notify` for
+     wakeups from Rust, then runs one `_run_once()`. Readiness is cleared only after a zero-timeout `poll`
+     shows the fd idle; tokio's `clear_ready` only clears readiness older than the guard (`async_fd.rs:997`).
+   - **Futures both ways:** Rust async calls return real `asyncio.Future`s, resolved by a tokio task. Python
+     coroutines that Rust awaits complete a oneshot through `add_done_callback`.
+6. **GIL and threads** (proven). The loop thread holds the GIL except while tokio parks, through tokio's
+   `on_thread_park`/`on_thread_unpark`. In tokio 1.54.0, `current_thread/mod.rs:411-438` calls them around
+   every park, blocking or zero-timeout. Python threads (executors, `call_soon_threadsafe`, component threads)
+   run at full speed while the loop idles and not at all while Rust holds the GIL, as under Moonraker, where
+   Moonraker's own Python holds it.
 7. **Errors.** Python `ServerError` and the other `common` exceptions map both ways to Moonruster's
    `ServerError` (`src/common.rs`). Responses and logged tracebacks match Moonraker's format.
 
@@ -172,6 +191,111 @@ What the trace established beyond points 1-6 above (each one checked in the trac
    - the generator's free-name check counts only imports it actually emits;
    - parity runs need the same CPython on both sides, because logged tracebacks contain stdlib paths;
    - a CPython debug build (`libpython3.15d`) catches C-API misuse where it happens.
+
+## Phase 1 results (2026-10-24, `pybridge/`)
+
+`pybridge/src/bin/proto.rs` runs CPython on a tokio `current_thread` runtime + `LocalSet`, as Moonruster runs.
+Each check has a control that must fail:
+
+| check | result | control (must fail) |
+|---|---|---|
+| identity vs `python -c` | equal on 3.10, 3.11, 3.12, 3.13, 3.15 and on the CC1's COSMOS 3.15.0 | - |
+| asyncio sleep accuracy, `gather`, `wait_for` timeout, cancel, running loop | pass | `nodriver`: all fail, then hang |
+| tokio not blocked while Python waits | 40-41 ticks of a 5 ms ticker in 0.2 s | `blocking` (normal selector): hangs at the first socket test |
+| tornado `IOLoop.current()`, tornado HTTP server + `AsyncHTTPClient`, asyncio sockets | pass | |
+| Rust future awaited from Python (result and exception) | pass | |
+| Python coroutine awaited from Rust | pass (every check runs this way) | |
+| executor, `call_soon_threadsafe` from a thread | pass, wakeup 0.2-1.2 ms | `nohooks`: fail |
+| Python thread vs GIL | 93-105 % of full speed while the loop idles; exactly 0 while Rust holds the GIL | `nohooks`: 35 % |
+| asyncio subprocess alongside a tokio child process | both exit codes right | |
+| asyncio `add_signal_handler`, then a tokio signal | both delivered | |
+
+Costs. Own memory is `Pss_Anon + SwapPss`; on the CC1, zram swap hides pages from `Pss_Anon` alone:
+
+| | x86_64, CPython 3.12 | CC1 (armv7, COSMOS CPython 3.15.0) |
+|---|---|---|
+| before Python is loaded | libpython not mapped | libpython not mapped, 100 kB |
+| ask the venv's python about itself | 25-72 ms | 410-472 ms |
+| interpreter start | 11-97 ms | 149 ms |
+| own memory after start | +3.1-4.1 MB | +2.1 MB |
+| + the asyncio loop | 10.4 MB total | 7.6 MB total |
+| after every check (tornado HTTP included) | 16.9 MB total | 12.5 MB total |
+| Python -> Rust call | 0.03-0.08 us | 0.92-0.95 us (a Python -> Python call: 0.83) |
+| Rust -> Python call | 0.03-0.06 us | 0.60 us |
+
+## Build: glibc, non-PIE, tuned malloc
+
+Python components need `dlopen`, so Moonruster becomes a dynamically linked glibc executable instead of a
+static musl one (Kaliru already is). Measured on current Moonruster (no component code) with `tools/bench.sh`,
+idle and with 20 status updates/s to 2 clients:
+
+| build | x86_64 idle / load | CC1 idle / load | CC1 CPU under load |
+|---|---|---|---|
+| static musl (as shipped) | 1.11 / 1.15 MB | 816-880 / 896-904 kB | 85-87 ticks/30 s |
+| glibc, PIE, default malloc | 2.19-2.32 / 2.28-2.37 MB | - | - |
+| glibc, non-PIE, default malloc | 1.89 / 1.83-1.87 MB | 1088-1224 / 1420-1488 kB | 77-78 |
+| glibc, non-PIE, `top_pad=0`, `trim_threshold=0` | 1.34 / 1.42 MB | 944-992 / 1140-1144 kB | 76-78 |
+
+Where glibc's extra memory came from (per-mapping `Anonymous`, x86):
+- **PIE relocations:** 492 kB of the executable's read-only data was patched at load and turned into private
+  memory. Linking non-PIE (`-C relocation-model=static`) removes it; `dlopen` of libpython does not need a PIE
+  executable.
+- **malloc padding and retention:** about 800 kB more heap than musl for the same allocations. Setting
+  `M_TOP_PAD` and `M_TRIM_THRESHOLD` to 0 removes most of it. Moonruster sets them with `mallopt()` at start, so
+  init scripts need no environment variable. `arena_max=1` made no difference.
+
+Net on the CC1: **+100 kB idle, +240 kB under load, about 10 % less CPU** than musl.
+
+The release glibc floor still has to be chosen: the cross toolchain here has glibc 2.39, the CC1 2.43,
+Debian bookworm 2.36 and bullseye 2.31. zig can target an older glibc.
+
+## Phase 2 results (2026-10-24, mirror)
+
+`tools/gen_mirror.py ref/moonraker OUT` generates 72 modules and 3188 IDs; 76 classes are Moonraker's own
+code. `mirror.bin` is 131 kB compressed. Changes from kaliru's generator, each one forced by something in
+Moonraker's source:
+- **Coroutines and generators.** Async methods `return await _mr.call(...)`, so they stay coroutine
+  functions. The 5 generator and async-generator methods keep iterator semantics.
+- **Annotations are kept**, as strings (PEP 563), so `inspect.signature` reads as Moonraker's does.
+- **Classes kept as Moonraker's own code (verbatim):** exceptions, enums and flags, dataclasses, metaclasses,
+  and classes on stdlib or third-party bases, transitively across modules. Their runtime globals are bound at
+  import, because a function's globals are a plain dict lookup that never reaches the module's `__getattr__`.
+  Dataclasses also get `ClassVar`/`InitVar`.
+- **Whole modules kept verbatim:** `utils.json_wrapper`, which keeps its msgspec switch,
+  `utils.ioctl_macros` (the V4L2 constants are computed with it at import) and
+  `components.file_manager.metadata` (Moonraker's standalone metadata script).
+- **Anything that needs a third-party package is lazy:** a statement, class or class attribute that needs one
+  is Moonraker's own statement, run on first access.
+  - Examples: `WATCH_FLAGS`, paho's tables, mqtt's `ExtPahoClient`, tornado's handler classes,
+    `DbusManager.Variant`.
+  - Every imported name exists too, so re-exports like `from ..utils import ServerError` resolve.
+  - A missing package is an `AttributeError`, as in Moonraker, where the module would simply not have the
+    name.
+- **Side effects on third-party packages** run at startup for modules Moonraker imports at startup:
+  `http_client`'s `AsyncHTTPClient.configure(user_agent='Moonraker', max_body_size=...)`.
+  - One documented exception: `eventloop`'s uvloop policy switch is not run, because Moonruster drives the
+    stdlib loop.
+- **ABC classes** (`common.RenderableTemplate`) get `_mr.AbcMeta`, a `Meta` + `ABCMeta`. Other classes keep the
+  plain `Meta`; ABCMeta on all of them would add `_abc_impl` everywhere.
+- **Module paths.** Mirror modules carry the real Moonraker tree's file paths as `__file__`, so values derived
+  from it, such as `METADATA_SCRIPT`, are Moonraker's.
+
+Check: `tools/mirror_surface.py` dumps the surface of real Moonraker and of the mirror and diffs them. It
+covers every module's names, signatures, async and generator kinds, decorators, bases, enum members and plain
+values.
+- **With Moonraker's venv**, with every lazy name evaluated: **0 differences** against Moonraker 9e676eba on
+  CPython 3.12.
+- **Bare**, without site-packages: the mirror loads without importing any third-party package. The only
+  differences come from absent packages: the lazy names, msgspec, and `metadata`, which, like Moonraker's own
+  `metadata.py`, imports PIL.
+- **Known structural differences:** a mirrored class's root base is `_mr.Object`, not `object`. Classes on a
+  third-party base are lazy, so they are Moonraker's own classes.
+
+Memory, x86 CPython 3.12, loading **all** 72 mirror modules (a component imports a handful):
+- the stdlib modules they import, which Moonraker imports too, chiefly asyncio and logging: 9.8 MB;
+- the prelude plus every mirror module: 4.7-5.2 MB.
+
+The prelude does not import `importlib.abc`, which alone costs 4.1 MB.
 
 ## Sharing with kaliru
 
@@ -188,7 +312,8 @@ What the trace established beyond points 1-6 above (each one checked in the trac
 0. **Scope.** Done: this document and the trace above (`tools/plugin_trace/`). More real components join the
    corpus as they are found.
    - Gate: user agrees on the open decisions below.
-1. **Prototype** (standalone `pybridge/` crate, as in kaliru), each check with a control that must fail:
+1. **Prototype. Done**, see "Phase 1 results" (standalone `pybridge/` crate, as in kaliru), each check with a
+   control that must fail:
    - CPython's asyncio loop driven from a tokio `LocalSet`;
    - `asyncio.sleep`, `create_task`, `wait_for` with timeout, cancellation, `IOLoop.current()`;
    - a Rust future awaited from Python, and a Python coroutine awaited from Rust;
@@ -196,10 +321,10 @@ What the trace established beyond points 1-6 above (each one checked in the trac
    - `run_in_executor` calling back into the loop;
    - measure memory, crossing cost and startup on x86, then armv7 on real hardware only with the user's OK.
    - Gate: all checks pass and costs are within the memory rule.
-2. **Mirror tooling.**
+2. **Mirror tooling. Done**, see "Phase 2 results".
    - `tools/gen_mirror.py` for `ref/moonraker` generates the mirror modules and the ID table.
-   - An AST diff must report nothing missing.
-   - An import test must pass for every module.
+   - `tools/mirror_surface.py` reports nothing missing or different.
+   - Every module imports.
 3. **Loader parity.**
    - Discovery and third-party modules as `moonraker.components.<name>` submodules.
    - Load order: config order, as decided above.
@@ -225,17 +350,19 @@ What the trace established beyond points 1-6 above (each one checked in the trac
    - Binary size and idle CPU are measured before and after.
    - A cargo feature can compile the layer out.
 
-## Open decisions (for the user)
+## Decisions (user, 2026-10-24: "full parity with Moonraker", "keep memory in check")
 
-1. **Components directory.** Default `~/moonraker/moonraker/components` (the tree that installers write into
-   and that INSTALL 2a leaves in place), overridable by an env var or argument. On a new install without
-   Moonraker, an empty `moonraker/components` next to the binary, which installers can be pointed at.
-2. **Interpreter.** The `moonraker-env` virtualenv when present, else the system `python3`. The kaliru
-   prototype needs CPython >= 3.15 for greenlet stacks; Moonruster has no greenlets, so the minimum could be
-   Moonraker's own (>= 3.10). To be confirmed by the Phase 1 prototype on each version.
-3. **Pip recovery.** Moonraker runs pip itself. Matching that means Moonruster runs pip in the virtualenv too.
-4. **Reference version.** The mirror is generated from `ref/moonraker` 9e676eba. The root STATUS.md plans an
-   update to b559b9a; if that happens first, the mirror is generated from the new commit.
+1. **Components directory.** Default `~/moonraker/moonraker/components`, overridable by an env var or
+   argument. That is the tree Happy Hare's, helix's and timelapse's installers write into, and the one
+   INSTALL 2a leaves in place. On a new install without Moonraker, an empty `moonraker/components` next to the
+   binary, which installers can be pointed at.
+2. **Interpreter.** The `moonraker-env` virtualenv's `python` when present, else the system `python3`.
+   CPython >= 3.10, Moonraker's own minimum (Phase 1: 3.10-3.15 verified).
+3. **Pip recovery.** As Moonraker: one `pip install -r scripts/moonraker-requirements.txt` in that Python.
+4. **Reference version.** The mirror is generated from `ref/moonraker` 9e676eba. Upstream's newest commit,
+   b559b9a, is one commit later (`klippy_connection` only) and loads components the same way. If
+   `ref/moonraker` moves, the mirror is regenerated and the surface check rerun.
+5. **Build.** Release binaries become glibc, non-PIE, with malloc tuned at start ("Build" above).
 
 ## What "works in Moonraker" cannot cover
 
