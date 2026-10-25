@@ -228,6 +228,10 @@ Each item ships with a benchmark and a CC1 A/B.
     Measured: process_status_update -48% and all instructions -22%. Against main's binary, in alternating runs,
     CPU under load fell 6-8% (95.4 M ns against 104.0-112.1 M per 30 s, 135.5 M against 144.6-150.6 M with a
     Python component), and idle and memory were at or below main's best runs.
+  - **On the CC1 (armv7)**, 2026-10-25: main and rustify as isolated test instances, 5 runs each, alternating.
+    - Under load: 1274 against 1442 ms CPU per 60 s on average (-11.7%; the ranges, 1260-1280 against 1420-1460,
+      don't overlap).
+    - Idle CPU and own memory (Pss_Anon + SwapPss) are the same; the binary is 40 KB smaller.
   - `py_float_repr_into` (from kaliru): a float's repr is appended without temporary strings. A property test
     against the old implementation covers 1.4 M values.
 - **5:** `is_patched` is documented as a known difference on main, and both dead parts are allowed as dead code,
