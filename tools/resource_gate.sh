@@ -11,12 +11,14 @@
 #   tools/resource_gate.sh --record   measure and record the baseline
 # A metric fails when it exceeds the baseline's worst run by more than
 # TOL percent (default 3).
+# the machine's gate lock (kaliru's gates measure resources here): taken by
+# a flock process for this script's lifetime, with the lock fd closed (-o)
+# in the script, so nothing it starts (test servers) can inherit and keep it
+if [ -z "$RUSTIFY_GATE_LOCKED" ]; then
+    export RUSTIFY_GATE_LOCKED=1
+    exec flock -o /tmp/rustify_gates.lock bash "$0" "$@"
+fi
 cd "$(dirname "$0")/.."
-# gate runs of every project on this machine take turns (kaliru's too): a
-# measurement must not overlap another's suites or measurements
-exec 9> /tmp/rustify_gates.lock
-flock 9
-export RUSTIFY_GATE_LOCKED=1
 RUNS=${RUNS:-5}
 SETTLE=${SETTLE:-20}
 WIN=${WIN:-30}
