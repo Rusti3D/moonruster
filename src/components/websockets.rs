@@ -11,7 +11,7 @@ use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use hyper_tungstenite::tungstenite::protocol::CloseFrame;
-use hyper_tungstenite::tungstenite::Message;
+use hyper_tungstenite::tungstenite::{Message, Utf8Bytes};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
@@ -43,7 +43,8 @@ pub fn next_uid() -> u64 {
 }
 
 pub enum OutMsg {
-    Text(String),
+    /// shared, not copied, when one message goes to many clients
+    Text(Utf8Bytes),
     Close(u16, String),
 }
 
@@ -150,11 +151,11 @@ impl RemoteConnection {
         self.need_auth.set(false);
     }
 
-    pub fn queue_message_str(&self, msg: String) {
+    pub fn queue_message_str(&self, msg: impl Into<Utf8Bytes>) {
         if self.is_closed.get() {
             return;
         }
-        let _ = self.sender.send(OutMsg::Text(msg));
+        let _ = self.sender.send(OutMsg::Text(msg.into()));
     }
 
     pub fn queue_message(&self, msg: &Value) {
@@ -489,7 +490,8 @@ impl WebsocketManager {
         if !data.is_empty() {
             msg["params"] = Value::Array(data);
         }
-        let encoded = msg.to_string();
+        // encoded once, shared by every client's queue
+        let encoded = Utf8Bytes::from(msg.to_string());
         let clients: Vec<Rc<RemoteConnection>> = self.clients.borrow().values().cloned().collect();
         for sc in clients {
             if mask.contains(&sc.uid()) || sc.need_auth() {
@@ -706,7 +708,7 @@ async fn writer_loop(
                 match msg {
                     None => break,
                     Some(OutMsg::Text(t)) => {
-                        if sink.send(Message::Text(t.into())).await.is_err() {
+                        if sink.send(Message::Text(t)).await.is_err() {
                             conn.is_closed.set(true);
                             log::info!("Websocket closed while writing: {}", conn.uid());
                             break;

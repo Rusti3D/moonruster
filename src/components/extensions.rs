@@ -186,7 +186,8 @@ async fn unix_client(stream: tokio::net::UnixStream) {
         while let Some(msg) = rx.recv().await {
             match msg {
                 OutMsg::Text(t) => {
-                    let mut data = t.into_bytes();
+                    let mut data = Vec::with_capacity(t.len() + 1);
+                    data.extend_from_slice(t.as_bytes());
                     data.push(0x03);
                     if write_half.write_all(&data).await.is_err() {
                         log::debug!("Unix Socket Disconnection From write_to_socket()");
