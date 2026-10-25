@@ -184,7 +184,7 @@ impl SimplyPrint {
             "cancelled" | "complete" | "error" => {
                 self.check_job_started(&new);
                 self.reset_file();
-                let payload = match evt.as_str() {
+                let payload = match args.event.as_str() {
                     "cancelled" => json!({"cancelled": true}),
                     "complete" => json!({"finished": true}),
                     _ => json!({"failed": true, "error": new.get("message").cloned().unwrap_or(json!("Unknown Error"))}),

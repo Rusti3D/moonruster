@@ -448,7 +448,8 @@ impl ShellCommandFactory {
     ) -> Result<(), ShellCommandError> {
         let scmd = ShellCommand::new(cmd, callback, std_err_callback, env, log_stderr, cwd).map_err(build_error)?;
         for _ in 0..attempts.max(1) {
-            if scmd.run(self, timeout, verbose, log_complete, sig_idx, proc_input, success_codes).await {
+            let opts = RunOpts { timeout, verbose, log_complete, sig_idx, proc_input, success_codes, ..Default::default() };
+            if scmd.run(self, opts).await {
                 return Ok(());
             }
         }
