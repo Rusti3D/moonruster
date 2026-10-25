@@ -638,7 +638,7 @@ impl FileManager {
         if !gcpath.is_file() {
             return Err(ServerError::new(format!("File '{}' does not exist", f), 404));
         }
-        let suffix = gcpath.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let suffix = crate::pycompat::pathlib::path_suffix(&gcpath);
         if !VALID_GCODE_EXTS.contains(&suffix.as_str()) {
             return Err(ServerError::bad(format!("File {} is not a valid gcode file", gcpath.display())));
         }

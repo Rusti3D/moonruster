@@ -4,6 +4,7 @@
 // inspect.cleandoc, mimetypes.guess_type, os.path, urllib.parse quoting
 pub mod configparser;
 pub mod inspect;
+pub mod pathlib;
 pub mod posixpath;
 pub mod pyfmt;
 mod pyfmt_tables;

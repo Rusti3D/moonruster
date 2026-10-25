@@ -37,9 +37,8 @@ impl SimplyPrint {
         let fname = tmp_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let mut fpath = gc_path.join(&fname);
         if self.cache.borrow().job_info.get("filename").map(crate::pyfmt::py_str).unwrap_or_default() == fpath.display().to_string() {
-            let p = std::path::Path::new(&fname);
-            let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            let suffix = p.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+            let stem = crate::pycompat::pathlib::stem(&fname);
+            let suffix = crate::pycompat::pathlib::suffix(&fname);
             let mut count = 0;
             while fpath.exists() {
                 fpath = gc_path.join(format!("{}_copy_{}.{}", stem, count, suffix));

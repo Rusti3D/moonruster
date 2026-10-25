@@ -355,7 +355,7 @@ impl Observer {
                         }
                     }
                 } else if p.is_file() {
-                    let suffix = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+                    let suffix = crate::pycompat::pathlib::path_suffix(&p);
                     if VALID_GCODE_EXTS.contains(&suffix.as_str()) {
                         evts.push(self.parse_gcode_metadata(&full));
                     }
@@ -375,7 +375,7 @@ impl Observer {
             return;
         }
         let p = Path::new(item_path);
-        let suffix = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let suffix = crate::pycompat::pathlib::path_suffix(&p);
         if p.is_file() && VALID_GCODE_EXTS.contains(&suffix.as_str()) {
             self.parse_gcode_metadata(item_path).wait().await;
         } else if p.is_dir() {
@@ -398,7 +398,7 @@ impl Observer {
             if is_dir {
                 self.scan_directory_metadata(dest_path).await;
             } else {
-                let suffix = dp.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+                let suffix = crate::pycompat::pathlib::path_suffix(&dp);
                 if dp.is_file() && VALID_GCODE_EXTS.contains(&suffix.as_str()) {
                     self.parse_gcode_metadata(dest_path).wait().await;
                 }

@@ -555,7 +555,7 @@ impl GitRepo {
             if prefix == "M" {
                 st.modified_files.push(fname.to_string());
             } else if prefix == "??" {
-                let ext = Path::new(fname).extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+                let ext = crate::pycompat::pathlib::path_suffix(Path::new(fname));
                 if SRC_EXTS.contains(&ext.as_str()) {
                     st.untracked_files.push(fname.to_string());
                 }
