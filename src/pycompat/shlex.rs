@@ -79,7 +79,7 @@ mod tests {
     /// CPython's shlex.split (tools/gen_misc_vectors.py)
     #[test]
     fn shlex_vectors() {
-        let v: serde_json::Value = serde_json::from_str(include_str!("../tests/data/misc_vectors.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/data/misc_vectors.json")).unwrap();
         let mut bad = Vec::new();
         for e in v["shlex"].as_array().unwrap() {
             let got = match super::shlex_split(e[0].as_str().unwrap()) {

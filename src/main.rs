@@ -6,8 +6,10 @@ mod common;
 mod confighelper;
 mod components;
 mod loghelper;
+mod metadata;
 #[cfg(feature = "plugins")]
 mod plugins;
+mod pycompat;
 use pycompat::{configparser, pyfmt, pymimetypes};
 mod server;
 mod sysfs_devs;

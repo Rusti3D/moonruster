@@ -17,12 +17,12 @@ pub enum CpError {
 impl std::fmt::Display for CpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CpError::NoSection(s) => write!(f, "No section: {}", crate::pyfmt::py_repr(&s.clone().into())),
+            CpError::NoSection(s) => write!(f, "No section: {}", crate::pycompat::pyfmt::py_repr(&s.clone().into())),
             CpError::NoOption(o, s) => write!(
                 f,
                 "No option {} in section: {}",
-                crate::pyfmt::py_repr(&o.clone().into()),
-                crate::pyfmt::py_repr(&s.clone().into())
+                crate::pycompat::pyfmt::py_repr(&o.clone().into()),
+                crate::pycompat::pyfmt::py_repr(&s.clone().into())
             ),
             CpError::Parse(m) => f.write_str(m),
         }
@@ -314,7 +314,7 @@ mod tests {
     /// (tools/gen_configparser_vectors.py): every mismatch is listed
     #[test]
     fn vectors() {
-        let v: serde_json::Value = serde_json::from_str(include_str!("../tests/data/configparser_vectors.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/data/configparser_vectors.json")).unwrap();
         let mut bad: Vec<String> = Vec::new();
         for case in v.as_array().unwrap() {
             let text = case["text"].as_str().unwrap();

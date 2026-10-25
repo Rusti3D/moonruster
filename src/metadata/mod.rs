@@ -22,7 +22,7 @@ fn logi(msg: &str) {
 }
 
 fn re(p: &str) -> Regex {
-    pycompat::re::try_compile(p).unwrap_or_else(|| pycompat::re::compile("$^"))
+    crate::pycompat::re::try_compile(p).unwrap_or_else(|| crate::pycompat::re::compile("$^"))
 }
 
 fn sub_float(p: &str) -> String {
@@ -108,7 +108,7 @@ fn regex_find_max_float(p: &str, d: &str) -> Option<f64> {
 }
 
 fn fval(v: Option<f64>) -> Option<Value> {
-    v.map(pycompat::pyfmt::float_value)
+    v.map(crate::pycompat::pyfmt::float_value)
 }
 
 fn ival(v: Option<i64>) -> Option<Value> {
@@ -340,7 +340,7 @@ impl Slicer {
 
     pub fn check_gcode_processor(&self, regex: &str, location: &str) -> Option<Map<String, Value>> {
         let data = if location == "header" { &self.header_data } else { &self.footer_data };
-        let r = pycompat::re::try_compile(&format!("(?m){}", regex))?;
+        let r = crate::pycompat::re::try_compile(&format!("(?m){}", regex))?;
         let c = r.captures(data)?;
         let mut m = Map::new();
         for name in r.capture_names().flatten() {
@@ -435,7 +435,7 @@ impl Slicer {
                 Some(json!(total))
             }
             Kind::KISSlicer => regex_find_float(r";\sCalculated.*Build\sTime:\s(%F)\sminutes", f)
-                .map(|t| pycompat::pyfmt::float_value(pycompat::pyfmt::py_round(t * 60.0, 2))),
+                .map(|t| crate::pycompat::pyfmt::float_value(crate::pycompat::pyfmt::py_round(t * 60.0, 2))),
             Kind::IdeaMaker => fval(regex_find_float(r";Print\sTime:\s(%F)", f)),
             Kind::IceSL => fval(regex_find_float(r";\sestimated_print_time_s\s:\s+(%F)", h)),
             Kind::KiriMoto => ival(regex_find_int(r"; --- print time: (%D)s", f)),
@@ -503,7 +503,7 @@ impl Slicer {
                 let cd = self.config_data();
                 if let Some(pct) = regex_find_float(r"; first_layer_height = (%F)%", cd) {
                     let lh = self.layer_height?;
-                    return fval(Some(pycompat::pyfmt::py_round(pct / 100.0 * lh, 6)));
+                    return fval(Some(crate::pycompat::pyfmt::py_round(pct / 100.0 * lh, 6)));
                 }
                 fval(regex_find_float(r"; first_layer_height = (%F)", cd))
             }
@@ -663,7 +663,7 @@ impl Slicer {
     }
 
     fn int_list(vals: Vec<String>) -> Option<Value> {
-        let parsed: Option<Vec<i64>> = vals.iter().map(|t| pycompat::pyfmt::py_int(t)).collect();
+        let parsed: Option<Vec<i64>> = vals.iter().map(|t| crate::pycompat::pyfmt::py_int(t)).collect();
         parsed.map(|p| json!(p))
     }
 
@@ -826,7 +826,7 @@ impl Slicer {
 
     fn thumb_base(&self) -> String {
         let name = self.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        pycompat::posixpath::splitext(&name).0.to_string()
+        crate::pycompat::posixpath::splitext(&name).0.to_string()
     }
 
     fn base_thumbnails(&self) -> Option<Value> {
@@ -1133,7 +1133,7 @@ fn process_objects(file_path: &Path, slicer: &mut Slicer) -> bool {
     if dest.is_symlink() {
         dest = std::fs::canonicalize(&dest).unwrap_or(dest);
     }
-    let moved = pycompat::shutil::shutil_move(&tmp_file.to_string_lossy(), &dest.to_string_lossy());
+    let moved = crate::pycompat::shutil::shutil_move(&tmp_file.to_string_lossy(), &dest.to_string_lossy());
     let _ = std::fs::remove_dir_all(&tmp_dir);
     if let Err(e) = moved {
         logi(&format!("Object processing failed: {}", e));
@@ -1154,13 +1154,13 @@ fn run_gcode_processors(path: &Path, slicer: &mut Slicer, processors: &[Value], 
         "ident": {"regex": PPC_REGEX, "location": "header"},
     }));
     for cfg in all {
-        let name = cfg.get("name").map(pycompat::pyfmt::py_str).unwrap_or_else(|| "Unknown".into());
-        let version = cfg.get("version").map(pycompat::pyfmt::py_str).unwrap_or_else(|| "v?".into());
+        let name = cfg.get("name").map(crate::pycompat::pyfmt::py_str).unwrap_or_else(|| "Unknown".into());
+        let version = cfg.get("version").map(crate::pycompat::pyfmt::py_str).unwrap_or_else(|| "v?".into());
         if let Some(ident) = cfg.get("ident").and_then(|i| i.as_object()).filter(|i| !i.is_empty()) {
-            let regex = ident.get("regex").map(pycompat::pyfmt::py_str).unwrap_or_default();
-            let loc = ident.get("location").map(pycompat::pyfmt::py_str).unwrap_or_default();
+            let regex = ident.get("regex").map(crate::pycompat::pyfmt::py_str).unwrap_or_default();
+            let loc = ident.get("location").map(crate::pycompat::pyfmt::py_str).unwrap_or_default();
             if let Some(data) = slicer.check_gcode_processor(&regex, &loc) {
-                let ver = data.get("version").map(pycompat::pyfmt::py_str).unwrap_or_else(|| "v?".into());
+                let ver = data.get("version").map(crate::pycompat::pyfmt::py_str).unwrap_or_else(|| "v?".into());
                 logi(&format!("File {} previously processed by {} {}", short, name, ver));
                 finished.push(name);
                 continue;
@@ -1180,14 +1180,14 @@ fn run_gcode_processors(path: &Path, slicer: &mut Slicer, processors: &[Value], 
         }
         let mut args: Vec<String> = match &command {
             // shlex's ValueError: the processor fails, as in metadata.py
-            Value::String(s) => match pycompat::shlex::shlex_split(s) {
+            Value::String(s) => match crate::pycompat::shlex::shlex_split(s) {
                 Ok(a) => a,
                 Err(_) => {
                     logi(&format!("Processor {} failed with error", name));
                     continue;
                 }
             },
-            Value::Array(a) => a.iter().map(pycompat::pyfmt::py_str).collect(),
+            Value::Array(a) => a.iter().map(crate::pycompat::pyfmt::py_str).collect(),
             _ => {
                 logi(&format!("Processor {} failed with error", name));
                 continue;
@@ -1264,7 +1264,7 @@ fn extract_metadata(path: &Path, processors: &[Value], check_objects: bool) -> s
     };
     let mut m = Map::new();
     m.insert("size".into(), json!(meta.len()));
-    m.insert("modified".into(), pycompat::pyfmt::float_value(mtime));
+    m.insert("modified".into(), crate::pycompat::pyfmt::float_value(mtime));
     m.insert("uuid".into(), json!(uuid::Uuid::new_v4().to_string()));
     m.insert("file_processors".into(), json!(proc_list));
     m.insert("slicer".into(), json!(slicer.slicer_name));
@@ -1281,7 +1281,7 @@ fn extract_ufp(ufp_path: &Path, dest_path: &Path) -> Result<(), String> {
         return Err("missing".into());
     }
     let name = dest_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let thumb_name = format!("{}.png", pycompat::posixpath::splitext(&name).0.to_string());
+    let thumb_name = format!("{}.png", crate::pycompat::posixpath::splitext(&name).0.to_string());
     let thumb_dir = dest_path.parent().unwrap_or(Path::new(".")).join(".thumbs");
     let f = std::fs::File::open(ufp_path).map_err(|e| e.to_string())?;
     let mut zf = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;

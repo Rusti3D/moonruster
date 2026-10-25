@@ -145,7 +145,7 @@ pub fn monotonic() -> f64 {
 
 /// Converts a float to a json value, non-finite values become null since
 /// they cannot be encoded
-pub use pycompat::pyfmt::float_value;
+pub use crate::pycompat::pyfmt::float_value;
 
 pub fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| {
@@ -334,12 +334,12 @@ pub fn local_strftime(fmt: &str) -> String {
 
 /// tornado's url_escape(plus=False): urllib.parse.quote(s, safe="")
 pub fn url_escape(s: &str) -> String {
-    pycompat::urllib::quote(s, "")
+    crate::pycompat::urllib::quote(s, "")
 }
 
 /// urllib.parse.quote(s) (safe="/")
 pub fn url_quote(s: &str) -> String {
-    pycompat::urllib::quote(s, "/")
+    crate::pycompat::urllib::quote(s, "/")
 }
 
 pub fn url_unescape(s: &str) -> String {
@@ -348,18 +348,18 @@ pub fn url_unescape(s: &str) -> String {
 
 /// os.path.splitext()[1]
 pub fn splitext_ext(name: &str) -> String {
-    pycompat::posixpath::splitext(name).1.to_string()
+    crate::pycompat::posixpath::splitext(name).1.to_string()
 }
 
 /// os.path.splitext()[0]
 pub fn splitext_root(name: &str) -> String {
-    pycompat::posixpath::splitext(name).0.to_string()
+    crate::pycompat::posixpath::splitext(name).0.to_string()
 }
 
 /// urllib.parse.urlencode for a list of key/value pairs
 pub fn urlencode(pairs: &[(&str, String)]) -> String {
-    pycompat::urllib::urlencode(pairs)
+    crate::pycompat::urllib::urlencode(pairs)
 }
 
-// compiled once per pattern (pycompat::re)
-pub use pycompat::re::compile as regex;
+// compiled once per pattern (crate::pycompat::re)
+pub use crate::pycompat::re::compile as regex;

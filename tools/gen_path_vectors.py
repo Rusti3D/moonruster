@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Test vectors for crates/pycompat's posixpath and urllib modules from
+# Test vectors for pycompat's posixpath and urllib modules from
 # CPython (docs/RUSTIFY.md Phase 1): os.path.normpath / join / splitext /
 # basename / dirname / relpath (absolute arguments: no cwd involved) and
 # urllib.parse.quote / unquote / urlencode.
-#   python3 tools/gen_path_vectors.py > crates/pycompat/tests/data/path_vectors.json
+#   python3 tools/gen_path_vectors.py > tests/data/path_vectors.json
 import json
 import posixpath
 import sys

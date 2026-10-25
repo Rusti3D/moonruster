@@ -2,7 +2,7 @@
 // frequently embeds str()/repr() output of python objects in messages and
 // responses, these helpers reproduce that output.
 
-use crate::pyfmt_tables::{DIGIT_ZEROS, NONPRINTABLE, WHITESPACE};
+use crate::pycompat::pyfmt_tables::{DIGIT_ZEROS, NONPRINTABLE, WHITESPACE};
 use serde_json::Value;
 
 fn in_ranges(table: &[(u32, u32)], cp: u32) -> bool {
@@ -270,7 +270,7 @@ mod tests {
     /// listed, not only the first
     #[test]
     fn vectors() {
-        let v: Value = serde_json::from_str(include_str!("../tests/data/pyfmt_vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(include_str!("../../tests/data/pyfmt_vectors.json")).unwrap();
         let mut bad: Vec<String> = Vec::new();
         for e in v["float_repr"].as_array().unwrap() {
             let f = f64::from_bits(e[0].as_u64().unwrap());

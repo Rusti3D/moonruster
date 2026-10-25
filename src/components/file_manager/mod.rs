@@ -28,11 +28,11 @@ pub fn st_mtime(meta: &std::fs::Metadata) -> f64 {
 }
 
 // Python's os.path, as Moonraker's file manager uses it
-pub use pycompat::posixpath::{abspath, normpath as os_normpath, relpath};
+pub use crate::pycompat::posixpath::{abspath, normpath as os_normpath, relpath};
 
 /// os.path.join of two components
 pub fn path_join(a: &str, b: &str) -> String {
-    pycompat::posixpath::join(a, &[b])
+    crate::pycompat::posixpath::join(a, &[b])
 }
 
 
@@ -1390,7 +1390,7 @@ fn is_close(a: f64, b: f64) -> bool {
 }
 
 // Python's str(OSError) and shutil, as Moonraker's file manager uses them
-pub use pycompat::shutil::{py_os_error, shutil_copy2, shutil_copytree, shutil_move};
+pub use crate::pycompat::shutil::{py_os_error, shutil_copy2, shutil_copytree, shutil_move};
 
 fn disk_usage(path: &str) -> Value {
     let c = match std::ffi::CString::new(path) {

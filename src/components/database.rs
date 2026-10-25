@@ -146,7 +146,7 @@ pub trait SqlTableDefinition {
     fn migrate(&self, last_version: i64, db: &MoonrakerDatabase) -> Result<(), ServerError>;
 }
 
-pub use pycompat::inspect::cleandoc;
+pub use crate::pycompat::inspect::cleandoc;
 
 // ***** Database *****
 

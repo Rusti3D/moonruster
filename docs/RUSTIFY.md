@@ -115,13 +115,20 @@ CC1 A/B (`tools/cc1_plugins_measure.sh`) is run at each milestone.
   used it.
 
 **1. Structure**
-- **A Cargo workspace, leaf crates first:**
-  - `pycompat`: pyfmt, configparser, shlex, mimetypes, base64;
-  - `metadata`: the gcode metadata extractor, already a separate `--metadata` mode;
-  - `plugins`: the Python component layer, shared with kaliru by agreement;
-  - the server crate.
+- **Leaf modules first:**
+  - `pycompat`: Python's own behaviour (pyfmt, configparser, shlex, mimetypes, os.path, urllib quoting, re's
+    cache, shutil);
+  - `metadata`: the gcode metadata extractor, already a separate `--metadata` mode.
 
-  The compiler then enforces the layering, and builds get faster.
+  They depend on nothing of the server's.
+
+  *Measured: modules, not crates.* As workspace crates they cost 130 KB of `.text` (+0.75%) for no runtime gain.
+  With `lto = true` and `codegen-units = 1`:
+  - each crate monomorphizes its own copy of the shared generics: serde_json, indexmap, hashbrown and regex,
+    about 50 KB;
+  - LLVM inlines differently across the crate boundary.
+
+  `-Z share-generics`, which would share them, is nightly-only. The symbol diff is `tools/size_diff.sh`.
 - **Components in their own modules by concern.** Split the 2k-line files along Moonraker's own seams, for example
   machine into providers, sysinfo, sudo and validation.
 

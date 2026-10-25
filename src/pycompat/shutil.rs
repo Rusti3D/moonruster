@@ -1,6 +1,6 @@
 // Python's shutil (move, copy2, copytree) and str(OSError), as Moonraker's
 // file manager uses them
-use crate::posixpath::join;
+use crate::pycompat::posixpath::join;
 use std::path::Path;
 
 fn path_join(a: &str, b: &str) -> String {

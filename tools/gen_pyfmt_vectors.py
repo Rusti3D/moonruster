@@ -2,7 +2,7 @@
 # Test vectors for src/pyfmt.rs from CPython itself (docs/RUSTIFY.md Phase 0):
 # repr() of floats and strings, int() / float() of strings, round(). The
 # Rust unit test (pyfmt::tests::vectors) checks pyfmt against them.
-#   python3 tools/gen_pyfmt_vectors.py > crates/pycompat/tests/data/pyfmt_vectors.json
+#   python3 tools/gen_pyfmt_vectors.py > tests/data/pyfmt_vectors.json
 import json
 import math
 import random

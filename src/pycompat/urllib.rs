@@ -50,7 +50,7 @@ mod tests {
     /// CPython's urllib.parse (tools/gen_path_vectors.py)
     #[test]
     fn vectors() {
-        let v: Value = serde_json::from_str(include_str!("../tests/data/path_vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(include_str!("../../tests/data/path_vectors.json")).unwrap();
         let mut bad: Vec<String> = Vec::new();
         for (key, safe) in [("quote", "/"), ("quote_nosafe", "")] {
             for e in v[key].as_array().unwrap() {

@@ -33,7 +33,7 @@ impl std::fmt::Display for ShellCommandError {
     }
 }
 
-pub use pycompat::shlex::shlex_split;
+pub use crate::pycompat::shlex::shlex_split;
 
 /// A command that could not be built (shlex's ValueError) as the factory's
 /// error

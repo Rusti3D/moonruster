@@ -32,7 +32,7 @@ mod cleandoc_tests {
     /// CPython's inspect.cleandoc (tools/gen_misc_vectors.py)
     #[test]
     fn vectors() {
-        let v: serde_json::Value = serde_json::from_str(include_str!("../tests/data/misc_vectors.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/data/misc_vectors.json")).unwrap();
         let mut bad = Vec::new();
         for e in v["cleandoc"].as_array().unwrap() {
             let got = super::cleandoc(e[0].as_str().unwrap());

@@ -109,7 +109,7 @@ mod tests {
     /// CPython's posixpath (tools/gen_path_vectors.py)
     #[test]
     fn vectors() {
-        let v: Value = serde_json::from_str(include_str!("../tests/data/path_vectors.json")).unwrap();
+        let v: Value = serde_json::from_str(include_str!("../../tests/data/path_vectors.json")).unwrap();
         let s = |x: &Value| x.as_str().unwrap().to_string();
         let mut bad: Vec<String> = Vec::new();
         let mut check = |what: &str, input: &Value, got: Value, want: &Value| {

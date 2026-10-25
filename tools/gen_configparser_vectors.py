@@ -3,7 +3,7 @@
 # Moonraker builds it (ConfigParser(interpolation=None)): for each text, the
 # parsed sections (DEFAULT first, as dict(config.items())), write()'s output,
 # or the error's str(). (docs/RUSTIFY.md Phase 0)
-#   python3 tools/gen_configparser_vectors.py > crates/pycompat/tests/data/configparser_vectors.json
+#   python3 tools/gen_configparser_vectors.py > tests/data/configparser_vectors.json
 import configparser
 import io
 import json
