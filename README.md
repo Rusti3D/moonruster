@@ -48,12 +48,19 @@ With 200 G-code files and no Klipper:
 | CPU for 3,500 API requests | 28.4 s | 2.6 s |
 | `/server/files/list` (200 files) | 18 req/s | 212 req/s |
 
-On a printer (Elegoo Centauri Carbon, armv7, 115 MB RAM, COSMOS firmware whose Moonraker already
-uses lazy imports) Moonraker's own memory was 22.0 MB (19.8 MB in RAM + 2.2 MB in zram swap) and
-Moonruster's 6.8 MB (5.6 + 1.2), leaving 10.3 MB more `MemAvailable` and half the zram use. That
-was before routes stopped being compiled as regexes, which cut Moonruster's own memory by about
-1.3 MB in the synthetic test. The real-world gap is about 3x rather than the 10x+ above: a real
-Klipper, file list, history and webcam add data on both sides, and COSMOS trims its Python.
+On a printer (Elegoo Centauri Carbon, armv7, 115 MB RAM), both serving the same live setup (Mainsail,
+Klipper, webcam) in turns, measured 2026-10-25 against COSMOS's own Moonraker (which already uses lazy
+imports):
+
+| Per 30 s | Moonraker | Moonruster |
+| --- | --- | --- |
+| CPU, idle | 0.92 s | 0.33 s |
+| CPU, 2 Mainsail-like clients + ~5 requests/s | 4.68 s | 1.56 s |
+| Own memory (RAM + zram) | 21.7 MB | 4.4 MB |
+| System `MemAvailable` | 39.9 MB | 56.6 MB |
+
+The real-world gap is smaller than the synthetic one above: a real Klipper, file list, history and webcam
+add data on both sides, and COSMOS trims its Python.
 
 Reproduce the first table with `tools/bench.sh` (it starts `tools/mock_klippy.py` and
 `tools/ws_clients.py`, which needs `tornado`, e.g. from Moonraker's virtualenv):
