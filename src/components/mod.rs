@@ -50,6 +50,8 @@ macro_rules! named {
         $(impl crate::server::Named for $ty {
             const NAME: &'static str = $name;
         })*
+        #[cfg(test)]
+        const NAMED: &[&str] = &[$($name),*];
     };
 }
 
@@ -149,4 +151,17 @@ pub fn load_component(_server: &Rc<Server>, config: &ConfigHelper, name: &str) -
         _ => return Ok(None),
     };
     Ok(Some(loaded))
+}
+
+#[cfg(test)]
+mod tests {
+    // every component that can be loaded has its type's name, and no other
+    #[test]
+    fn named_matches_registry() {
+        let mut named = super::NAMED.to_vec();
+        let mut names = super::COMPONENT_NAMES.to_vec();
+        named.sort_unstable();
+        names.sort_unstable();
+        assert_eq!(named, names);
+    }
 }
