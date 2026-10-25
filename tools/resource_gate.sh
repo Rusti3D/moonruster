@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.."
 # measurement must not overlap another's suites or measurements
 exec 9> /tmp/rustify_gates.lock
 flock 9
+export RUSTIFY_GATE_LOCKED=1
 RUNS=${RUNS:-5}
 SETTLE=${SETTLE:-20}
 WIN=${WIN:-30}

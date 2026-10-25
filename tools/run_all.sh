@@ -1,6 +1,13 @@
 # Runs the differential suites one after another, results in /tmp/mr_*.out
 # usage: run_all.sh [suite...]  (default: all)
 cd "$(dirname "$0")/.."
+# builds and test runs take the machine's gate lock (kaliru's gates
+# measure resources on it), unless a gate run already holds it
+if [ -z "$RUSTIFY_GATE_LOCKED" ]; then
+    exec 9> /tmp/rustify_gates.lock
+    flock 9
+    export RUSTIFY_GATE_LOCKED=1
+fi
 CARGO_TARGET_DIR=~/mr/target ~/.cargo/bin/cargo build --release 2>&1 | grep -E "^error" -A12 > /tmp/mr_build.out
 if [ -s /tmp/mr_build.out ]; then echo "BUILD FAILED" > /tmp/mr_done.out; cat /tmp/mr_build.out >> /tmp/mr_done.out; exit 1; fi
 cd tools

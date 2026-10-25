@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 # gate runs of every project on this machine take turns (kaliru's too)
 exec 9> /tmp/rustify_gates.lock
 flock 9
+export RUSTIFY_GATE_LOCKED=1
 OUT=${GATE_OUT:-$HOME/mr/gate}
 mkdir -p "$OUT"
 rm -f "$OUT"/*.out

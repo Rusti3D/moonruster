@@ -160,12 +160,11 @@ impl AsyncSerial {
                 };
                 let n = unsafe { libc::read(fd, data.as_mut_ptr() as *mut libc::c_void, data.len()) };
                 if n < 0 {
-                    let e = std::io::Error::last_os_error();
-                    if e.kind() == std::io::ErrorKind::WouldBlock {
-                        guard.clear_ready();
-                        continue;
-                    }
-                    return;
+                    // Moonraker's _handle_incoming ignores an OSError and
+                    // keeps reading; returning would close the fd that
+                    // self.fd still names for sending
+                    guard.clear_ready();
+                    continue;
                 }
                 if n == 0 {
                     if let Some(s) = w.upgrade() {
