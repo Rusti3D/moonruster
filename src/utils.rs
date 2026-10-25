@@ -1,6 +1,5 @@
 // General Server Utilities (port of moonraker/utils/__init__.py)
 
-use serde_json::Value;
 use std::ffi::CString;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -363,4 +362,4 @@ pub fn urlencode(pairs: &[(&str, String)]) -> String {
 }
 
 // compiled once per pattern (pycompat::re)
-pub use pycompat::re::{compile as regex, try_compile as try_regex};
+pub use pycompat::re::compile as regex;

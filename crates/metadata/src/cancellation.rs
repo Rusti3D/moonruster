@@ -6,7 +6,7 @@
 // Errors carry the message of the python exception the original raises,
 // in which case moonraker leaves the file untouched.
 
-use crate::pyfmt::{py_float, py_float_repr, py_int, py_repr};
+use pycompat::pyfmt::{py_float, py_float_repr, py_int, py_repr};
 use indexmap::IndexMap;
 use serde_json::Value;
 
@@ -105,7 +105,7 @@ fn header(out: &mut String, count: usize) {
 
 /// re.sub(r"\W+", "_", id).strip("_")
 fn clean_id(id: &str) -> String {
-    let re = crate::utils::regex(r"\W+");
+    let re = pycompat::re::compile(r"\W+");
     re.replace_all(id, "_").trim_matches('_').to_string()
 }
 

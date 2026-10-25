@@ -10,4 +10,5 @@ mod pyfmt_tables;
 pub mod pymimetypes;
 pub mod re;
 pub mod shlex;
+pub mod shutil;
 pub mod urllib;

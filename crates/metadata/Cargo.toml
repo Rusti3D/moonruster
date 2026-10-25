@@ -11,3 +11,7 @@ serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 regex = "1"
 fancy-regex = "0.14"
 base64 = "0.22"
+indexmap = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v5"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "qoi"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -1,6 +1,8 @@
 // GCode metadata extraction utility (port of moonraker/components/file_manager/metadata.py)
 //
 // Run as a subprocess of the main server: `moonruster --metadata -c <config.json>`
+mod cancellation;
+
 
 use base64::Engine;
 use fancy_regex::Regex as FRegex;
@@ -1102,13 +1104,13 @@ fn process_objects(file_path: &Path, slicer: &mut Slicer) -> bool {
     };
     let fname = file_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     logi(&format!("Performing Object Processing on file: {}, sliced by {}", fname, slicer.slicer_name));
-    let result = super::cancellation::read_text(file_path).and_then(|text| {
-        let lines = super::cancellation::split_lines(&text);
+    let result = cancellation::read_text(file_path).and_then(|text| {
+        let lines = cancellation::split_lines(&text);
         match proc {
-            "preprocess_m486" => super::cancellation::preprocess_m486(&lines),
-            "preprocess_slicer" => super::cancellation::preprocess_slicer(&lines),
-            "preprocess_cura" => super::cancellation::preprocess_cura(&lines),
-            _ => super::cancellation::preprocess_ideamaker(&lines),
+            "preprocess_m486" => cancellation::preprocess_m486(&lines),
+            "preprocess_slicer" => cancellation::preprocess_slicer(&lines),
+            "preprocess_cura" => cancellation::preprocess_cura(&lines),
+            _ => cancellation::preprocess_ideamaker(&lines),
         }
     });
     let out = match result {
@@ -1131,7 +1133,7 @@ fn process_objects(file_path: &Path, slicer: &mut Slicer) -> bool {
     if dest.is_symlink() {
         dest = std::fs::canonicalize(&dest).unwrap_or(dest);
     }
-    let moved = super::shutil_move(&tmp_file.to_string_lossy(), &dest.to_string_lossy());
+    let moved = pycompat::shutil::shutil_move(&tmp_file.to_string_lossy(), &dest.to_string_lossy());
     let _ = std::fs::remove_dir_all(&tmp_dir);
     if let Err(e) = moved {
         logi(&format!("Object processing failed: {}", e));
