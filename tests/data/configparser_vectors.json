@@ -1,0 +1,353 @@
+[
+{
+"text": "",
+"items": {
+"DEFAULT": {}
+},
+"sections": [],
+"write": ""
+},
+{
+"text": "[server]\nhost: 0.0.0.0\nport = 7125\n",
+"items": {
+"DEFAULT": {},
+"server": {
+"host": "0.0.0.0",
+"port": "7125"
+}
+},
+"sections": [
+"server"
+],
+"write": "[server]\nhost = 0.0.0.0\nport = 7125\n\n"
+},
+{
+"text": "[a]\nKey: Value\nkey2 :  spaced value  \n",
+"items": {
+"DEFAULT": {},
+"a": {
+"key": "Value",
+"key2": "spaced value"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nkey = Value\nkey2 = spaced value\n\n"
+},
+{
+"text": "[a]\nmulti:\n  one\n  two\n\n  three\nnext: x\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"multi": "\none\ntwo\n\nthree",
+"next": "x"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nmulti = \n\tone\n\ttwo\n\t\n\tthree\nnext = x\n\n"
+},
+{
+"text": "[a]\nk: v\n  continued\n# comment\n; also comment\nk2: v2\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v\ncontinued",
+"k2": "v2"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = v\n\tcontinued\nk2 = v2\n\n"
+},
+{
+"text": "[a]\nk: v # not a comment\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v # not a comment"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = v # not a comment\n\n"
+},
+{
+"text": "[DEFAULT]\nd: 1\n[a]\nk: 2\n[b]\nd: 3\n",
+"items": {
+"DEFAULT": {
+"d": "1"
+},
+"a": {
+"k": "2",
+"d": "1"
+},
+"b": {
+"d": "3"
+}
+},
+"sections": [
+"a",
+"b"
+],
+"write": "[DEFAULT]\nd = 1\n\n[a]\nk = 2\n\n[b]\nd = 3\n\n"
+},
+{
+"text": "no section\n",
+"error": "File contains no section headers.\nfile: '<cfg>', line: 1\n'no section\\n'"
+},
+{
+"text": "[a]\nk: 1\nk: 2\n",
+"error": "While reading from '<cfg>' [line  3]: option 'k' in section 'a' already exists"
+},
+{
+"text": "[a]\n[a]\n",
+"error": "While reading from '<cfg>' [line  2]: section 'a' already exists"
+},
+{
+"text": "[a]\nnovalue\n",
+"error": "Source contains parsing errors: '<cfg>'\n\t[line  2]: 'novalue\\n'"
+},
+{
+"text": "[a]\n=value\n",
+"error": "Source contains parsing errors: '<cfg>'\n\t[line  2]: '=value\\n'"
+},
+{
+"text": "[a]\nk=v=w\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v=w"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = v=w\n\n"
+},
+{
+"text": "[a]\nk: v:w\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v:w"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = v:w\n\n"
+},
+{
+"text": "[ spaced name ]\nx: 1\n",
+"items": {
+"DEFAULT": {},
+" spaced name ": {
+"x": "1"
+}
+},
+"sections": [
+" spaced name "
+],
+"write": "[ spaced name ]\nx = 1\n\n"
+},
+{
+"text": "[a]]\nx: 1\n",
+"items": {
+"DEFAULT": {},
+"a]": {
+"x": "1"
+}
+},
+"sections": [
+"a]"
+],
+"write": "[a]]\nx = 1\n\n"
+},
+{
+"text": "[]\nx: 1\n",
+"error": "File contains no section headers.\nfile: '<cfg>', line: 1\n'[]\\n'"
+},
+{
+"text": "  [a]\nx: 1\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"x": "1"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nx = 1\n\n"
+},
+{
+"text": "[a]\n  x: 1\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"x": "1"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nx = 1\n\n"
+},
+{
+"text": "[a]\nx:\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"x": ""
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nx = \n\n"
+},
+{
+"text": "[a]\nx =\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"x": ""
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nx = \n\n"
+},
+{
+"text": "[a]\nx: \t value with tab\t\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"x": "value with tab"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nx = value with tab\n\n"
+},
+{
+"text": "[a]\nUPPER: 1\nupper: 2\n",
+"error": "While reading from '<cfg>' [line  3]: option 'upper' in section 'a' already exists"
+},
+{
+"text": "[a]\nk: v\n\n\n[b]\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v"
+},
+"b": {}
+},
+"sections": [
+"a",
+"b"
+],
+"write": "[a]\nk = v\n\n[b]\n\n"
+},
+{
+"text": "[a]\nk: line1\n\tline2\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "line1\nline2"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = line1\n\tline2\n\n"
+},
+{
+"text": "[a]\r\nk: crlf\r\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "crlf"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = crlf\n\n"
+},
+{
+"text": "[a]\nk: v\n[b\nx: 1\n",
+"error": "Source contains parsing errors: '<cfg>'\n\t[line  3]: '[b\\n'"
+},
+{
+"text": "[a]\nk: 1\n[b]\nk: 1\n[a]\nz: 2\n",
+"error": "While reading from '<cfg>' [line  5]: section 'a' already exists"
+},
+{
+"text": "[gcode_macro test]\ngcode:\n  {% if x %}\n    G28\n  {% endif %}\n",
+"items": {
+"DEFAULT": {},
+"gcode_macro test": {
+"gcode": "\n{% if x %}\nG28\n{% endif %}"
+}
+},
+"sections": [
+"gcode_macro test"
+],
+"write": "[gcode_macro test]\ngcode = \n\t{% if x %}\n\tG28\n\t{% endif %}\n\n"
+},
+{
+"text": "[a]\nk: unicode ✓ é\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "unicode ✓ é"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = unicode ✓ é\n\n"
+},
+{
+"text": "#only comment\n",
+"items": {
+"DEFAULT": {}
+},
+"sections": [],
+"write": ""
+},
+{
+"text": "[a]\n  # indented comment\nk: v\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = v\n\n"
+},
+{
+"text": "[a]\nk: v\n   \n  after blank-ish\n",
+"items": {
+"DEFAULT": {},
+"a": {
+"k": "v\n\nafter blank-ish"
+}
+},
+"sections": [
+"a"
+],
+"write": "[a]\nk = v\n\t\n\tafter blank-ish\n\n"
+}
+]

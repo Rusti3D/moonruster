@@ -63,7 +63,18 @@ class Listener:
             except Exception:
                 await asyncio.sleep(0.5)
 
-    def take(self):
+    def take(self, quiet=0.4, limit=4.0):
+        """the step's notifications, once none arrived for `quiet` seconds
+        (at most `limit`): Moonraker's arrive later than Moonruster's, and
+        must not spill into the next step"""
+        deadline = time.monotonic() + limit
+        while time.monotonic() < deadline:
+            with self.lock:
+                n = len(self.events)
+            time.sleep(quiet)
+            with self.lock:
+                if len(self.events) == n:
+                    break
         with self.lock:
             ev, self.events = self.events, []
         return ev

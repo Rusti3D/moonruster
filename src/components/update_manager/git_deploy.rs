@@ -1446,7 +1446,7 @@ impl GitRepo {
             log::debug!("Git Repo {}: {}", alias, out);
         });
         let shell = self.cmd_helper.shell();
-        let scmd = shell.build_shell_command(&git_cmd, Some(cb), None, Some(env), false, None);
+        let scmd = shell.build_shell_command(&git_cmd, Some(cb), None, Some(env), false, None)?;
         while attempts > 0 {
             self.st.borrow_mut().git_messages.clear();
             self.fetch_input_recd.set(false);

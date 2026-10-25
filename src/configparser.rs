@@ -310,6 +310,42 @@ fn match_optcre(value: &str) -> Option<(String, String)> {
 mod tests {
     use super::*;
 
+    /// CPython's configparser on the same texts
+    /// (tools/gen_configparser_vectors.py): every mismatch is listed
+    #[test]
+    fn vectors() {
+        let v: serde_json::Value = serde_json::from_str(include_str!("../tests/data/configparser_vectors.json")).unwrap();
+        let mut bad: Vec<String> = Vec::new();
+        for case in v.as_array().unwrap() {
+            let text = case["text"].as_str().unwrap();
+            let mut cp = ConfigParser::new();
+            match (cp.read_string(text, "<cfg>"), case.get("error")) {
+                (Err(e), Some(want)) => {
+                    if e.to_string() != want.as_str().unwrap() {
+                        bad.push(format!("{:?}: error {:?} != {:?}", text, e.to_string(), want));
+                    }
+                }
+                (Err(e), None) => bad.push(format!("{:?}: error {:?}, python parsed it", text, e.to_string())),
+                (Ok(()), Some(want)) => bad.push(format!("{:?}: parsed, python raised {:?}", text, want)),
+                (Ok(()), None) => {
+                    let items = serde_json::to_value(cp.as_dict()).unwrap();
+                    if items != case["items"] {
+                        bad.push(format!("{:?}: items {} != {}", text, items, case["items"]));
+                    }
+                    if serde_json::to_value(cp.sections()).unwrap() != case["sections"] {
+                        bad.push(format!("{:?}: sections {:?} != {}", text, cp.sections(), case["sections"]));
+                    }
+                    if cp.write() != case["write"].as_str().unwrap() {
+                        bad.push(format!("{:?}: write {:?} != {:?}", text, cp.write(), case["write"]));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{} mismatches:
+{}", bad.len(), bad.join("
+"));
+    }
+
     #[test]
     fn parse_basic() {
         let mut cp = ConfigParser::new();

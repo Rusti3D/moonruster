@@ -1,0 +1,195 @@
+{
+"shlex": [
+[
+"",
+[]
+],
+[
+"a",
+[
+"a"
+]
+],
+[
+"a b  c",
+[
+"a",
+"b",
+"c"
+]
+],
+[
+"a 'b c' \"d \\\"e\" f\\ g",
+[
+"a",
+"b c",
+"d \"e",
+"f g"
+]
+],
+[
+"'single \\ backslash'",
+[
+"single \\ backslash"
+]
+],
+[
+"\"double \\\\ \\$ \\` \\a\"",
+[
+"double \\ \\$ \\` \\a"
+]
+],
+[
+"a#b",
+[
+"a#b"
+]
+],
+[
+"a #comment",
+[
+"a",
+"#comment"
+]
+],
+[
+"x=1 y='2 3'",
+[
+"x=1",
+"y=2 3"
+]
+],
+[
+"tab\tsep",
+[
+"tab",
+"sep"
+]
+],
+[
+"nl\nsep",
+[
+"nl",
+"sep"
+]
+],
+[
+"'unclosed",
+{
+"error": "No closing quotation"
+}
+],
+[
+"\"unclosed",
+{
+"error": "No closing quotation"
+}
+],
+[
+"trailing\\",
+{
+"error": "No escaped character"
+}
+],
+[
+"''",
+[
+""
+]
+],
+[
+"\"\"",
+[
+""
+]
+],
+[
+"a''b",
+[
+"ab"
+]
+],
+[
+"é ü",
+[
+"é",
+"ü"
+]
+],
+[
+"--opt=\"a b\"",
+[
+"--opt=a b"
+]
+],
+[
+"  leading",
+[
+"leading"
+]
+],
+[
+"a\\'b",
+[
+"a'b"
+]
+],
+[
+"\\\"q\\\"",
+[
+"\"q\""
+]
+],
+[
+"a;b",
+[
+"a;b"
+]
+],
+[
+"a|b c&&d",
+[
+"a|b",
+"c&&d"
+]
+]
+],
+"cleandoc": [
+[
+"",
+""
+],
+[
+"one line",
+"one line"
+],
+[
+"  leading",
+"leading"
+],
+[
+"first\n  second\n  third",
+"first\nsecond\nthird"
+],
+[
+"\n    table (\n        a INT,\n        b TEXT\n    )\n",
+"table (\n    a INT,\n    b TEXT\n)"
+],
+[
+"x\n\n    y\n\n",
+"x\n\ny"
+],
+[
+"\ttab\n\t\tdeeper",
+"tab\ndeeper"
+],
+[
+"  \n  only indent\n  ",
+"only indent"
+],
+[
+"a\n b\n  c\n",
+"a\nb\n c"
+]
+]
+}
