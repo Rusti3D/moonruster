@@ -2,7 +2,6 @@
 // (port of moonraker/components/file_manager/file_manager.py)
 
 pub mod cancellation;
-pub mod metadata;
 pub mod observer;
 pub mod storage;
 pub mod upload;
@@ -29,75 +28,14 @@ pub fn st_mtime(meta: &std::fs::Metadata) -> f64 {
     meta.mtime() as f64 + meta.mtime_nsec() as f64 * 1e-9
 }
 
-/// os.path.abspath
-pub fn abspath(p: &str) -> String {
-    utils::normpath(&utils::absolute(Path::new(p))).to_string_lossy().to_string()
-}
+// Python's os.path, as Moonraker's file manager uses it
+pub use pycompat::posixpath::{abspath, normpath as os_normpath, relpath};
 
-/// os.path.join (only two components)
+/// os.path.join of two components
 pub fn path_join(a: &str, b: &str) -> String {
-    if b.starts_with('/') {
-        return b.to_string();
-    }
-    if a.is_empty() || a.ends_with('/') {
-        format!("{}{}", a, b)
-    } else {
-        format!("{}/{}", a, b)
-    }
+    pycompat::posixpath::join(a, &[b])
 }
 
-/// os.path.relpath(path, start)
-pub fn relpath(path: &str, start: &str) -> String {
-    let p = utils::normpath(Path::new(&abspath(path)));
-    let s = utils::normpath(Path::new(&abspath(start)));
-    let pc: Vec<_> = p.components().collect();
-    let sc: Vec<_> = s.components().collect();
-    let mut i = 0;
-    while i < pc.len() && i < sc.len() && pc[i] == sc[i] {
-        i += 1;
-    }
-    let mut parts: Vec<String> = vec!["..".to_string(); sc.len() - i];
-    for c in &pc[i..] {
-        parts.push(c.as_os_str().to_string_lossy().to_string());
-    }
-    if parts.is_empty() {
-        ".".into()
-    } else {
-        parts.join("/")
-    }
-}
-
-/// os.path.normpath for arbitrary (possibly relative) paths
-pub fn os_normpath(p: &str) -> String {
-    if p.is_empty() {
-        return ".".into();
-    }
-    let initial_slashes = if p.starts_with("//") && !p.starts_with("///") {
-        2
-    } else if p.starts_with('/') {
-        1
-    } else {
-        0
-    };
-    let mut comps: Vec<&str> = Vec::new();
-    for c in p.split('/') {
-        if c.is_empty() || c == "." {
-            continue;
-        }
-        if c != ".." || (initial_slashes == 0 && comps.is_empty()) || comps.last() == Some(&"..") {
-            comps.push(c);
-        } else if !comps.is_empty() {
-            comps.pop();
-        }
-    }
-    let mut out = "/".repeat(initial_slashes);
-    out.push_str(&comps.join("/"));
-    if out.is_empty() {
-        ".".into()
-    } else {
-        out
-    }
-}
 
 // ***** Notify Sync Lock *****
 

@@ -142,7 +142,7 @@ fn main() {
     }
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(|a| a == "--metadata").unwrap_or(false) {
-        std::process::exit(components::file_manager::metadata::main(&argv[2..]));
+        std::process::exit(metadata::main(&argv[2..]));
     }
     let args = parse_args(&argv);
     let mut startup_warnings: Vec<Value> = Vec::new();

@@ -8,3 +8,4 @@ license = "GPL-3.0-only"
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 indexmap = { version = "2", features = ["serde"] }
+regex = "1"

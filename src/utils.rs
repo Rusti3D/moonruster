@@ -333,65 +333,34 @@ pub fn local_strftime(fmt: &str) -> String {
     chrono::Local::now().format(fmt).to_string()
 }
 
+/// tornado's url_escape(plus=False): urllib.parse.quote(s, safe="")
 pub fn url_escape(s: &str) -> String {
-    // tornado's url_escape(plus=False) == urllib.parse.quote(s, safe=b"")
-    const SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'_').remove(b'.').remove(b'-').remove(b'~');
-    percent_encoding::utf8_percent_encode(s, SET).to_string()
+    pycompat::urllib::quote(s, "")
 }
 
-/// urllib.parse.quote(s) with safe="/"
+/// urllib.parse.quote(s) (safe="/")
 pub fn url_quote(s: &str) -> String {
-    const SET: &percent_encoding::AsciiSet =
-        &percent_encoding::NON_ALPHANUMERIC.remove(b'_').remove(b'.').remove(b'-').remove(b'~').remove(b'/');
-    percent_encoding::utf8_percent_encode(s, SET).to_string()
+    pycompat::urllib::quote(s, "/")
 }
 
 pub fn url_unescape(s: &str) -> String {
     percent_encoding::percent_decode_str(s).decode_utf8_lossy().to_string()
 }
 
-/// python's os.path.splitext()[-1]
+/// os.path.splitext()[1]
 pub fn splitext_ext(name: &str) -> String {
-    let base = name.rsplit('/').next().unwrap_or(name);
-    let trimmed = base.trim_start_matches('.');
-    match trimmed.rfind('.') {
-        Some(pos) => trimmed[pos..].to_string(),
-        None => String::new(),
-    }
+    pycompat::posixpath::splitext(name).1.to_string()
 }
 
-/// python's os.path.splitext()[0]
+/// os.path.splitext()[0]
 pub fn splitext_root(name: &str) -> String {
-    let ext = splitext_ext(name);
-    name[..name.len() - ext.len()].to_string()
+    pycompat::posixpath::splitext(name).0.to_string()
 }
 
-/// urllib.parse.urlencode for a list of key/value pairs (quote_plus encoding)
+/// urllib.parse.urlencode for a list of key/value pairs
 pub fn urlencode(pairs: &[(&str, String)]) -> String {
-    pairs
-        .iter()
-        .map(|(k, v)| format!("{}={}", url_escape(k).replace("%20", "+"), url_escape(v).replace("%20", "+")))
-        .collect::<Vec<_>>()
-        .join("&")
+    pycompat::urllib::urlencode(pairs)
 }
 
-thread_local! {
-    static REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<String, Option<regex::Regex>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-/// Compiled once per pattern (per thread) instead of on every call
-pub fn try_regex(pattern: &str) -> Option<regex::Regex> {
-    REGEX_CACHE.with(|c| {
-        if let Some(r) = c.borrow().get(pattern) {
-            return r.clone();
-        }
-        let r = regex::Regex::new(pattern).ok();
-        c.borrow_mut().insert(pattern.to_string(), r.clone());
-        r
-    })
-}
-
-pub fn regex(pattern: &str) -> regex::Regex {
-    try_regex(pattern).expect("invalid regex")
-}
+// compiled once per pattern (pycompat::re)
+pub use pycompat::re::{compile as regex, try_compile as try_regex};
