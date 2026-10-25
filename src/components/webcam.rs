@@ -29,10 +29,12 @@ thread_local! {
     static DEFAULT_HOST: RefCell<String> = RefCell::new("http://127.0.0.1".into());
 }
 
-/// A webcam, fields kept in python attribute order
+/// A webcam, fields kept in python attribute order. The manager holds each
+/// one by Rc and updates it in place (WebCam.update), so every holder sees
+/// the same camera, as in Moonraker
 #[derive(Clone)]
 pub struct WebCam {
-    pub fields: Map<String, Value>,
+    pub fields: RefCell<Map<String, Value>>,
 }
 
 fn py_truthy(v: &Value) -> bool {
@@ -66,24 +68,24 @@ impl WebCam {
         if !(isdigit(pre) && ar.contains(':') && isdigit(post)) {
             return Err(ServerError::bad(format!("Invalid value for 'aspect_ratio': {}", ar)));
         }
-        Ok(WebCam { fields })
+        Ok(WebCam { fields: RefCell::new(fields) })
     }
 
     pub fn name(&self) -> String {
-        self.fields.get("name").map(py_str).unwrap_or_default()
+        self.fields.borrow().get("name").map(py_str).unwrap_or_default()
     }
     pub fn uid(&self) -> String {
-        self.fields.get("uid").map(py_str).unwrap_or_default()
+        self.fields.borrow().get("uid").map(py_str).unwrap_or_default()
     }
     pub fn source(&self) -> String {
-        self.fields.get("source").map(py_str).unwrap_or_default()
+        self.fields.borrow().get("source").map(py_str).unwrap_or_default()
     }
     pub fn get(&self, f: &str) -> Value {
-        self.fields.get(f).cloned().unwrap_or(Value::Null)
+        self.fields.borrow().get(f).cloned().unwrap_or(Value::Null)
     }
 
     pub fn as_dict(&self) -> Value {
-        Value::Object(self.fields.clone())
+        Value::Object(self.fields.borrow().clone())
     }
 
     pub async fn get_stream_url(&self, convert_local: bool) -> Result<String, ServerError> {
@@ -195,13 +197,13 @@ impl WebCam {
         Ok(url.to_string())
     }
 
-    pub fn update(&mut self, req: &WebRequest) -> Result<(), ServerError> {
-        let valid: Vec<String> = self.fields.keys().filter(|k| *k != "source" && *k != "uid").cloned().collect();
+    pub fn update(&self, req: &WebRequest) -> Result<(), ServerError> {
+        let valid: Vec<String> = self.fields.borrow().keys().filter(|k| *k != "source" && *k != "uid").cloned().collect();
         for field in req.get_args().keys() {
             if !valid.contains(field) {
                 continue;
             }
-            let cur = self.fields.get(field).cloned().unwrap_or(Value::Null);
+            let cur = self.get(field);
             let val = match cur {
                 Value::Bool(_) => Value::Bool(req.get_boolean(field)?),
                 Value::Number(n) if n.is_f64() => crate::utils::float_value(req.get_float(field)?),
@@ -209,7 +211,7 @@ impl WebCam {
                 Value::String(_) => json!(req.get_str(field)?),
                 _ => req.get(field)?,
             };
-            self.fields.insert(field.clone(), val);
+            self.fields.borrow_mut().insert(field.clone(), val);
         }
         Ok(())
     }
@@ -299,7 +301,7 @@ impl WebCam {
 }
 
 pub struct WebcamManager {
-    webcams: RefCell<IndexMap<String, WebCam>>,
+    webcams: RefCell<IndexMap<String, Rc<WebCam>>>,
 }
 
 #[async_trait(?Send)]
@@ -328,8 +330,8 @@ impl Component for WebcamManager {
                     }
                 };
                 d.insert("uid".into(), json!(uid));
-                let mut webcam = match WebCam::from_database(&d) {
-                    Ok(w) => w,
+                let webcam = match WebCam::from_database(&d) {
+                    Ok(w) => Rc::new(w),
                     Err(e) => {
                         log::error!("Failed to process webcam from db\n{}", e);
                         continue;
@@ -337,7 +339,7 @@ impl Component for WebcamManager {
                 };
                 if all_uids.contains(uid) {
                     let _ = db.delete_item_sync("webcams", &json!(uid));
-                    webcam.fields.insert("uid".into(), json!(self.get_guaranteed_uuid()));
+                    webcam.fields.borrow_mut().insert("uid".into(), json!(self.get_guaranteed_uuid()));
                     self.save_cam(&webcam, false);
                     ro_info.push(format!("Detected webcam UID collision: {}", uid));
                 }
@@ -366,7 +368,7 @@ impl WebcamManager {
         let mut webcams = IndexMap::new();
         for section in config.get_prefix_sections("webcam ") {
             let cam = WebCam::from_config(&config.getsection(&section))?;
-            webcams.insert(cam.name(), cam);
+            webcams.insert(cam.name(), Rc::new(cam));
         }
         let wm = Rc::new(WebcamManager { webcams: RefCell::new(webcams) });
         let w = wm.clone();
@@ -405,7 +407,7 @@ impl WebcamManager {
         log::info!("Default public webcam address set: {}", host);
     }
 
-    pub fn get_webcams(&self) -> IndexMap<String, WebCam> {
+    pub fn get_webcams(&self) -> IndexMap<String, Rc<WebCam>> {
         self.webcams.borrow().clone()
     }
 
@@ -413,7 +415,7 @@ impl WebcamManager {
         self.webcams.borrow().values().map(|w| w.as_dict()).collect()
     }
 
-    fn save_cam(&self, cam: &WebCam, save_local: bool) {
+    fn save_cam(&self, cam: &Rc<WebCam>, save_local: bool) {
         if save_local {
             self.webcams.borrow_mut().insert(cam.name(), cam.clone());
         }
@@ -437,7 +439,7 @@ impl WebcamManager {
         }
     }
 
-    pub fn get_cam_by_uid(&self, uid: &str) -> Result<WebCam, ServerError> {
+    pub fn get_cam_by_uid(&self, uid: &str) -> Result<Rc<WebCam>, ServerError> {
         self.webcams
             .borrow()
             .values()
@@ -446,7 +448,7 @@ impl WebcamManager {
             .ok_or_else(|| ServerError::new(format!("Webcam with UID {} not found", uid), 404))
     }
 
-    fn lookup_camera(&self, req: &WebRequest, required: bool) -> Result<Option<WebCam>, ServerError> {
+    fn lookup_camera(&self, req: &WebRequest, required: bool) -> Result<Option<Rc<WebCam>>, ServerError> {
         if req.has("uid") {
             return self.get_cam_by_uid(&req.get_str("uid")?).map(Some);
         }
@@ -466,7 +468,7 @@ impl WebcamManager {
             data = webcam.unwrap().as_dict();
         } else if rt == RequestType::POST {
             let cam = match webcam {
-                Some(mut cam) => {
+                Some(cam) => {
                     if cam.source() == "config" {
                         return Err(ServerError::bad(format!(
                             "Cannot overwrite webcam '{}' sourced from Moonraker configuration",
@@ -491,7 +493,7 @@ impl WebcamManager {
                 }
                 None => {
                     let uid = self.get_guaranteed_uuid();
-                    WebCam::from_web_request(&req, &uid)?
+                    Rc::new(WebCam::from_web_request(&req, &uid)?)
                 }
             };
             self.save_cam(&cam, true);

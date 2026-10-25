@@ -285,11 +285,33 @@ def run(host, steps):
         out.append((name, resp, lis.take()))
     return out
 
+def _deleted_child_key(ev):
+    """the batch a deleted-children notification belongs to: Moonraker sends
+    them from InotifyNode.pending_deleted_children, a set (string-hash order,
+    random per run)"""
+    if ev["method"] != "notify_filelist_changed" or not ev["params"]:
+        return None
+    p = ev["params"][0]
+    if not isinstance(p, dict) or p.get("action") not in ("delete_file", "delete_dir"):
+        return None
+    item = p.get("item", {})
+    return (item.get("root"), os.path.dirname(item.get("path", "")))
+
+
 def normalize_events(evs):
     res = []
     for m, p in evs:
         res.append({"method": m, "params": p})
-    return res
+    # each run of deleted-children notifications of one directory in path order
+    out, i = [], 0
+    while i < len(res):
+        k = _deleted_child_key(res[i])
+        j = i + 1
+        while k is not None and j < len(res) and _deleted_child_key(res[j]) == k:
+            j += 1
+        out.extend(sorted(res[i:j], key=lambda e: e["params"][0]["item"]["path"]) if k else res[i:j])
+        i = j
+    return out
 
 def nrm(v, key=None):
     if key in EXTRA_VOLATILE:

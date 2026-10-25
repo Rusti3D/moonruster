@@ -14,6 +14,61 @@ use std::rc::Rc;
 pub struct TemplateFactory {
     jenv: Rc<Environment<'static>>,
     ui_env: Rc<Environment<'static>>,
+    // globals components added (add_environment_global): the config and
+    // async environments see them, not the UI one, as in Moonraker
+    globals: Globals,
+}
+
+/// A global a component added with add_environment_global: a value, or a
+/// function (a Python callable) run on the event loop
+#[derive(Clone)]
+pub enum TemplateGlobal {
+    Data(Value),
+    Func(u64),
+}
+
+/// A global function: positional and keyword arguments to a result
+pub type GlobalFn = Rc<dyn Fn(Vec<Value>, serde_json::Map<String, Value>) -> Result<Value, ServerError>>;
+
+type Globals = Rc<std::cell::RefCell<Vec<(String, TemplateGlobal)>>>;
+
+thread_local! {
+    // the global functions, by id (the template engine needs Send closures:
+    // they carry the id and run the function on the event loop thread)
+    static GLOBAL_FNS: std::cell::RefCell<std::collections::HashMap<u64, GlobalFn>> = Default::default();
+}
+
+/// Jinja2's own globals and the ones Moonraker's environment adds
+const RESERVED_GLOBALS: [&str; 9] = ["range", "dict", "lipsum", "cycler", "joiner", "namespace", "raise_error", "secrets", "log_debug"];
+
+fn call_global(id: u64, args: Vec<Value>, kwargs: serde_json::Map<String, Value>) -> Result<Value, String> {
+    let f = GLOBAL_FNS.with(|g| g.borrow().get(&id).cloned()).ok_or_else(|| "global function unavailable on this thread".to_string())?;
+    f(args, kwargs).map_err(|e| e.message)
+}
+
+/// An environment with the components' globals added (the shared one when
+/// there are none)
+fn with_globals(env: &Rc<Environment<'static>>, globals: &Globals) -> Rc<Environment<'static>> {
+    let g = globals.borrow();
+    if g.is_empty() {
+        return env.clone();
+    }
+    let mut e: Environment<'static> = (**env).clone();
+    for (name, global) in g.iter() {
+        match global {
+            TemplateGlobal::Data(v) => e.add_global(name.clone(), minijinja::Value::from_serialize(v)),
+            TemplateGlobal::Func(id) => {
+                let id = *id;
+                e.add_function(name.clone(), move |args: minijinja::value::Rest<minijinja::Value>, kwargs: minijinja::value::Kwargs| {
+                    let args: Vec<Value> = args.iter().map(|a| serde_json::to_value(a).unwrap_or(Value::Null)).collect();
+                    call_global(id, args, kwargs_to_map(&kwargs))
+                        .map(|v| minijinja::Value::from_serialize(&v))
+                        .map_err(|m| Error::new(ErrorKind::InvalidOperation, m))
+                })
+            }
+        }
+    }
+    Rc::new(e)
 }
 
 impl Component for TemplateFactory {}
@@ -33,8 +88,29 @@ fn log_debug(msg: minijinja::Value) -> String {
     String::new()
 }
 
+/// Output of `{{ value }}` as Jinja2 writes it: str(value). Strings and
+/// undefined (empty) as minijinja does; plain data with Python's str()
+/// (pyfmt); anything else (functions, objects) with minijinja's default.
+fn py_formatter(out: &mut minijinja::Output, state: &minijinja::State, value: &minijinja::Value) -> Result<(), Error> {
+    use minijinja::value::ValueKind;
+    match value.kind() {
+        ValueKind::Undefined | ValueKind::String => minijinja::escape_formatter(out, state, value),
+        ValueKind::None | ValueKind::Bool | ValueKind::Number | ValueKind::Seq | ValueKind::Map => {
+            match serde_json::to_value(value) {
+                Ok(v) => write!(out, "{}", crate::pyfmt::py_str(&v)).map_err(Error::from),
+                Err(_) => minijinja::escape_formatter(out, state, value),
+            }
+        }
+        _ => minijinja::escape_formatter(out, state, value),
+    }
+}
+
 fn base_env(secrets: &Value, custom: bool) -> Environment<'static> {
     let mut env = Environment::new();
+    // Jinja2 runs on Python objects: their methods (str.replace, dict.items...)
+    env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
+    // ...and prints them with str(): True, None, ['a', 'b'], {'k': 1}
+    env.set_formatter(py_formatter);
     if custom {
         let syntax = SyntaxConfig::builder()
             .block_delimiters("{%", "%}")
@@ -58,15 +134,47 @@ impl TemplateFactory {
         srv.load_component(config, "secrets")?;
         let secrets: Rc<crate::components::secrets::Secrets> = srv.lookup_component("secrets").expect("secrets");
         let sv = secrets.values();
-        Ok(Rc::new(TemplateFactory { jenv: Rc::new(base_env(&sv, true)), ui_env: Rc::new(base_env(&sv, false)) }))
+        Ok(Rc::new(TemplateFactory {
+            jenv: Rc::new(base_env(&sv, true)),
+            ui_env: Rc::new(base_env(&sv, false)),
+            globals: Rc::new(std::cell::RefCell::new(Vec::new())),
+        }))
+    }
+
+    /// TemplateFactory.add_environment_global
+    pub fn add_environment_global(&self, name: &str, value: TemplateGlobal) -> Result<(), ServerError> {
+        if RESERVED_GLOBALS.contains(&name) || self.globals.borrow().iter().any(|(n, _)| n == name) {
+            return Err(ServerError::bad(format!("Jinja 2 environment already contains global {}", name)));
+        }
+        self.globals.borrow_mut().push((name.to_string(), value));
+        Ok(())
+    }
+
+    /// A function for add_environment_global
+    pub fn global_function(f: GlobalFn) -> TemplateGlobal {
+        thread_local! {
+            static NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        }
+        let id = NEXT.with(|n| {
+            n.set(n.get() + 1);
+            n.get()
+        });
+        GLOBAL_FNS.with(|g| g.borrow_mut().insert(id, f));
+        TemplateGlobal::Func(id)
     }
 
     pub fn create_template(&self, source: &str, is_async: bool) -> Result<JinjaTemplate, ServerError> {
+        self.compile(source, is_async).map_err(|e| ServerError::new(format!("{}", e), 500))
+    }
+
+    /// create_template with the template engine's error (its kind and line:
+    /// Python components get Jinja2's exception type for a syntax error)
+    pub fn compile(&self, source: &str, is_async: bool) -> Result<JinjaTemplate, minijinja::Error> {
         if let Err(e) = self.jenv.template_from_str(source) {
             log::error!("Error creating template from source:\n{}\n{}", source, e);
-            return Err(ServerError::new(format!("{}", e), 500));
+            return Err(e);
         }
-        Ok(JinjaTemplate { source: source.to_string(), env: self.jenv.clone(), is_async })
+        Ok(JinjaTemplate { source: source.to_string(), env: self.jenv.clone(), globals: self.globals.clone(), is_async })
     }
 
     pub fn create_ui_template(&self, source: &str) -> Result<JinjaTemplate, ServerError> {
@@ -74,7 +182,12 @@ impl TemplateFactory {
             log::error!("Error creating template from source:\n{}\n{}", source, e);
             return Err(ServerError::new(format!("{}", e), 500));
         }
-        Ok(JinjaTemplate { source: source.to_string(), env: self.ui_env.clone(), is_async: true })
+        Ok(JinjaTemplate {
+            source: source.to_string(),
+            env: self.ui_env.clone(),
+            globals: Rc::new(std::cell::RefCell::new(Vec::new())),
+            is_async: true,
+        })
     }
 }
 
@@ -188,6 +301,7 @@ pub fn kwargs_to_map(kwargs: &minijinja::value::Kwargs) -> serde_json::Map<Strin
 pub struct JinjaTemplate {
     source: String,
     env: Rc<Environment<'static>>,
+    globals: Globals,
     pub is_async: bool,
 }
 
@@ -203,7 +317,8 @@ impl JinjaTemplate {
     }
 
     fn do_render(&self, context: &Value) -> Result<String, Error> {
-        let tmpl = self.env.template_from_str(&self.source)?;
+        let env = with_globals(&self.env, &self.globals);
+        let tmpl = env.template_from_str(&self.source)?;
         tmpl.render(minijinja::Value::from_serialize(context))
     }
 
@@ -218,7 +333,8 @@ impl JinjaTemplate {
         for (k, v) in extra {
             ctx.insert(k.to_string(), v);
         }
-        let res = self.env.template_from_str(&self.source).and_then(|t| t.render(minijinja::Value::from(ctx)));
+        let env = with_globals(&self.env, &self.globals);
+        let res = env.template_from_str(&self.source).and_then(|t| t.render(minijinja::Value::from(ctx)));
         match res {
             Ok(s) => Ok(s.trim().to_string()),
             Err(e) => {
@@ -250,11 +366,25 @@ impl JinjaTemplate {
         funcs: Vec<(&str, AsyncFn)>,
         objects: Vec<(&str, ObjBuilder)>,
     ) -> Result<String, ServerError> {
-        let env: Environment<'static> = (*self.env).clone();
+        let mut env: Environment<'static> = (*self.env).clone();
+        let mut funcs: Vec<(String, AsyncFn)> = funcs.into_iter().map(|(n, f)| (n.to_string(), f)).collect();
+        for (name, global) in self.globals.borrow().iter() {
+            match global {
+                TemplateGlobal::Data(v) => env.add_global(name.clone(), minijinja::Value::from_serialize(v)),
+                TemplateGlobal::Func(id) => {
+                    let id = *id;
+                    let f: AsyncFn = Rc::new(move |args, kwargs| {
+                        let r = call_global(id, args, kwargs).map_err(|m| ServerError::new(m, 500));
+                        Box::pin(async move { r })
+                    });
+                    funcs.push((name.clone(), f));
+                }
+            }
+        }
         let source = self.source.clone();
         let ctx = context.clone();
-        let names: Vec<String> = funcs.iter().map(|(n, _)| n.to_string()).collect();
-        let fmap: std::collections::HashMap<String, AsyncFn> = funcs.into_iter().map(|(n, f)| (n.to_string(), f)).collect();
+        let names: Vec<String> = funcs.iter().map(|(n, _)| n.clone()).collect();
+        let fmap: std::collections::HashMap<String, AsyncFn> = funcs.into_iter().collect();
         let objects: Vec<(String, ObjBuilder)> = objects.into_iter().map(|(n, o)| (n.to_string(), o)).collect();
         let (call_tx, mut call_rx) = tokio::sync::mpsc::unbounded_channel::<Call>();
         let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
@@ -332,4 +462,31 @@ pub fn get_factory(config: &ConfigHelper) -> Result<Rc<TemplateFactory>, crate::
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<TemplateFactory>, crate::confighelper::ConfigError> {
     TemplateFactory::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn render(env: &Environment, src: &str, ctx: minijinja::Value) -> String {
+        env.render_str(src, ctx).unwrap()
+    }
+
+    #[test]
+    fn python_methods() {
+        // Jinja2 templates call methods of Python objects; Moonraker's own
+        // welcome.html does: item["entry_id"].replace("/", "-")
+        let env = base_env(&serde_json::json!({}), false);
+        let ctx = minijinja::context! { item => minijinja::context! { entry_id => "arksine/moonraker/issue/1" }, d => minijinja::context! { a => 1 } };
+        assert_eq!(render(&env, r#"{{ "announcement-" + item["entry_id"].replace("/", "-") }}"#, ctx.clone()), "announcement-arksine-moonraker-issue-1");
+        assert_eq!(render(&env, r#"{{ "abc".upper() }} {{ "a,b".split(",") }}"#, ctx.clone()), "ABC ['a', 'b']");
+        assert_eq!(render(&env, r#"{% for k, v in d.items() %}{{ k }}={{ v }}{% endfor %}"#, ctx), "a=1");
+        // values print as Jinja2 prints them (Python str(), checked against
+        // jinja2 3.1.6: "['a', 'b']|True|None|{'a': 1}|1.0")
+        let vals = minijinja::context! { x => true, n => (), d => minijinja::context! { a => 1 }, f => 1.0 };
+        assert_eq!(render(&env, r#"{{ "a,b".split(",") }}|{{ x }}|{{ n }}|{{ d }}|{{ f }}"#, vals), "['a', 'b']|True|None|{'a': 1}|1.0");
+        // the config templates' syntax ({ } variables) gets them too
+        let cenv = base_env(&serde_json::json!({}), true);
+        assert_eq!(render(&cenv, r#"{"on".upper()}"#, minijinja::context! {}), "ON");
+    }
 }

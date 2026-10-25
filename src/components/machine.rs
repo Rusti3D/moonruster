@@ -1107,6 +1107,8 @@ impl Machine {
         self.provider.extract_service_info(name, pid, None, false).await
     }
 
+    // Moonraker's Machine.get_system_provider (Python components, docs/PLUGINS.md)
+    #[allow(dead_code)]
     pub fn get_system_provider(&self) -> Rc<Provider> {
         self.provider.clone()
     }
@@ -1234,12 +1236,19 @@ impl Machine {
     }
 
     async fn handle_serial_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
-        let _g = self.periph_lock.lock().await;
-        let devs = tokio::task::spawn_blocking(crate::sysfs_devs::find_serial_devices).await.unwrap_or_default();
-        Ok(json!({"serial_devices": devs}))
+        Ok(json!({"serial_devices": self.detect_serial_devices().await}))
     }
 
     async fn handle_usb_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
+        Ok(json!({"usb_devices": self.detect_usb_devices().await}))
+    }
+
+    pub async fn detect_serial_devices(&self) -> Value {
+        let _g = self.periph_lock.lock().await;
+        json!(tokio::task::spawn_blocking(crate::sysfs_devs::find_serial_devices).await.unwrap_or_default())
+    }
+
+    pub async fn detect_usb_devices(&self) -> Value {
         let _g = self.periph_lock.lock().await;
         let usb_ids = PathBuf::from(server().data_path()).join("misc/usb.ids");
         let devs = tokio::task::spawn_blocking(move || {
@@ -1272,20 +1281,41 @@ impl Machine {
         })
         .await
         .unwrap_or_default();
-        Ok(json!({"usb_devices": devs}))
+        json!(devs)
     }
 
     async fn handle_can_query(self: Rc<Self>, req: WebRequest) -> ApiResult {
         let iface = req.get_str_or("interface", "can0");
+        Ok(json!({"can_uuids": self.query_can_uuids(&iface).await?}))
+    }
+
+    pub async fn query_can_uuids(&self, iface: &str) -> Result<Value, ServerError> {
         let _g = self.periph_lock.lock().await;
-        let uuids = crate::sysfs_devs::query_can_uuids(&iface).await?;
-        Ok(json!({"can_uuids": uuids}))
+        Ok(json!(crate::sysfs_devs::query_can_uuids(iface).await?))
     }
 
     async fn handle_video_request(self: Rc<Self>, _req: WebRequest) -> ApiResult {
+        Ok(self.detect_video_devices().await)
+    }
+
+    pub async fn detect_video_devices(&self) -> Value {
         let _g = self.periph_lock.lock().await;
         let devs = tokio::task::spawn_blocking(crate::sysfs_devs::find_video_devices).await.unwrap_or_default();
-        Ok(json!({"v4l2_devices": devs, "libcamera_devices": []}))
+        json!({"v4l2_devices": devs, "libcamera_devices": []})
+    }
+
+    /// Machine.wait_for_init: component_init finished, or the timeout passed
+    pub async fn wait_for_init(&self, timeout: Option<f64>) {
+        let n = self.init_notify.notified();
+        if self.init_done.get() {
+            return;
+        }
+        match timeout {
+            Some(t) => {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs_f64(t.max(0.0)), n).await;
+            }
+            None => n.await,
+        }
     }
 
     pub fn get_system_info(&self) -> Map<String, Value> {
@@ -1634,20 +1664,6 @@ impl Machine {
         }
         let _ = std::fs::write(&usb_ids_path, &resp.content);
     }
-}
-
-/// The pid file of an init script whose `status)` is only the usual
-/// `[ -f $PIDFILE ] && kill -0 $(cat $PIDFILE)` check
-fn sysv_status_pidfile(script: &str) -> Option<PathBuf> {
-    let pidfile = script.lines().find_map(|l| l.trim().strip_prefix("PIDFILE="))?.trim_matches('"').to_string();
-    if !pidfile.starts_with('/') || pidfile.contains('$') {
-        return None;
-    }
-    let status = script.split_once("status)")?.1;
-    let status = status.split(";;").next()?;
-    let only_pid_check = status.contains("kill -0")
-        && status.lines().filter(|l| l.contains("kill -0")).all(|l| l.contains("PIDFILE") || l.contains(&pidfile));
-    only_pid_check.then(|| PathBuf::from(pidfile))
 }
 
 /// The interfaces `ip -json -det address` reports: up, ethernet type, with
@@ -2426,20 +2442,4 @@ fn check_path_bare(path: &Path) -> bool {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<Machine>, crate::confighelper::ConfigError> {
     Machine::new(config)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sysv_status_pidfile_detection() {
-        let klipper = "PIDFILE=\"/var/run/klipper.pid\"\ncase \"$1\" in\n    status)\n        if [ -f $PIDFILE ] && kill -0 $(cat $PIDFILE) 2>/dev/null; then\n            echo running\n        else\n            exit 1\n        fi\n        ;;\nesac\n";
-        assert_eq!(sysv_status_pidfile(klipper), Some(PathBuf::from("/var/run/klipper.pid")));
-        let gui = "PIDFILE=/var/run/gui.pid\n    status)\n        if [ -f \"/var/run/gui.pid\" ] && kill -0 \"$(cat \"/var/run/gui.pid\")\" 2>/dev/null; then\n        fi\n        ;;\n";
-        assert_eq!(sysv_status_pidfile(gui), Some(PathBuf::from("/var/run/gui.pid")));
-        let gpio = "PIDFILE=/var/run/x.pid\n    status)\n        gpio_value=$(cat /sys/class/gpio/gpio1/value)\n        ;;\n";
-        assert_eq!(sysv_status_pidfile(gpio), None);
-        assert_eq!(sysv_status_pidfile("PIDFILE=$RUN/x.pid\nstatus)\nkill -0 $(cat $PIDFILE)\n;;"), None);
-    }
 }

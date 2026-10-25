@@ -25,7 +25,7 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
-fn check_processed(gc_path: &Path) -> Option<String> {
+pub fn check_processed(gc_path: &Path) -> Option<String> {
     use std::io::{Read, Seek, SeekFrom};
     let size = std::fs::metadata(gc_path).ok()?.len();
     let start = size.saturating_sub(64 * 1024);
@@ -106,6 +106,7 @@ impl GcodeAnalysis {
                             "path": tool_folder.display().to_string(),
                         }),
                     )
+                    .map_err(ServerError::from)
                 })();
                 match res {
                     Err(e) => log::error!("Klipper Estimator update registration failed\n{}", e.message),
@@ -308,7 +309,7 @@ impl GcodeAnalysis {
         format!("http://{}:{}{}", address, hi["port"], srv.app().route_prefix())
     }
 
-    fn gen_estimator_cmd(&self, gc_path: &Path, est_cfg: &Path, post_process: bool) -> Result<String, ServerError> {
+    pub fn gen_estimator_cmd(&self, gc_path: &Path, est_cfg: &Path, post_process: bool) -> Result<String, ServerError> {
         let exe = match (&self.estimator_path, self.estimator_ready.get()) {
             (Some(p), true) => p,
             _ => return Err(ServerError::bad("Klipper Estimator not available")),
@@ -357,14 +358,35 @@ impl GcodeAnalysis {
         serde_json::from_str(&ret).map_err(|e| ServerError::exc(e.to_string()))
     }
 
-    async fn estimate_file(&self, gc_path: &Path, est_config: &Path) -> ApiResult {
-        let _g = self.cmd_lock.lock().await;
+    /// estimate_file / post_process_file's checks: the estimator config to
+    /// use (the [analysis] one when none is given)
+    pub fn check_estimate_args(&self, gc_path: &Path, est_config: Option<&Path>) -> Result<PathBuf, ServerError> {
+        let est_config = est_config.unwrap_or(&self.estimator_config);
         if !est_config.is_file() {
             return Err(ServerError::bad(format!("Estimator config file '{}' does not exist", est_config.display())));
         }
         if !gc_path.is_file() {
             return Err(ServerError::bad(format!("GCode File '{}' does not exist", gc_path.display())));
         }
+        Ok(est_config.to_path_buf())
+    }
+
+    /// The lock estimator commands run under
+    pub fn cmd_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.cmd_lock
+    }
+
+    pub fn estimator_timeout(&self) -> i64 {
+        self.estimator_timeout
+    }
+
+    pub fn estimator_version(&self) -> String {
+        self.version()
+    }
+
+    async fn estimate_file(&self, gc_path: &Path, est_config: &Path) -> ApiResult {
+        let _g = self.cmd_lock.lock().await;
+        self.check_estimate_args(gc_path, Some(est_config))?;
         let cmd = self.gen_estimator_cmd(gc_path, est_config, false)?;
         let ret = Self::shell().exec_cmd(&cmd, ExecOpts { timeout: self.estimator_timeout as f64, ..Default::default() }).await?;
         let data: Value = serde_json::from_str(&ret).map_err(|e| ServerError::exc(e.to_string()))?;
@@ -373,12 +395,7 @@ impl GcodeAnalysis {
 
     async fn post_process_file(&self, gc_path: &Path, est_config: &Path, force: bool) -> ApiResult {
         let _g = self.cmd_lock.lock().await;
-        if !est_config.is_file() {
-            return Err(ServerError::bad(format!("Estimator config file '{}' does not exist", est_config.display())));
-        }
-        if !gc_path.is_file() {
-            return Err(ServerError::bad(format!("GCode File '{}' does not exist", gc_path.display())));
-        }
+        self.check_estimate_args(gc_path, Some(est_config))?;
         let mut proc_ver = check_processed(gc_path);
         let processed = proc_ver.is_some();
         let mut bypassed = processed;
@@ -502,7 +519,7 @@ impl Component for GcodeAnalysis {
                         log::info!("Refreshing Klipper Estimator Updater Instance...");
                         spawn(async {
                             if let Some(um) = server().lookup_component::<crate::components::update_manager::UpdateManager>("update_manager") {
-                                um.refresh_updater("klipper_estimator", true).await;
+                                let _ = um.refresh_updater("klipper_estimator", true).await;
                             }
                         });
                     }

@@ -406,7 +406,12 @@ impl Wled {
             "set_wled_state",
             crate::components::klippy_connection::remote_method(move |args| {
                 if let Some(w) = ww.upgrade() {
-                    spawn(async move { w.set_wled_state(args).await });
+                    spawn(async move {
+                        if let Err(e) = w.set_wled_state(args).await {
+                            log::error!("Error running remote method: set_wled_state
+{}", e.message);
+                        }
+                    });
                 }
             }),
         );
@@ -415,7 +420,12 @@ impl Wled {
             "set_wled",
             crate::components::klippy_connection::remote_method(move |args| {
                 if let Some(w) = ww.upgrade() {
-                    spawn(async move { w.set_wled(args).await });
+                    spawn(async move {
+                        if let Err(e) = w.set_wled(args).await {
+                            log::error!("Error running remote method: set_wled
+{}", e.message);
+                        }
+                    });
                 }
             }),
         );
@@ -455,10 +465,23 @@ impl Wled {
         Ok(w)
     }
 
-    async fn set_wled_state(&self, args: Map<String, Value>) {
+    /// WLED.wled_on(strip, preset)
+    pub async fn wled_on(&self, strip: &str, preset: i64) -> Result<(), ServerError> {
+        match self.strips.get(strip).cloned() {
+            None => {
+                log::info!("Unknown WLED strip: {}", strip);
+                Ok(())
+            }
+            Some(s) => s.wled_on(preset).await,
+        }
+    }
+
+    /// WLED.set_wled_state(strip, state, preset, brightness, intensity,
+    /// speed), the arguments by name
+    pub async fn set_wled_state(&self, args: Map<String, Value>) -> Result<(), ServerError> {
         let strip = match args.get("strip") {
             Some(s) => crate::pyfmt::py_str(s),
-            None => return,
+            None => return Ok(()),
         };
         let geti = |k: &str| args.get(k).and_then(|v| v.as_i64()).unwrap_or(-1);
         let (preset, brightness, intensity, speed) = (geti("preset"), geti("brightness"), geti("intensity"), geti("speed"));
@@ -476,42 +499,50 @@ impl Wled {
         };
         if status.is_none() && preset == -1 && brightness == -1 && intensity == -1 && speed == -1 {
             log::info!("Invalid state received but no control or preset data passed");
-            return;
+            return Ok(());
         }
         let s = match self.strips.get(&strip) {
             None => {
                 log::info!("Unknown WLED strip: {}", strip);
-                return;
+                return Ok(());
             }
             Some(s) => s.clone(),
         };
         if status.as_deref() == Some("off") {
-            let _ = s.wled_off().await;
+            s.wled_off().await?;
         }
         if status.as_deref() == Some("on") || preset != -1 {
-            let _ = s.wled_on(preset).await;
+            s.wled_on(preset).await?;
         }
         if brightness != -1 || intensity != -1 || speed != -1 {
-            let _ = s.wled_control(brightness, intensity, speed).await;
+            s.wled_control(brightness, intensity, speed).await?;
         }
+        Ok(())
     }
 
-    async fn set_wled(&self, args: Map<String, Value>) {
+    /// WLED.set_wled(strip, red, green, blue, white, index, transmit), the
+    /// arguments by name
+    pub async fn set_wled(&self, args: Map<String, Value>) -> Result<(), ServerError> {
         let strip = match args.get("strip") {
             Some(s) => crate::pyfmt::py_str(s),
-            None => return,
+            None => return Ok(()),
         };
         let s = match self.strips.get(&strip) {
             None => {
                 log::info!("Unknown WLED strip: {}", strip);
-                return;
+                return Ok(());
             }
             Some(s) => s.clone(),
         };
         let f = |k: &str| args.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
         let index = args.get("index").and_then(|v| v.as_i64()).filter(|i| *i >= 0);
-        let transmit = args.get("transmit").and_then(|v| v.as_i64()).unwrap_or(1) == 1;
-        let _ = s.set_wled(f("red"), f("green"), f("blue"), f("white"), index, transmit).await;
+        // `transmit == 1` (True == 1 in Python)
+        let transmit = match args.get("transmit") {
+            Some(Value::Bool(b)) => *b,
+            Some(v) => v.as_f64() == Some(1.0),
+            None => true,
+        };
+        s.set_wled(f("red"), f("green"), f("blue"), f("white"), index, transmit).await
     }
 
     async fn handle_single(&self, req: WebRequest) -> ApiResult {
@@ -593,7 +624,12 @@ impl Component for Wled {
         loop {
             failed = Vec::new();
             for s in &query {
-                let _ = s.initialize().await;
+                // an error ends the init (Moonraker's try around the loop
+                // logs it)
+                if let Err(e) = s.initialize().await {
+                    log::error!("{}", e.message);
+                    return Ok(());
+                }
                 if s.error_state.borrow().is_some() {
                     failed.push(s.clone());
                 }

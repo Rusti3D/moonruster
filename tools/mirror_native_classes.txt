@@ -1,0 +1,8 @@
+# Classes on a third-party base whose instances are Moonruster's own objects: mirrored (methods
+# call into Moonruster), the third-party base dropped. One qualified name per line.
+# Moonraker's transports for websocket and JSON-RPC-over-HTTP requests (WebRequest.transport)
+moonraker.components.websockets.WebSocket
+moonraker.components.application.RPCHandler
+# The database's provider (MoonrakerDatabase.db_provider): Moonruster's database itself, not a Thread;
+# NamespaceWrapper._check_sync_method asks it is_alive()
+moonraker.components.database.SqliteProvider: is_alive

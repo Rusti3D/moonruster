@@ -22,7 +22,7 @@ All 37 upstream components are ported and registered (`src/components/mod.rs`). 
 - mocks: tools/mock_spoolman.py (:7912), tools/mock_devices.py (:7913 tasmota/shelly/http/wled),
   tools/mock_sp.py (:7914 simplyprint), tools/pdue_test.py (pty PanelDue), tools/setup_um_test.sh (git repos)
 - mosquitto installed in WSL for mqtt/sensor/power-mqtt tests
-- Build: `CARGO_TARGET_DIR=~/mr/target ~/.cargo/bin/cargo build --release` in /mnt/d/Projects/Moonruster
+- Build: `CARGO_TARGET_DIR=~/mr/target ~/.cargo/bin/cargo build --release` in the repo (/mnt/d/RustyKlipper/Moonruster)
 
 ## Verified against the reference (side by side)
 difftest 94/112 identical, remaining diffs are instance values (port, paths, file sizes from paths,

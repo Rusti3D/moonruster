@@ -34,6 +34,10 @@ def norm(v, key=None):
     if isinstance(v, dict):
         return {k: norm(x, k) for k, x in v.items()}
     if isinstance(v, list):
+        if key in ("auxiliary_data", "auxiliary_totals"):
+            # in the order components registered the fields: Moonraker loads
+            # optional components in set order (random per run)
+            v = sorted(v, key=lambda f: (str(f.get("provider")), str(f.get("field", f.get("name")))))
         return [norm(x, key) for x in v]
     if isinstance(v, str):
         v = v.replace(REF_DIR, "<D>").replace(RUST_DIR, "<D>")

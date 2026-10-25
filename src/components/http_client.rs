@@ -142,6 +142,31 @@ impl HttpClient {
         })
     }
 
+    /// The cached response's ETag and Last-Modified for a URL (the request
+    /// headers a cached request sends)
+    /// HttpClient.register_cached_url: an empty cached response carrying the
+    /// validators, so the next request of the URL sends them
+    pub fn register_cached_url(&self, url: &str, etag: Option<String>, last_modified: Option<String>) -> Result<(), ServerError> {
+        let mut headers = IndexMap::new();
+        if let Some(e) = etag {
+            headers.insert("Etag".to_string(), e);
+        }
+        if let Some(l) = last_modified {
+            headers.insert("Last-Modified".to_string(), l);
+        }
+        if headers.is_empty() {
+            return Err(ServerError::bad("Either an Etag or Last Modified Date must be specified"));
+        }
+        let resp = HttpResponse { url: url.to_string(), final_url: url.to_string(), status_code: 200, content: Vec::new(), headers, error: None };
+        self.response_cache.borrow_mut().insert(url.to_string(), resp);
+        Ok(())
+    }
+
+    pub fn cache_validators(&self, url: &str) -> Option<(Option<String>, Option<String>)> {
+        let key = url.split('?').next().unwrap_or(url);
+        self.response_cache.borrow().get(key).map(|c| (c.etag(), c.last_modified()))
+    }
+
     pub async fn request(&self, method: &str, url: &str, body: Body, headers: &[(String, String)], opts: RequestOpts) -> HttpResponse {
         let cache_key = url.split('?').next().unwrap_or(url).to_string();
         let method = method.to_uppercase();

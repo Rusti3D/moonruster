@@ -1,0 +1,22 @@
+[package]
+name = "moonruster-pybridge"
+version = "0.1.0"
+edition = "2021"
+description = "Prototype: CPython components on Moonruster's tokio loop (docs/PLUGINS.md Phase 1)"
+license = "GPL-3.0-only"
+
+[dependencies]
+# Moonruster's Cargo.lock has 1.54.0 (yanked, kept by the lock): selected with
+# `cargo update -p tokio --precise 1.54.0`
+tokio = { version = "1.54", features = ["rt", "net", "time", "process", "signal", "macros", "sync", "io-util"] }
+libc = "0.2"
+serde_json = "1"
+
+[[bin]]
+name = "proto"
+path = "src/bin/proto.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1

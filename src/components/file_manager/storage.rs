@@ -120,6 +120,10 @@ impl MetadataStorage {
         let _ = self.mddb.insert(key, value);
     }
 
+    pub fn is_processing(&self) -> bool {
+        !self.pending_requests.borrow().is_empty()
+    }
+
     pub fn is_file_processing(&self, fname: &str) -> bool {
         self.pending_requests.borrow().contains_key(fname)
     }
@@ -389,8 +393,19 @@ impl MetadataStorage {
         }
         let cfg_path = std::env::temp_dir().join(format!("metacfg-{}.json", uuid::Uuid::new_v4().simple()));
         std::fs::write(&cfg_path, config.to_string())?;
-        let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| "moonruster".into());
-        let cmd = format!("{} --metadata -c {}", shell_quote(&exe), shell_quote(&cfg_path.to_string_lossy()));
+        // a component's replacement METADATA_SCRIPT runs as Moonraker runs it:
+        // `sys.executable METADATA_SCRIPT -c <cfg>`
+        #[cfg(feature = "plugins")]
+        let script = crate::plugins::metadata_script_override();
+        #[cfg(not(feature = "plugins"))]
+        let script: Option<String> = None;
+        let cmd = match script {
+            Some(prefix) => format!("{} -c {}", prefix, shell_quote(&cfg_path.to_string_lossy())),
+            None => {
+                let exe = std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| "moonruster".into());
+                format!("{} --metadata -c {}", shell_quote(&exe), shell_quote(&cfg_path.to_string_lossy()))
+            }
+        };
         let result: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
         let r2 = result.clone();
         let shell: Rc<crate::components::shell_command::ShellCommandFactory> =

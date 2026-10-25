@@ -2,7 +2,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component};
+use crate::server::{server, spawn, Component, EventObject};
 use futures::future::LocalBoxFuture;
 use serde_json::{json, Map, Value};
 use std::cell::RefCell;
@@ -21,7 +21,7 @@ pub const REG_METHOD_ENDPOINT: &str = "register_remote_method";
 pub type SubCallback = Rc<dyn Fn(Map<String, Value>, f64) -> Option<LocalBoxFuture<'static, ()>>>;
 
 pub struct KlippyApi {
-    version: Value,
+    pub version: Value,
     host_subscription: RefCell<Map<String, Value>>,
     subscription_callbacks: RefCell<Vec<SubCallback>>,
     me: RefCell<Weak<KlippyApi>>,
@@ -33,6 +33,11 @@ impl Component for KlippyApi {}
 struct HostTransport(Weak<KlippyApi>);
 
 impl ApiTransport for HostTransport {
+    // Moonraker's KlippyAPI is its own transport
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        let api = self.0.upgrade()?;
+        Some((api, "moonraker.components.klippy_apis", "KlippyAPI"))
+    }
     fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {
         if let Some(api) = self.0.upgrade() {
             api.send_status(status, eventtime);
@@ -89,7 +94,7 @@ impl KlippyApi {
         api
     }
 
-    fn host_transport(&self) -> Rc<dyn ApiTransport> {
+    pub fn host_transport(&self) -> Rc<dyn ApiTransport> {
         Rc::new(HostTransport(self.me.borrow().clone()))
     }
 
@@ -118,8 +123,8 @@ impl KlippyApi {
         }
         log::info!("Requesting Job Start, filename = {}", filename);
         let ret = self.run_gcode(&script).await?;
-        let uval = user.map(|u| u.as_dict()).unwrap_or(Value::Null);
-        let _ = server().send_event("klippy_apis:job_start_complete", vec![uval]);
+        let uval = user.as_ref().map(|u| u.as_dict()).unwrap_or(Value::Null);
+        let _ = server().send_event_object("klippy_apis:job_start_complete", vec![uval], EventObject::User(user));
         Ok(ret)
     }
 

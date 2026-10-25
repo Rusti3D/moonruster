@@ -3,7 +3,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component};
+use crate::server::{server, spawn, Component, EventObject};
 use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
 use indexmap::IndexMap;
@@ -183,6 +183,14 @@ impl KlippyConnection {
         Value::Object(self.klippy_info.borrow().clone())
     }
 
+    pub fn peer_credentials(&self) -> Map<String, Value> {
+        self.peer_cred.borrow().clone()
+    }
+
+    pub fn service_info(&self) -> Value {
+        self.service_info.borrow().clone()
+    }
+
     pub fn missing_requirements(&self) -> Vec<String> {
         self.missing_reqs.borrow().clone()
     }
@@ -212,6 +220,18 @@ impl KlippyConnection {
             *self.executable.borrow_mut() = PathBuf::from(p);
         }
         *self.service_info.borrow_mut() = kc_info.get("service_info").cloned().unwrap_or(json!({}));
+    }
+
+    /// Moonraker's wait_connected: the connection attempt in progress, if
+    /// any, finished; whether Klippy is connected
+    pub async fn wait_connected(self: &Rc<Self>) -> bool {
+        let n = self.connection_done.borrow().clone();
+        if let Some(n) = n {
+            if self.connecting.get() {
+                n.notified().await;
+            }
+        }
+        self.is_connected()
     }
 
     pub async fn wait_started(self: &Rc<Self>, timeout: f64) -> bool {
@@ -596,7 +616,8 @@ impl KlippyConnection {
             self.request_initial_subscriptions().await;
             self.request_endpoints().await;
             let startup_state = self.state.get();
-            srv.send_event("server:klippy_started", vec![json!(startup_state.as_str())]).await;
+            let state = EventObject::KlippyState(startup_state.as_str().to_string(), self.state_message_for(startup_state));
+            srv.send_event_object("server:klippy_started", vec![json!(startup_state.as_str())], state).await;
             self.klippy_started.set(true);
             if self.state.get() != KlippyState::READY {
                 log::info!("\n{}", self.state_message());

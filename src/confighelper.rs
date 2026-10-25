@@ -55,6 +55,21 @@ impl From<CpError> for FetchErr {
     }
 }
 
+/// The value type of a get_py() option
+#[derive(Clone, Copy)]
+pub enum OptKind {
+    Str,
+    Int,
+    Float,
+    Bool,
+}
+
+/// What raw_get did not find (configparser's NoSectionError / NoOptionError)
+pub enum RawMissing {
+    Section,
+    Option,
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct Bounds {
     pub above: Option<f64>,
@@ -243,6 +258,39 @@ impl ConfigHelper {
         Ok(val)
     }
 
+    /// configparser's get(section, option) on the parsed config, without
+    /// recording (ConfigHelper.config for Python components)
+    pub fn raw_get(&self, section: &str, option: &str) -> Result<String, RawMissing> {
+        let cfg = self.source.config.borrow();
+        if !cfg.contains(section) {
+            return Err(RawMissing::Section);
+        }
+        cfg.get(section, option).map_err(|_| RawMissing::Option)
+    }
+
+    /// Moonraker's _get_option with the caller's parse function (Python
+    /// components: getlists, getdict, gettemplate ... run as Moonraker's
+    /// own code over this). `fetch(section, option)` gives Err(Ok(message))
+    /// for a missing option or section, Err(Err(message)) for a parse error
+    #[allow(clippy::type_complexity)]
+    pub fn get_option_with<T>(
+        &self,
+        fetch: &dyn Fn(&str, &str) -> Result<T, Result<String, String>>,
+        option: &str,
+        default: Option<T>,
+        numeric: Option<(&dyn Fn(&T) -> Option<(f64, bool)>, Bounds)>,
+        deprecate: bool,
+        to_json: &dyn Fn(&T) -> Value,
+    ) -> CResult<T> {
+        let f = |_: &ConfigParser, s: &str, o: &str| -> Result<T, FetchErr> {
+            fetch(s, o).map_err(|e| match e {
+                Ok(m) => FetchErr::Missing(m),
+                Err(m) => FetchErr::Other(m),
+            })
+        };
+        self.get_option(&f, option, default, numeric, deprecate, to_json)
+    }
+
     fn mark_error(&self) {
         self.parsed
             .borrow_mut()
@@ -289,6 +337,30 @@ impl ConfigHelper {
             }
         }
         Ok(())
+    }
+
+    /// Moonraker's get / getint / getfloat / getboolean for Python components
+    /// (plugins): the same parsing, errors, bounds, deprecation warning and
+    /// recording as the getters below; `default` None is Sentinel.MISSING,
+    /// else Python's default value, recorded as the parsed value
+    pub fn get_py(&self, kind: OptKind, option: &str, default: Option<Value>, bounds: Bounds, deprecate: bool) -> CResult<Value> {
+        let ex = |v: &Value| -> Option<(f64, bool)> {
+            match (kind, v) {
+                (OptKind::Int, Value::Number(n)) => n.as_f64().map(|f| (f, true)),
+                (OptKind::Float, Value::Number(n)) => n.as_f64().map(|f| (f, false)),
+                _ => None,
+            }
+        };
+        let numeric = matches!(kind, OptKind::Int | OptKind::Float).then_some((&ex as &dyn Fn(&Value) -> Option<(f64, bool)>, bounds));
+        let fetch = move |c: &ConfigParser, s: &str, o: &str| -> Result<Value, FetchErr> {
+            Ok(match kind {
+                OptKind::Str => Value::String(c.get(s, o)?),
+                OptKind::Int => Value::from(Self::parse_int(c, s, o)?),
+                OptKind::Float => utils::float_value(Self::parse_float(c, s, o)?),
+                OptKind::Bool => Value::Bool(Self::parse_bool(c, s, o)?),
+            })
+        };
+        self.get_option(&fetch, option, default, numeric, deprecate, &|v| v.clone())
     }
 
     // ***** String options *****
@@ -727,6 +799,19 @@ impl ConfigHelper {
         let first = cp.sections().first().cloned().unwrap_or_default();
         let source = Rc::new(ConfigSource::new_dict(cp));
         Ok(ConfigHelper::new(source, &first, Rc::new(RefCell::new(IndexMap::new())), None))
+    }
+
+    /// read_supplemental_config(file_name): the file's first section (None:
+    /// the file has none, sections[0] raises there)
+    pub fn read_supplemental_config(&self, file_name: &str) -> CResult<Option<ConfigHelper>> {
+        let fpath = utils::resolve_path(&utils::expand_user(file_name));
+        let source = Rc::new(ConfigSource::new_file());
+        source.read_file(&fpath)?;
+        let first = match source.config.borrow().sections().first() {
+            Some(s) => s.clone(),
+            None => return Ok(None),
+        };
+        Ok(Some(ConfigHelper::new(source, &first, Rc::new(RefCell::new(IndexMap::new())), None)))
     }
 
     pub fn write_config(&self) -> String {
@@ -1200,6 +1285,12 @@ impl ConfigSource {
         } else {
             None
         }
+    }
+
+    /// find_config_file(section): the file the section is (first) in
+    pub fn find_config_file(&self, section: &str) -> Option<PathBuf> {
+        let idx = *self.file_section_map.borrow().get(section)?.first()?;
+        self.files.borrow().get(idx).cloned()
     }
 
     pub fn get_file_sections(&self) -> IndexMap<String, Vec<String>> {

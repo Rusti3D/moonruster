@@ -97,8 +97,25 @@ struct PinParams {
     output_high: bool,
 }
 
+/// A GPIO's names (GpioBase): the pin as configured, its full name, and
+/// whether it is inverted
+pub struct PinInfo {
+    pub orig: String,
+    pub name: String,
+    pub inverted: bool,
+}
+
+/// closes a line fd once
+fn close_fd(fd: &Cell<RawFd>) {
+    let f = fd.replace(-1);
+    if f >= 0 {
+        unsafe { libc::close(f) };
+    }
+}
+
 pub struct GpioOutputPin {
-    fd: RawFd,
+    pub info: PinInfo,
+    fd: Cell<RawFd>,
     value: Cell<i32>,
 }
 
@@ -107,14 +124,17 @@ impl GpioOutputPin {
         let v = (value != 0) as i32;
         let mut data = GpioHandleData { values: [0; 64] };
         data.values[0] = v as u8;
-        if unsafe { libc::ioctl(self.fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL as _, &mut data) } < 0 {
+        if unsafe { libc::ioctl(self.fd.get(), GPIOHANDLE_SET_LINE_VALUES_IOCTL as _, &mut data) } < 0 {
             return Err(io_err("Setting line value"));
         }
         self.value.set(v);
         Ok(())
     }
-    fn close(&self) {
-        unsafe { libc::close(self.fd) };
+    pub fn get_value(&self) -> i32 {
+        self.value.get()
+    }
+    pub fn close(&self) {
+        close_fd(&self.fd);
     }
 }
 
@@ -122,7 +142,9 @@ pub type GpioEventCallback = Rc<dyn Fn(f64, f64, i32)>;
 
 pub struct GpioEvent {
     pub name: String,
+    pub info: PinInfo,
     fd: RawFd,
+    closed: Cell<bool>,
     value: Cell<i32>,
     callback: GpioEventCallback,
     on_error: RefCell<Option<Rc<dyn Fn(String)>>>,
@@ -142,6 +164,10 @@ impl GpioEvent {
 
     pub fn get_value(&self) -> i32 {
         self.value.get()
+    }
+
+    pub fn fileno(&self) -> RawFd {
+        self.fd
     }
 
     fn read_value(&self) -> i32 {
@@ -251,9 +277,11 @@ impl GpioEvent {
         }
     }
 
-    fn close(&self) {
+    pub fn close(&self) {
         self.stop();
-        unsafe { libc::close(self.fd) };
+        if !self.closed.replace(true) {
+            unsafe { libc::close(self.fd) };
+        }
     }
 }
 
@@ -358,7 +386,8 @@ impl GpioFactory {
             return Err(err);
         }
         let pin = Rc::new(GpioOutputPin {
-            fd: req.fd,
+            info: PinInfo { orig: pin_name.to_string(), name: p.full_name.clone(), inverted: p.inverted },
+            fd: Cell::new(req.fd),
             value: Cell::new(p.initial_value),
         });
         self.reserved.borrow_mut().insert(p.full_name, Reserved::Out(pin.clone()));
@@ -388,7 +417,9 @@ impl GpioFactory {
         }
         let evt = Rc::new(GpioEvent {
             name: p.full_name.clone(),
+            info: PinInfo { orig: pin_name.to_string(), name: p.full_name.clone(), inverted: p.inverted },
             fd: req.fd,
+            closed: Cell::new(false),
             value: Cell::new(0),
             callback,
             on_error: RefCell::new(None),

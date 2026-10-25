@@ -3,7 +3,7 @@
 use crate::common::*;
 use crate::components::application::{error_response, full_body, Body, HttpError, HttpRequest, HttpResponse};
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component};
+use crate::server::{server, spawn, Component, EventObject};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
@@ -101,6 +101,14 @@ impl RemoteConnection {
             close_code: RefCell::new(None),
             close_reason: RefCell::new(None),
         })
+    }
+
+    pub fn connected_time(&self) -> f64 {
+        self.connected_time.get()
+    }
+
+    pub fn ip(&self) -> Option<IpAddr> {
+        self.ip
     }
 
     pub fn uid(&self) -> u64 {
@@ -292,6 +300,14 @@ impl ApiTransport for RemoteConnection {
     fn transport_type(&self) -> TransportType {
         TransportType::WEBSOCKET
     }
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        match self.kind {
+            ConnKind::WebSocket => Some((self, "moonraker.components.websockets", "WebSocket")),
+            ConnKind::UnixSocket => Some((self, "moonraker.components.extensions", "UnixSocketClient")),
+            // Moonraker's BridgeSocket is not an APITransport
+            ConnKind::Bridge => None,
+        }
+    }
     fn user_info(&self) -> Option<UserInfo> {
         self.get_user_info()
     }
@@ -392,6 +408,27 @@ impl WebsocketManager {
         self.clients.borrow().get(&uid).cloned()
     }
 
+    pub fn has_socket(&self, ws_id: u64) -> bool {
+        self.clients.borrow().contains_key(&ws_id)
+    }
+
+    pub fn get_clients_by_name(&self, name: &str) -> Vec<Rc<RemoteConnection>> {
+        if name.is_empty() {
+            return Vec::new();
+        }
+        let name = name.to_lowercase();
+        self.clients
+            .borrow()
+            .values()
+            .filter(|sc| sc.client_data.borrow().get("name").map(|n| n.to_lowercase() == name).unwrap_or(false))
+            .cloned()
+            .collect()
+    }
+
+    pub fn get_unidentified_clients(&self) -> Vec<Rc<RemoteConnection>> {
+        self.clients.borrow().values().filter(|sc| sc.client_data.borrow().is_empty()).cloned().collect()
+    }
+
     pub fn get_client_ws(&self, ws_id: u64) -> Option<Rc<RemoteConnection>> {
         self.clients.borrow().get(&ws_id).filter(|c| c.kind == ConnKind::WebSocket).cloned()
     }
@@ -412,14 +449,14 @@ impl WebsocketManager {
     pub fn add_client(&self, sc: Rc<RemoteConnection>) {
         let uid = sc.uid();
         self.clients.borrow_mut().insert(uid, sc.clone());
-        let _ = server().send_event("websockets:client_added", vec![json!(uid)]);
+        let _ = server().send_event_object("websockets:client_added", vec![json!(uid)], EventObject::Transport(sc));
         log::debug!("New Websocket Added: {}", uid);
     }
 
     pub fn remove_client(&self, sc: &RemoteConnection) {
         let old = self.clients.borrow_mut().shift_remove(&sc.uid());
-        if old.is_some() {
-            let _ = server().send_event("websockets:client_removed", vec![json!(sc.uid())]);
+        if let Some(old) = old {
+            let _ = server().send_event_object("websockets:client_removed", vec![json!(sc.uid())], EventObject::Transport(old));
             log::debug!("Websocket Removed: {}", sc.uid());
         }
         self.check_closed_event();
@@ -520,8 +557,9 @@ async fn handle_identify(req: WebRequest) -> ApiResult {
         version,
         client_type
     );
-    let _ = server().send_event("websockets:client_identified", vec![json!(sc.uid())]);
-    Ok(json!({"connection_id": sc.uid()}))
+    let uid = sc.uid();
+    let _ = server().send_event_object("websockets:client_identified", vec![json!(uid)], EventObject::Transport(sc));
+    Ok(json!({"connection_id": uid}))
 }
 
 // ***** Websocket HTTP handling *****

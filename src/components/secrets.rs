@@ -91,6 +91,10 @@ impl Secrets {
         Ok(s)
     }
 
+    pub fn get_type(&self) -> String {
+        self.kind.borrow().clone()
+    }
+
     pub fn get_secrets_file(&self) -> PathBuf {
         self.secrets_file.clone()
     }

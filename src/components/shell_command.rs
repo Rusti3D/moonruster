@@ -457,6 +457,9 @@ impl Component for ShellCommandFactory {
         for c in cmds {
             c.cancel(1).await;
         }
+        // the commands Python components run (plugins/impls/shell_command.rs)
+        #[cfg(feature = "plugins")]
+        crate::plugins::impls_cancel_shell_commands().await;
     }
 }
 

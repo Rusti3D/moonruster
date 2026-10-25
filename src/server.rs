@@ -35,6 +35,33 @@ pub const CORE_COMPONENTS: [&str; 16] = [
 
 pub type EventCallback = Rc<dyn Fn(Vec<Value>) -> Option<LocalBoxFuture<'static, ()>>>;
 
+/// An event's first argument when Moonraker passes an object, not a value.
+/// Rust handlers get the value (`EventArgs::values`); Python handlers get
+/// Moonraker's object
+#[derive(Clone)]
+#[cfg_attr(not(feature = "plugins"), allow(dead_code))]
+pub enum EventObject {
+    /// the client connection (websockets:client_*)
+    Transport(Rc<dyn ApiTransport>),
+    /// KlippyState with its message (server:klippy_started)
+    KlippyState(String, String),
+    /// JobEvent (job_state:state_changed)
+    JobEvent(String),
+    /// UserInfo or None (klippy_apis:job_start_complete)
+    User(Option<UserInfo>),
+}
+
+#[derive(Clone)]
+pub struct EventArgs {
+    pub values: Vec<Value>,
+    pub object: Option<EventObject>,
+    /// the arguments as a Python component sent them (Server.send_event)
+    #[cfg(feature = "plugins")]
+    pub py: Option<crate::plugins::py::PyRef>,
+}
+
+pub type EventHandler = Rc<dyn Fn(&EventArgs) -> Option<LocalBoxFuture<'static, ()>>>;
+
 /// Lifecycle hooks implemented by components
 #[async_trait(?Send)]
 pub trait Component: Any {
@@ -47,6 +74,11 @@ pub trait Component: Any {
     }
     async fn on_exit(self: Rc<Self>) {}
     async fn close(self: Rc<Self>) {}
+    /// The Python traceback of a failed component_init (Python components:
+    /// Moonraker logs its warning with exc_info)
+    fn take_traceback(&self) -> Option<String> {
+        None
+    }
 }
 
 thread_local! {
@@ -72,7 +104,7 @@ pub struct Server {
     pub host: RefCell<String>,
     pub port: Cell<i64>,
     pub ssl_port: Cell<i64>,
-    events: RefCell<HashMap<String, Vec<EventCallback>>>,
+    events: RefCell<HashMap<String, Vec<EventHandler>>>,
     components: RefCell<IndexMap<String, Rc<dyn Any>>>,
     lifecycle: RefCell<IndexMap<String, Rc<dyn LifecycleDyn>>>,
     failed_components: RefCell<Vec<String>>,
@@ -93,6 +125,7 @@ pub trait LifecycleDyn {
     fn init(self: Rc<Self>) -> LocalBoxFuture<'static, Result<(), ServerError>>;
     fn exit(self: Rc<Self>) -> LocalBoxFuture<'static, ()>;
     fn close_comp(self: Rc<Self>) -> LocalBoxFuture<'static, ()>;
+    fn take_traceback(&self) -> Option<String>;
 }
 
 impl<T: Component + 'static> LifecycleDyn for T {
@@ -107,6 +140,9 @@ impl<T: Component + 'static> LifecycleDyn for T {
     }
     fn close_comp(self: Rc<Self>) -> LocalBoxFuture<'static, ()> {
         self.close()
+    }
+    fn take_traceback(&self) -> Option<String> {
+        Component::take_traceback(self)
     }
 }
 
@@ -348,8 +384,19 @@ impl Server {
 
     async fn initialize_component(self: &Rc<Self>, name: String, comp: Rc<dyn LifecycleDyn>) {
         log::info!("Performing Component Post Init: [{}]", name);
+        let c2 = comp.clone();
         if let Err(e) = comp.init().await {
-            self.add_warning(&format!("Component '{}' failed to load with error: {}", name, e), None, true);
+            let msg = format!("Component '{}' failed to load with error: {}", name, e);
+            match c2.take_traceback() {
+                // logging.warning(warning, exc_info=e): one entry with the traceback
+                Some(tb) => {
+                    self.add_warning(&msg, None, false);
+                    log::warn!("{}\n{}", msg, tb);
+                }
+                None => {
+                    self.add_warning(&msg, None, true);
+                }
+            }
             self.set_failed_component(&name);
         }
     }
@@ -389,11 +436,19 @@ impl Server {
         if self.failed_components.borrow().iter().any(|c| c == name) {
             return Err(ConfigError(format!("Component {} previously failed to load", name)));
         }
+        // a Python component in the Moonraker tree's moonraker/components
+        // (docs/PLUGINS.md)
+        #[cfg(feature = "plugins")]
+        if !crate::components::COMPONENT_NAMES.contains(&name) && crate::plugins::component_exists(name) {
+            // Moonraker's own Server.load_component (verbatim) imports and
+            // loads it, logs, and records it here through Server.components /
+            // failed_components
+            return crate::plugins::component::load(name, config);
+        }
         // python imports the module before calling getsection(), an unknown
         // component never adds its section to the parsed config
         if !crate::components::COMPONENT_NAMES.contains(&name) {
-            log::error!("Unable to load component: ({})
-ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
+            log::error!("Unable to load component: ({})\nModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
             self.set_failed_component(name);
             return Err(ConfigError(format!("No module named 'moonraker.components.{}'", name)));
         }
@@ -423,6 +478,21 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
         }
     }
 
+    /// A built-in component created and registered for Moonraker's own
+    /// Server.load_component running in Python (the built-in module's
+    /// load_component(config)): that code logs and records failures
+    #[cfg(feature = "plugins")]
+    pub fn construct_component(self: &Rc<Self>, config: &ConfigHelper, name: &str) -> Result<Rc<dyn Any>, ConfigError> {
+        match crate::components::load_component(self, config, name)? {
+            Some((any, lc)) => {
+                self.components.borrow_mut().insert(name.to_string(), any.clone());
+                self.lifecycle.borrow_mut().insert(name.to_string(), lc);
+                Ok(any)
+            }
+            None => Err(ConfigError(format!("No module named 'moonraker.components.{}'", name))),
+        }
+    }
+
     pub fn load_component_optional(self: &Rc<Self>, config: &ConfigHelper, name: &str) -> bool {
         self.load_component(config, name).is_ok()
     }
@@ -430,6 +500,24 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
     pub fn lookup_component<T: 'static>(&self, name: &str) -> Option<Rc<T>> {
         let any = self.components.borrow().get(name).cloned()?;
         any.downcast::<T>().ok()
+    }
+
+    /// A component of any type (Python components: plugins)
+    pub fn component_any(&self, name: &str) -> Option<Rc<dyn Any>> {
+        self.components.borrow().get(name).cloned()
+    }
+
+    /// register_component() of an untyped component (Python components),
+    /// with its lifecycle when it has one
+    pub fn register_component_any(&self, name: &str, comp: Rc<dyn Any>, lc: Option<Rc<dyn LifecycleDyn>>) -> Result<(), ServerError> {
+        if self.components.borrow().contains_key(name) {
+            return Err(ServerError::bad(format!("Component '{}' already registered", name)));
+        }
+        self.components.borrow_mut().insert(name.to_string(), comp);
+        if let Some(lc) = lc {
+            self.lifecycle.borrow_mut().insert(name.to_string(), lc);
+        }
+        Ok(())
     }
 
     pub fn has_component(&self, name: &str) -> bool {
@@ -510,7 +598,12 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
     }
 
     pub fn register_event_handler(&self, event: &str, cb: EventCallback) {
-        self.events.borrow_mut().entry(event.to_string()).or_default().push(cb);
+        self.register_event_handler_args(event, Rc::new(move |a: &EventArgs| cb(a.values.clone())));
+    }
+
+    /// A handler of the event's full arguments (Python components)
+    pub fn register_event_handler_args(&self, event: &str, h: EventHandler) {
+        self.events.borrow_mut().entry(event.to_string()).or_default().push(h);
     }
 
     /// Convenience for synchronous event handlers
@@ -533,24 +626,35 @@ ModuleNotFoundError: No module named 'moonraker.components.{}'", name, name);
     /// Schedules the event and returns a future that resolves when all
     /// handlers complete.  The future may be dropped without awaiting.
     pub fn send_event(&self, event: &str, args: Vec<Value>) -> impl std::future::Future<Output = ()> {
-        let handlers: Vec<EventCallback> = self.events.borrow().get(event).cloned().unwrap_or_default();
+        self.send_event_args(event, EventArgs { values: args, object: None, #[cfg(feature = "plugins")] py: None })
+    }
+
+    /// send_event of an event whose first argument is an object in Moonraker
+    pub fn send_event_object(&self, event: &str, args: Vec<Value>, object: EventObject) -> impl std::future::Future<Output = ()> {
+        self.send_event_args(event, EventArgs { values: args, object: Some(object), #[cfg(feature = "plugins")] py: None })
+    }
+
+    fn send_event_args(&self, event: &str, args: EventArgs) -> impl std::future::Future<Output = ()> {
         // nothing to schedule for an event without handlers
-        let handle = (!handlers.is_empty()).then(|| {
-            spawn(async move {
-                let mut futs = Vec::new();
-                for h in handlers {
-                    if let Some(f) = h(args.clone()) {
-                        futs.push(f);
-                    }
-                }
-                if !futs.is_empty() {
-                    futures::future::join_all(futs).await;
-                }
-            })
+        let handle = self.events.borrow().contains_key(event).then(|| {
+            let event = event.to_string();
+            spawn(async move { server().process_event(&event, &args).await })
         });
         async move {
             if let Some(h) = handle {
                 let _ = h.await;
+            }
+        }
+    }
+
+    /// Server._process_event: call the event's handlers now; the future
+    /// completes when what they returned has
+    pub fn process_event(&self, event: &str, args: &EventArgs) -> impl std::future::Future<Output = ()> {
+        let handlers: Vec<EventHandler> = self.events.borrow().get(event).cloned().unwrap_or_default();
+        let futs: Vec<_> = handlers.iter().filter_map(|h| h(args)).collect();
+        async move {
+            if !futs.is_empty() {
+                futures::future::join_all(futs).await;
             }
         }
     }

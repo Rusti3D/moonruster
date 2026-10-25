@@ -271,7 +271,6 @@ impl HttpError {
     /// Python ServerErrors converted via HTTPError(e.status_code, reason=str(e))
     pub fn from_server_error(e: &ServerError) -> Self {
         if e.is_exc {
-            log::debug!("Uncaught exception: {}", e.message);
             return Self::internal();
         }
         if e.is_http {
@@ -304,6 +303,27 @@ impl From<ServerError> for HttpError {
     fn from(e: ServerError) -> Self {
         HttpError::from_server_error(&e)
     }
+}
+
+/// tornado's RequestHandler.log_exception (tornado 6.5.8 web.py:1972) for an
+/// exception that is not an HTTPError: "Uncaught exception <summary>",
+/// repr(request), the traceback (the Python component's own, else synthetic)
+fn log_uncaught_exception(req: &HttpRequest, e: &ServerError, err: &HttpError) {
+    let r = crate::pyfmt::py_str_repr;
+    let msg = format!(
+        "Uncaught exception {} {} ({})\nHTTPServerRequest(protocol={}, host={}, method={}, uri={}, version={}, remote_ip={})\n{}",
+        req.method,
+        req.uri,
+        req.remote_ip,
+        r(&req.protocol),
+        r(&req.host),
+        r(&req.method),
+        r(&req.uri),
+        r("HTTP/1.1"),
+        r(&req.remote_ip),
+        e.traceback.clone().unwrap_or_else(|| synthetic_traceback(err).trim_end().to_string())
+    );
+    crate::loghelper::emit(log::Level::Error, "web.py", "log_exception", 1972, &msg);
 }
 
 fn synthetic_traceback(err: &HttpError) -> String {
@@ -383,6 +403,9 @@ pub struct InternalTransport;
 impl ApiTransport for InternalTransport {
     fn transport_id(&self) -> u64 {
         1
+    }
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        Some((self, "moonraker.components.application", "InternalTransport"))
     }
 }
 
@@ -764,6 +787,20 @@ impl MoonrakerApp {
         Ok(())
     }
 
+    /// MoonrakerApp.remove_endpoint: the definition, its HTTP route and its
+    /// JSON-RPC methods go
+    pub fn remove_endpoint(&self, endpoint: &str) {
+        let api_def = self.api_cache.borrow_mut().remove(endpoint);
+        if let Some(api_def) = api_def {
+            log::debug!("Removing Endpoint: {}", endpoint);
+            self.registered_base_handlers.borrow_mut().retain(|p| *p != api_def.http_path);
+            self.remove_handler(&format!("{}{}", self.route_prefix, api_def.http_path));
+            for method in &api_def.rpc_methods {
+                self.json_rpc.remove_method(method);
+            }
+        }
+    }
+
     pub fn register_debug_endpoint(
         &self,
         endpoint: &str,
@@ -1135,7 +1172,11 @@ impl MoonrakerApp {
                 if self.verbose {
                     log::error!("API Request Failure: {}", e);
                 }
-                return (error_response(&HttpError::from_server_error(&e), cors_req), user);
+                let err = HttpError::from_server_error(&e);
+                if e.is_exc {
+                    log_uncaught_exception(req, &e, &err);
+                }
+                return (error_response(&err, cors_req), user);
             }
         };
         let result = if wrap_result { json!({"result": result}) } else { result };
@@ -1609,19 +1650,10 @@ fn parse_request_range(range_header: &str) -> Option<(Option<i64>, Option<i64>)>
     Some((start, end))
 }
 
+/// tornado StaticFileHandler.get_content_type: Python's mimetypes, with
+/// Moonraker's own additions (pymimetypes.rs)
 pub fn guess_content_type(path: &str) -> String {
-    let lower = path.to_lowercase();
-    let ext = utils::splitext_ext(&lower);
-    match ext.as_str() {
-        ".gz" | ".tgz" => return "application/gzip".into(),
-        ".bz2" | ".xz" | ".br" | ".z" => return "application/octet-stream".into(),
-        ".log" | ".gcode" | ".cfg" | ".txt" | ".conf" => return "text/plain".into(),
-        _ => {}
-    }
-    match mime_guess::from_path(path).first() {
-        Some(m) => m.essence_str().to_string(),
-        None => "application/octet-stream".into(),
-    }
+    crate::pymimetypes::content_type(path)
 }
 
 async fn file_stream_body(mut file: tokio::fs::File, start: u64, len: u64) -> Body {
@@ -1774,6 +1806,9 @@ pub struct HttpRpcTransport {
 impl ApiTransport for HttpRpcTransport {
     fn transport_type(&self) -> TransportType {
         TransportType::HTTP
+    }
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        Some((self, "moonraker.components.application", "RPCHandler"))
     }
     fn user_info(&self) -> Option<UserInfo> {
         self.user.clone()

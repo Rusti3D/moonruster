@@ -1,6 +1,6 @@
 # Runs the differential suites one after another, results in /tmp/mr_*.out
 # usage: run_all.sh [suite...]  (default: all)
-cd /mnt/d/Projects/Moonruster
+cd "$(dirname "$0")/.."
 CARGO_TARGET_DIR=~/mr/target ~/.cargo/bin/cargo build --release 2>&1 | grep -E "^error" -A12 > /tmp/mr_build.out
 if [ -s /tmp/mr_build.out ]; then echo "BUILD FAILED" > /tmp/mr_done.out; cat /tmp/mr_build.out >> /tmp/mr_done.out; exit 1; fi
 cd tools

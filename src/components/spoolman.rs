@@ -33,7 +33,7 @@ fn ws_error_string(e: &tokio_tungstenite::tungstenite::Error) -> String {
 }
 
 pub struct SpoolManager {
-    spoolman_url: String,
+    pub spoolman_url: String,
     ws_url: String,
     sync_rate_seconds: i64,
     pending_reports: RefCell<IndexMap<i64, f64>>,
@@ -368,6 +368,10 @@ impl SpoolManager {
         *self.pending_reports.borrow_mut().entry(spool_id).or_insert(0.0) += used_length;
     }
 
+    pub fn connected(&self) -> bool {
+        self.ws_connected.get()
+    }
+
     pub fn set_active_spool(&self, spool_id: Option<i64>) {
         if self.spool_id.get() == spool_id {
             log::info!("Spool ID already set to: {}", spool_id.map(|i| i.to_string()).unwrap_or("None".into()));
@@ -399,7 +403,11 @@ impl SpoolManager {
         });
     }
 
-    async fn report_extrusion(&self) {
+    pub fn sync_rate_seconds(&self) -> i64 {
+        self.sync_rate_seconds
+    }
+
+    pub async fn report_extrusion(&self) {
         if !self.ws_connected.get() {
             return;
         }

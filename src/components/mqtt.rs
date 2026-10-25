@@ -723,6 +723,26 @@ impl MqttClient {
         }
     }
 
+    pub fn qos(&self) -> u8 {
+        self.qos
+    }
+
+    pub fn get_instance_name(&self) -> String {
+        self.instance_name.clone()
+    }
+
+    /// Moonraker's wait_connection: whether the client connected within the
+    /// timeout (None: no limit)
+    pub async fn wait_connection(&self, timeout: Option<f64>) -> bool {
+        match timeout {
+            Some(t) => tokio::time::timeout(Duration::from_secs_f64(t.max(0.0)), self.connect_evt.wait()).await.is_ok(),
+            None => {
+                self.connect_evt.wait().await;
+                true
+            }
+        }
+    }
+
     pub fn is_connected(&self) -> bool {
         self.connect_evt.is_set()
     }
@@ -826,6 +846,25 @@ impl MqttClient {
             Value::String(s) => s.clone().into_bytes(),
             Value::Number(_) => crate::pyfmt::py_str(&payload).into_bytes(),
         };
+        self.publish_bytes(topic, data, Some(qos), retain)
+    }
+
+    /// publish_topic of a payload already encoded (Python components encode
+    /// it as Moonraker does, json_wrapper for dicts and lists)
+    pub fn publish_bytes(
+        &self,
+        topic: &str,
+        data: Vec<u8>,
+        qos: Option<u8>,
+        retain: bool,
+    ) -> LocalBoxFuture<'static, Result<(), ServerError>> {
+        let qos = match qos {
+            Some(q) if q != 0 => q,
+            _ => self.qos,
+        };
+        if qos > 2 {
+            return Box::pin(async { Err(ServerError::bad("QOS must be between 0 and 2")) });
+        }
         if topic.is_empty() || topic.contains('+') || topic.contains('#') || data.len() > 268435455 {
             return Box::pin(async { Err(ServerError::new("MQTT Message Queue Full", 529)) });
         }
@@ -997,24 +1036,38 @@ impl MqttClient {
     }
 }
 
+impl MqttClient {
+    /// screen_rpc_request's check of a request's mqtt_timestamp
+    pub fn screen_timestamp(&self, ts: Value) -> Result<(), ServerError> {
+        if ts.is_null() {
+            return Ok(());
+        }
+        let mut dq = self.timestamp_deque.borrow_mut();
+        if dq.contains(&ts) {
+            log::debug!("Duplicate MQTT API request received");
+            return Err(ServerError::new("Duplicate MQTT Request", DUP_API_REQ_CODE));
+        }
+        if dq.len() == 20 {
+            dq.pop_front();
+        }
+        dq.push_back(ts);
+        Ok(())
+    }
+}
+
 impl ApiTransport for MqttClient {
     fn transport_type(&self) -> TransportType {
         TransportType::MQTT
     }
+    fn py_object(self: Rc<Self>) -> Option<(Rc<dyn std::any::Any>, &'static str, &'static str)> {
+        Some((self, "moonraker.components.mqtt", "MQTTClient"))
+    }
 
     fn screen_rpc_request(&self, _api_def: &ApiDefinition, _rt: RequestType, args: &mut Args) -> Result<(), ServerError> {
-        if let Some(ts) = args.shift_remove("mqtt_timestamp") {
-            let mut dq = self.timestamp_deque.borrow_mut();
-            if dq.contains(&ts) {
-                log::debug!("Duplicate MQTT API request received");
-                return Err(ServerError::new("Duplicate MQTT Request", DUP_API_REQ_CODE));
-            }
-            if dq.len() == 20 {
-                dq.pop_front();
-            }
-            dq.push_back(ts);
+        match args.shift_remove("mqtt_timestamp") {
+            Some(ts) => self.screen_timestamp(ts),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {
