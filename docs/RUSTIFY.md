@@ -201,16 +201,61 @@ Each item ships with a benchmark and a CC1 A/B.
 *Progress on 2–5 (2026-10-25)*
 - **2a:**
   - `server().get::<T>()` finds a built-in component by type; its name comes from one table (`Named`, in
-    components/mod.rs).
+    components/mod.rs, a test holds it equal to the registry).
   - All 123 string lookups of built-ins use it. `lookup_component(name)` stays for Python components.
-- **2b (part):** `send_event` returns `EventSent`. It is awaitable (`IntoFuture`) and droppable, and it is not a
-  `Future`: the 45 fire-and-forget callers no longer need `let _ =`.
+- **2b:**
+  - The events with Rust handlers are types (src/events.rs): `emit::<E>(args)`, `on::<E>` / `on_async::<E>`.
+  - Handlers get the typed arguments (`&Args`, `Rc<Args>`): no JSON, no copy per handler.
+  - The values Moonraker passes are made only for websocket notifications and Python handlers, once per send. A
+    Python component sending one of these events reaches the Rust handlers (`from_values`).
+  - Events without Rust handlers, and those named at run time (`job_state:<state>`), keep `send_event` by name.
+  - `send_event` returns `EventSent` and an MQTT publish or serial write returns `Completion`: awaitable
+    (`IntoFuture`) and not a `Future`, so fire-and-forget callers need no `let _ =`.
 - **2f (part):** `ServerError` boxes its rare parts, AgentError data and a Python traceback. A test holds it at
   48 bytes or less for every `Result`.
-- **4 (part):** a notification is encoded once and shared by every client's queue (`Utf8Bytes`, reference counted),
-  instead of one copy per client. Status updates stay per client: each has its own subscription.
+- **3a:** a component's background tasks are `TaskSlot` / `TaskSet` (set, replace, cancel, take, cancel_all) instead
+  of `JoinHandle`s in `RefCell`s. Behaviour is unchanged: no cancel on drop, `set` detaches as overwriting a
+  handle did.
+- **4 (part):**
+  - A notification is encoded once, from borrowed values, and shared by every client's queue (`Utf8Bytes`,
+    reference counted), instead of two copies of the values plus one string per client.
+  - Status updates stay per client: each client has its own subscription.
 - **5:** `is_patched` is documented as a known difference on main, and both dead parts are allowed as dead code,
   agreed with kaliru.
+- **Clippy:** 508 warnings down to the plugin layer's 11, which is shared with kaliru.
+  - Keyword arguments became option structs with Moonraker's defaults (`RunOpts`, `DownloadOpts`, beside
+    `RequestOpts` and `ExecOpts`).
+  - Complex tuples got named aliases.
+  - `rust-version = "1.89"`: what the dependencies already require.
+
+*Where the plan meets parity (decided 2026-10-25, with the evidence)*
+- **2e, typed state: only where Moonraker fixes the types.** Much of Moonraker's state passes Klipper's or
+  Python's dynamic types through to the output, and serde would change them:
+  - history's `PrinterJob` copies print_stats as Klipper sends it, so `filament_used` is the int `0` until Klipper
+    reports `0.0`;
+  - `get_path_info` returns `{"modified": 0, ...}`, an int, when `stat()` fails, and `st_mtime`, a float,
+    otherwise;
+  - file list entries merge their metadata dicts.
+
+  A typed `f64` cannot be both, so these stay `serde_json::Value`, which is what they are in Moonraker.
+- **2c, typed request arguments: in place already.**
+  - `WebRequest::get_int` / `get_float` / `get_str` / `get_boolean` (with `_or` / `_opt`) are typed accessors.
+  - Each uses Moonraker's conversion rules and error texts, called in Moonraker's order, which decides which
+    error a bad request gets.
+  - A derive would restate the same calls.
+- **2c, typed responses: `json!` stays.** The responses are mostly Moonraker's dynamic dicts (above).
+- **2d, config structs: in place in substance.**
+  - Each component reads its options in `new()`, in Moonraker's order (access tracking and `/server/config`
+    depend on it), into typed fields.
+  - A derive would restate the getters.
+- **3b, one `RefCell<State>` per component: not done.**
+  - A single cell widens every borrow to the whole state.
+  - This code base had two borrows held across an await (zeroconf SSDP, server start), which a wider cell makes
+    more likely.
+  - Fine-grained cells keep each borrow to its field.
+- **3c, `Rc<str>` / interning, and 4's other hot paths: by profile only.** Under the resource gate's load (20
+  status updates/s, 2 clients), Moonruster uses about 3.6 ms of CPU per second. A change needs a measured gain:
+  `perf` locally, and a CC1 A/B when the printer is free.
 
 Out of scope:
 - behaviour changes;
