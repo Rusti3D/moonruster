@@ -176,9 +176,11 @@ impl log::Log for MoonLogger {
         if !target.starts_with("moonruster") {
             return;
         }
-        let file = record.file().map(|f| f.rsplit('/').next().unwrap_or(f)).unwrap_or("");
-        let file = file.replace(".rs", ".py");
-        let func = target.rsplit("::").next().unwrap_or(target);
+        let path = record.file().unwrap_or("");
+        let (file, func) = match py_module(path) {
+            Some(m) => (format!("{}.py", m), m),
+            None => (path.rsplit('/').next().unwrap_or(path).replace(".rs", ".py"), target.rsplit("::").next().unwrap_or(target)),
+        };
         emit(record.level(), &file, func, record.line().unwrap_or(0), &record.args().to_string());
     }
 
@@ -193,6 +195,39 @@ impl log::Log for MoonLogger {
             }
         }
     }
+}
+
+// update_manager's own Python files; its other Rust files are update_manager.py's
+const UPDATE_MANAGER_FILES: [&str; 7] =
+    ["app_deploy", "base_deploy", "common", "git_deploy", "net_deploy", "python_deploy", "system_deploy"];
+
+/// The Moonraker module of a Rust module (its path below the crate root,
+/// without "mod"): a component's directory is its one Python file
+/// (components/application/handlers is components.application), apart from
+/// update_manager's own files; confighelper's parts are confighelper. None
+/// outside the components, confighelper and metadata. Log lines and the
+/// Python classes of Rust objects are named by it.
+pub fn moonraker_module<'a>(parts: &[&'a str]) -> Option<Vec<&'a str>> {
+    match parts {
+        ["components", "update_manager", file, ..] if UPDATE_MANAGER_FILES.contains(file) => {
+            Some(vec!["components", "update_manager", *file])
+        }
+        ["components", dir, ..] => Some(vec!["components", *dir]),
+        ["confighelper", ..] => Some(vec!["confighelper"]),
+        ["metadata", ..] => Some(vec!["metadata"]),
+        _ => None,
+    }
+}
+
+/// The module name a Rust source file's log lines carry (moonraker_module)
+fn py_module(file: &str) -> Option<&str> {
+    let file = file.trim_start_matches("src/").trim_end_matches(".rs").trim_end_matches("/mod");
+    let parts: Vec<&str> = file.split('/').collect();
+    // components/mod.rs (the registry), named as before
+    if parts == ["components"] {
+        return None;
+    }
+    moonraker_module(&parts)?.last().copied()
 }
 
 /// Write one record to stdout and the log file: Moonruster's own (MoonLogger)
@@ -322,4 +357,52 @@ async fn handle_log_rollover(req: WebRequest) -> ApiResult {
         }
     }
     Ok(json!({"rolled_over": rolled, "failed": failed}))
+}
+
+#[cfg(test)]
+mod py_module_tests {
+    // log lines name Moonraker's file, whichever Rust file holds the code
+    #[test]
+    fn moonraker_files() {
+        for (rust, py) in [
+            ("src/components/history.rs", "history"),
+            ("src/components/application/mod.rs", "application"),
+            ("src/components/application/handlers.rs", "application"),
+            ("src/components/file_manager/storage.rs", "file_manager"),
+            ("src/components/file_manager/observer/node.rs", "file_manager"),
+            ("src/components/update_manager/mod.rs", "update_manager"),
+            ("src/components/update_manager/self_deploy.rs", "update_manager"),
+            ("src/components/update_manager/base_deploy.rs", "base_deploy"),
+            ("src/components/update_manager/git_deploy/repo.rs", "git_deploy"),
+            ("src/confighelper/source.rs", "confighelper"),
+            ("src/confighelper/mod.rs", "confighelper"),
+            ("src/metadata/mod.rs", "metadata"),
+        ] {
+            assert_eq!(super::py_module(rust), Some(py), "{rust}");
+        }
+        // elsewhere the file and module path name the line, as before
+        for rust in ["src/components/mod.rs", "src/server.rs", "src/main.rs", "src/plugins/impls/machine.rs"] {
+            assert_eq!(super::py_module(rust), None, "{rust}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod moonraker_module_tests {
+    // the Python class of a Rust object: its type's module, a split component's one module
+    #[test]
+    fn classes() {
+        for (rust, py) in [
+            ("components::database", "components.database"),
+            ("components::database::namespace", "components.database"),
+            ("components::update_manager", "components.update_manager"),
+            ("components::update_manager::git_deploy::repo", "components.update_manager.git_deploy"),
+            ("components::update_manager::common", "components.update_manager.common"),
+            ("confighelper::source", "confighelper"),
+        ] {
+            let parts: Vec<&str> = rust.split("::").collect();
+            assert_eq!(super::moonraker_module(&parts).map(|m| m.join(".")).as_deref(), Some(py), "{rust}");
+        }
+        assert_eq!(super::moonraker_module(&["server"]), None);
+    }
 }

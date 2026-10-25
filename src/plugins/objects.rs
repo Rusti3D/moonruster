@@ -68,8 +68,9 @@ fn class_of(tid: TypeId, type_name: &str) -> PyResult<PyRef> {
     let mut parts: Vec<&str> = path.split("::").collect();
     let class = parts.pop().unwrap_or("");
     if parts.first() == Some(&"moonruster") && parts.len() > 1 {
-        parts[0] = "moonraker";
-        if let Ok(c) = lookup(&parts.join("."), class) {
+        // a component split into modules is still its one Moonraker module
+        let module = crate::loghelper::moonraker_module(&parts[1..]).unwrap_or_else(|| parts[1..].to_vec());
+        if let Ok(c) = lookup(&format!("moonraker.{}", module.join(".")), class) {
             return Ok(c);
         }
     }
