@@ -610,6 +610,15 @@ impl FileManager {
         self.file_paths.borrow().get(root).cloned().unwrap_or_default()
     }
 
+    /// file_paths: root -> path
+    pub fn file_paths(&self) -> Map<String, Value> {
+        self.file_paths.borrow().iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()
+    }
+
+    pub fn full_access_roots(&self) -> Vec<String> {
+        self.full_access_roots.borrow().iter().cloned().collect()
+    }
+
     pub fn get_registered_dirs(&self) -> Vec<String> {
         self.file_paths.borrow().keys().cloned().collect()
     }

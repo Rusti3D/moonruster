@@ -208,6 +208,17 @@ class MrTestApi:
 
     async def _services(self, out):
         lc = self.server.lookup_component
+        srv = self.server
+        comps = ["power", "wled", "notifier", "history", "announcements", "machine", "update_manager", "job_queue"]
+        out["attr_server"] = [n for n in comps if getattr(lc(n), "server", None) is not srv]
+        out["attr_loop"] = [getattr(lc(n), a) is srv.get_event_loop() for n, a in
+                            (("announcements", "eventloop"), ("file_manager", "event_loop"), ("klippy_connection", "event_loop"))]
+        out["attr_refs"] = [lc("history").file_manager is lc("file_manager"), lc("octoprint_compat").klippy_apis is lc("klippy_apis"),
+                            srv.klippy_connection is lc("klippy_connection"), srv.moonraker_app is lc("application"),
+                            type(srv.port).__name__, srv.host, srv.debug, srv.server_running]
+        fm = lc("file_manager")
+        out["attr_data"] = [sorted(fm.file_paths.keys()), sorted(fm.full_access_roots), sorted(lc("job_state").last_print_stats.keys()),
+                            type(lc("klippy_connection").subscription_cache).__name__]
         mq = lc("mqtt")
         out["mqtt_transport"] = [str(mq.transport_type), mq.send_status({}, 0.)]
         args = {"mqtt_timestamp": 12.5, "x": 1}

@@ -120,6 +120,16 @@ pub fn register(r: &mut Registry) {
     );
     r.method(name!("get_app_args"), |_| to_py(&Value::Object(server().get_app_args())));
     r.method(name!("get_host_info"), |_| to_py(&server().get_host_info()));
+    r.attr(name!("klippy_connection"), |_| objects::wrap(server().klippy()), None);
+    r.attr(
+        name!("moonraker_app"),
+        |_| component_object("application", server().component_any("application").expect("application is core")),
+        None,
+    );
+    r.attr(name!("host"), |_| to_py(&server().get_host_info()["address"]), None);
+    r.attr(name!("port"), |_| to_py(&server().get_host_info()["port"]), None);
+    r.attr(name!("debug"), |_| Ok(py_bool(server().is_debug_enabled())), None);
+    r.attr(name!("server_running"), |_| Ok(py_bool(server().is_running())), None);
     r.method(name!("get_app_arg"), |a| {
         let key = arg(a, 0, "key")?.as_string()?;
         match server().get_app_args().get(&key) {

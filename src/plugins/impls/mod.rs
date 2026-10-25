@@ -33,7 +33,30 @@ pub(crate) use super::py::*;
 pub(crate) use serde_json::Value;
 pub(crate) use std::rc::Rc;
 
+/// The attributes every component class has in Moonraker that refer to the
+/// server and its parts (self.server, self.eventloop, self.klippy_apis, ...),
+/// registered first: a component's own handler for one replaces it
+fn register_common_attrs(r: &mut Registry) {
+    use crate::server::server;
+    for (_, module, class) in super::mirror_ids::COMPONENT_CLASSES {
+        let prefix = format!("{}.{}.", module, class);
+        for id in super::mirror_ids::IDS.iter().filter(|i| i.starts_with(&prefix)) {
+            let getter: crate::plugins::native::Getter = match &id[prefix.len()..] {
+                "server" => |_| objects::wrap(server()),
+                "eventloop" | "event_loop" => |_| server::event_loop(),
+                "klippy_apis" => |_| server::component_object("klippy_apis", server().component_any("klippy_apis").expect("klippy_apis is core")),
+                "file_manager" | "file_manger" => {
+                    |_| server::component_object("file_manager", server().component_any("file_manager").expect("file_manager is core"))
+                }
+                _ => continue,
+            };
+            r.attr(id, getter, None);
+        }
+    }
+}
+
 pub fn register(r: &mut Registry) {
+    register_common_attrs(r);
     analysis::register(r);
     announcements::register(r);
     application::register(r);

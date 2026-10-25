@@ -138,6 +138,12 @@ pub fn register(r: &mut Registry) {
         let n = a.this::<crate::components::notifier::Notifier>()?;
         rust_future(async move { n.notify_action(&name, &message).await.map(|_| none()).map_err(|e| server_error(&e.message, e.status_code)) })
     });
+    r.attr("moonraker.components.job_state.JobState.last_print_stats", |o| {
+        to_py(&Value::Object(objects::unwrap_as::<JobState>(o)?.get_last_stats()))
+    }, None);
+    r.attr("moonraker.components.klippy_connection.KlippyConnection.subscription_cache", |o| {
+        to_py(&Value::Object(objects::unwrap_as::<crate::components::klippy_connection::KlippyConnection>(o)?.get_subscription_cache()))
+    }, None);
     // spoolman
     // report_extrusion(eventtime) -> the next report time
     r.method("moonraker.components.spoolman.SpoolManager.report_extrusion", |a| {

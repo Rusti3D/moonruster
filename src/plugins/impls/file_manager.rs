@@ -152,6 +152,19 @@ pub fn register(r: &mut Registry) {
         Ok(none())
     });
     r.method(fm!("get_metadata_storage"), |a| metadata_storage(&a.this::<FileManager>()?));
+    // snapshots of the file manager's state (Moonraker's own containers)
+    r.attr(fm!("file_paths"), |o| to_py(&Value::Object(objects::unwrap_as::<FileManager>(o)?.file_paths())), None);
+    r.attr(
+        fm!("full_access_roots"),
+        |o| {
+            let set = lookup("builtins", "set")?.call(&[])?;
+            for r in objects::unwrap_as::<FileManager>(o)?.full_access_roots() {
+                set.call_method("add", &[&py_str(&r)])?;
+            }
+            Ok(set)
+        },
+        None,
+    );
     r.attr(fm!("gcode_metadata"), |o| metadata_storage(&objects::unwrap_as::<FileManager>(o)?), None);
     // MetadataStorage.get / insert deep-copy: a converted value is a copy
     r.method(md!("get"), |a| {
