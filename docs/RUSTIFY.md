@@ -219,7 +219,17 @@ Each item ships with a benchmark and a CC1 A/B.
 - **4 (part):**
   - A notification is encoded once, from borrowed values, and shared by every client's queue (`Utf8Bytes`,
     reference counted), instead of two copies of the values plus one string per client.
-  - Status updates stay per client: each client has its own subscription.
+  - Status fan-out (profiled with callgrind under the resource gate's load):
+    - each client's part of an update is a `StatusView` borrowed from the update and serialized directly, to the
+      bytes the filtered map made;
+    - subscriptions are shared (`Rc`), not copied per update;
+    - the subscribers' callbacks share one copy, and `server:status_update` is made only when it has handlers.
+
+    Measured: process_status_update -48% and all instructions -22%. Against main's binary, in alternating runs,
+    CPU under load fell 6-8% (95.4 M ns against 104.0-112.1 M per 30 s, 135.5 M against 144.6-150.6 M with a
+    Python component), and idle and memory were at or below main's best runs.
+  - `py_float_repr_into` (from kaliru): a float's repr is appended without temporary strings. A property test
+    against the old implementation covers 1.4 M values.
 - **5:** `is_patched` is documented as a known difference on main, and both dead parts are allowed as dead code,
   agreed with kaliru.
 - **Clippy:** 508 warnings down to the plugin layer's 11, which is shared with kaliru.
