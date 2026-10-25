@@ -74,7 +74,7 @@ pub struct PanelDue {
     confirmed_macros: IndexMap<String, String>,
     non_trivial_keys: Vec<String>,
     ser_conn: Rc<AsyncSerial>,
-    serial_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    serial_task: crate::server::TaskSlot,
 }
 
 impl PanelDue {
@@ -127,7 +127,7 @@ impl PanelDue {
             confirmed_macros,
             non_trivial_keys,
             ser_conn,
-            serial_task: RefCell::new(None),
+            serial_task: Default::default(),
         });
         let p = Rc::downgrade(&pd);
         srv.on_event_async("server:klippy_ready", move |_| {
@@ -833,14 +833,14 @@ impl Component for PanelDue {
 
     async fn component_init(self: Rc<Self>) -> Result<(), ServerError> {
         let h = spawn(self.clone().run_serial());
-        *self.serial_task.borrow_mut() = Some(h);
+        self.serial_task.set(h);
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
         self.enabled.set(false);
         self.ser_conn.close().await;
-        let t = self.serial_task.borrow_mut().take();
+        let t = self.serial_task.take();
         if let Some(t) = t {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(3), t).await;
         }

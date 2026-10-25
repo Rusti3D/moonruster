@@ -56,7 +56,7 @@ pub struct MqttClient {
     client_id: String,
     connect_evt: Rc<AsyncEvent>,
     disconnect_evt: RefCell<Option<Rc<AsyncEvent>>>,
-    connect_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    connect_task: crate::server::TaskSlot,
     writer: RefCell<Option<mpsc::UnboundedSender<Vec<u8>>>>,
     session_id: Cell<u64>,
     first_connect: Cell<bool>,
@@ -74,7 +74,7 @@ pub struct MqttClient {
     moonraker_status_topic: String,
     status_interval: f64,
     status_cache: RefCell<Map<String, Value>>,
-    status_timer: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    status_timer: crate::server::TaskSlot,
     last_status_time: Cell<f64>,
     status_objs: Map<String, Value>,
     timestamp_deque: RefCell<VecDeque<Value>>,
@@ -169,7 +169,7 @@ impl MqttClient {
             client_id,
             connect_evt: AsyncEvent::new(),
             disconnect_evt: RefCell::new(None),
-            connect_task: RefCell::new(None),
+            connect_task: Default::default(),
             writer: RefCell::new(None),
             session_id: Cell::new(0),
             first_connect: Cell::new(true),
@@ -181,7 +181,7 @@ impl MqttClient {
             next_mid: Cell::new(0),
             status_interval,
             status_cache: RefCell::new(Map::new()),
-            status_timer: RefCell::new(None),
+            status_timer: Default::default(),
             last_status_time: Cell::new(0.0),
             status_objs,
             timestamp_deque: RefCell::new(VecDeque::new()),
@@ -337,17 +337,13 @@ impl Component for MqttClient {
 
     async fn component_init(self: Rc<Self>) -> Result<(), ServerError> {
         let h = spawn(self.clone().do_reconnect(true));
-        *self.connect_task.borrow_mut() = Some(h);
+        self.connect_task.set(h);
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.status_timer.borrow_mut().take() {
-            t.abort();
-        }
-        if let Some(t) = self.connect_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.status_timer.cancel();
+        self.connect_task.cancel();
         if !self.is_connected() {
             return;
         }

@@ -75,7 +75,7 @@ pub struct ProcStats {
     cpu_usage: RefCell<Map<String, Value>>,
     memory_usage: RefCell<Map<String, Value>>,
     stat_callbacks: RefCell<Vec<StatCallback>>,
-    tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
+    tasks: crate::server::TaskSet,
     blocked_count: Cell<u64>,
 }
 
@@ -122,14 +122,12 @@ impl Component for ProcStats {
                 last = now;
             }
         });
-        self.tasks.borrow_mut().push(stat);
-        self.tasks.borrow_mut().push(wd);
+        self.tasks.push(stat);
+        self.tasks.push(wd);
         Ok(())
     }
     async fn close(self: Rc<Self>) {
-        for t in self.tasks.borrow_mut().drain(..) {
-            t.abort();
-        }
+        self.tasks.cancel_all();
     }
 }
 
@@ -159,7 +157,7 @@ impl ProcStats {
             cpu_usage: RefCell::new(Map::new()),
             memory_usage: RefCell::new(Map::new()),
             stat_callbacks: RefCell::new(Vec::new()),
-            tasks: RefCell::new(Vec::new()),
+            tasks: Default::default(),
             blocked_count: Cell::new(0),
         });
         let p = ps.clone();

@@ -403,7 +403,7 @@ pub struct Announcements {
     subscriptions: RefCell<IndexMap<String, Rc<RssFeed>>>,
     stored_feeds: RefCell<Vec<String>>,
     configured_feeds: RefCell<Vec<String>>,
-    timer: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    timer: crate::server::TaskSlot,
 }
 
 #[async_trait(?Send)]
@@ -431,7 +431,7 @@ impl Component for Announcements {
             }
         }
         let a = Rc::downgrade(&self);
-        *self.timer.borrow_mut() = Some(spawn(async move {
+        self.timer.set(spawn(async move {
             loop {
                 match a.upgrade() {
                     Some(ann) => ann.handle_update_timer().await,
@@ -443,9 +443,7 @@ impl Component for Announcements {
         Ok(())
     }
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.timer.borrow_mut().take() {
-            t.abort();
-        }
+        self.timer.cancel();
         self.entry_mgr.close();
     }
 }
@@ -489,7 +487,7 @@ impl Announcements {
             subscriptions: RefCell::new(subs),
             stored_feeds: RefCell::new(Vec::new()),
             configured_feeds: RefCell::new(configured),
-            timer: RefCell::new(None),
+            timer: Default::default(),
         });
         ann_endpoint!(srv, a, "/server/announcements/list", RequestType::GET, list_announcements);
         ann_endpoint!(srv, a, "/server/announcements/dismiss", RequestType::POST, handle_dismiss_request);

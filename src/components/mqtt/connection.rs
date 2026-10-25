@@ -80,7 +80,7 @@ impl MqttClient {
                 }
             }
         }
-        *self.connect_task.borrow_mut() = None;
+        self.connect_task.clear();
     }
 
     pub(super) fn start_session(self: Rc<Self>, stream: Box<dyn Io>) {
@@ -308,9 +308,9 @@ impl MqttClient {
             evt.set();
         } else if self.is_connected() {
             log::info!("MQTT Server Disconnected, reason: {}", reason);
-            if self.connect_task.borrow().is_none() {
+            if !self.connect_task.is_set() {
                 let h = spawn(self.clone().do_reconnect(false));
-                *self.connect_task.borrow_mut() = Some(h);
+                self.connect_task.set(h);
             }
             server().send_event("mqtt:disconnected", vec![]);
         }

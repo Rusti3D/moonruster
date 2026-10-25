@@ -127,7 +127,7 @@ pub struct Authorization {
     trusted_ips: Vec<IpAddr>,
     trusted_ranges: Vec<ipnet::IpNet>,
     trusted_domains: Vec<String>,
-    prune_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    prune_task: crate::server::TaskSlot,
 }
 
 #[async_trait(?Send)]
@@ -150,7 +150,7 @@ impl Component for Authorization {
             self.sync_user_table()?;
         }
         let a = Rc::downgrade(&self);
-        *self.prune_task.borrow_mut() = Some(spawn(async move {
+        self.prune_task.set(spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs_f64(PRUNE_CHECK_TIME)).await;
                 match a.upgrade() {
@@ -162,9 +162,7 @@ impl Component for Authorization {
         Ok(())
     }
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.prune_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.prune_task.cancel();
     }
 }
 
@@ -318,7 +316,7 @@ impl Authorization {
             trusted_ips,
             trusted_ranges,
             trusted_domains,
-            prune_task: RefCell::new(None),
+            prune_task: Default::default(),
         });
         auth_endpoint!(srv, auth, "/access/login", RequestType::POST, handle_login, false);
         auth_endpoint!(srv, auth, "/access/logout", RequestType::POST, handle_logout, true);

@@ -26,16 +26,12 @@ impl MqttClient {
                     }
                 }
             });
-            if let Some(old) = self.status_timer.borrow_mut().replace(h) {
-                old.abort();
-            }
+            self.status_timer.replace(h);
         }
     }
 
     pub(super) fn handle_klippy_disconnect(&self) {
-        if let Some(t) = self.status_timer.borrow_mut().take() {
-            t.abort();
-        }
+        self.status_timer.cancel();
         self.handle_timed_status_update();
     }
 

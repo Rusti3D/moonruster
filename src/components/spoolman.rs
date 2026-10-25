@@ -38,8 +38,8 @@ pub struct SpoolManager {
     sync_rate_seconds: i64,
     pending_reports: RefCell<IndexMap<i64, f64>>,
     ws_sender: RefCell<Option<tokio::sync::mpsc::UnboundedSender<Message>>>,
-    connection_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
-    spool_check_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    connection_task: crate::server::TaskSlot,
+    spool_check_task: crate::server::TaskSlot,
     ws_connected: Cell<bool>,
     is_closing: Cell<bool>,
     spool_id: Rc<Cell<Option<i64>>>,
@@ -97,8 +97,8 @@ impl SpoolManager {
             sync_rate_seconds,
             pending_reports: RefCell::new(IndexMap::new()),
             ws_sender: RefCell::new(None),
-            connection_task: RefCell::new(None),
-            spool_check_task: RefCell::new(None),
+            connection_task: Default::default(),
+            spool_check_task: Default::default(),
             ws_connected: Cell::new(false),
             is_closing: Cell::new(false),
             spool_id,
@@ -199,7 +199,7 @@ impl SpoolManager {
                     if self.spool_id.get().is_some() {
                         self.cancel_spool_check_task();
                         let h = spawn(self.clone().check_spool_deleted());
-                        *self.spool_check_task.borrow_mut() = Some(h);
+                        self.spool_check_task.set(h);
                     }
                     self.send_status_notification();
                     self.clone().read_messages(ws).await;
@@ -284,9 +284,7 @@ impl SpoolManager {
     }
 
     fn cancel_spool_check_task(&self) {
-        if let Some(t) = self.spool_check_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.spool_check_task.cancel();
     }
 
     async fn check_spool_deleted(self: Rc<Self>) {
@@ -303,7 +301,7 @@ impl SpoolManager {
                 log::info!("Found Spool ID {} on spoolman instance", sid);
             }
         }
-        *self.spool_check_task.borrow_mut() = None;
+        self.spool_check_task.clear();
     }
 
     async fn handle_klippy_ready(self: Rc<Self>) -> Result<(), ServerError> {
@@ -535,7 +533,7 @@ impl Component for SpoolManager {
         let sid = server().database().get_item_sync(DB_NAMESPACE, Some(&json!(ACTIVE_SPOOL_KEY)), Some(Value::Null))?;
         self.spool_id.set(sid.as_i64());
         let h = spawn(self.clone().connect_websocket());
-        *self.connection_task.borrow_mut() = Some(h);
+        self.connection_task.set(h);
         Ok(())
     }
 
@@ -550,7 +548,7 @@ impl Component for SpoolManager {
             })));
         }
         self.cancel_spool_check_task();
-        let task = self.connection_task.borrow_mut().take();
+        let task = self.connection_task.take();
         if let Some(t) = task {
             if !t.is_finished() {
                 let abort = t.abort_handle();

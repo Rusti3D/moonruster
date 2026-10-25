@@ -63,7 +63,7 @@ pub struct SimplyPrint {
     heaters: RefCell<Vec<(String, String)>>,
     missed_job_events: RefCell<Vec<Map<String, Value>>>,
     announce_mutex: tokio::sync::Mutex<()>,
-    connection_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    connection_task: crate::server::TaskSlot,
     reconnect_delay: Cell<f64>,
     reconnect_token: RefCell<Option<String>>,
     last_sp_ping: Cell<f64>,
@@ -81,7 +81,7 @@ pub struct SimplyPrint {
     power_id: String,
     filament_sensor: String,
     // print handler
-    download_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    download_task: crate::server::TaskSlot,
     print_ready_event: Rc<crate::utils::AsyncEvent>,
     download_progress: Cell<i64>,
     pending_file: RefCell<String>,
@@ -181,7 +181,7 @@ impl SimplyPrint {
             heaters: RefCell::new(vec![]),
             missed_job_events: RefCell::new(vec![]),
             announce_mutex: tokio::sync::Mutex::new(()),
-            connection_task: RefCell::new(None),
+            connection_task: Default::default(),
             reconnect_delay: Cell::new(1.0),
             reconnect_token: RefCell::new(None),
             last_sp_ping: Cell::new(0.0),
@@ -198,7 +198,7 @@ impl SimplyPrint {
             connect_url: RefCell::new(String::new()),
             power_id,
             filament_sensor,
-            download_task: RefCell::new(None),
+            download_task: Default::default(),
             print_ready_event: crate::utils::AsyncEvent::new(),
             download_progress: Cell::new(-1),
             pending_file: RefCell::new(String::new()),
@@ -350,14 +350,12 @@ impl Component for SimplyPrint {
         self.initialize_url().await;
         self.test_connection().await;
         let h = spawn(self.clone().connect());
-        *self.connection_task.borrow_mut() = Some(h);
+        self.connection_task.set(h);
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.download_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.download_task.cancel();
         self.amb_stop();
         self.printer_info_timer.stop();
         self.ping_sp_timer.stop();
@@ -370,7 +368,7 @@ impl Component for SimplyPrint {
                 reason: "Client Shutdown".into(),
             })));
         }
-        let t = self.connection_task.borrow_mut().take();
+        let t = self.connection_task.take();
         if let Some(t) = t {
             let ab = t.abort_handle();
             if tokio::time::timeout(Duration::from_secs(2), t).await.is_err() {

@@ -21,7 +21,7 @@ pub struct AsyncSerial {
     chunk_tx: RefCell<Option<mpsc::UnboundedSender<Vec<u8>>>>,
     chunk_rx: tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<Vec<u8>>>>,
     buf: RefCell<Vec<u8>>,
-    reader_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    reader_task: crate::server::TaskSlot,
     send_buffer: RefCell<Vec<(oneshot::Sender<SendResult>, Vec<u8>)>>,
     sending: Cell<bool>,
 }
@@ -80,7 +80,7 @@ impl AsyncSerial {
             chunk_tx: RefCell::new(None),
             chunk_rx: tokio::sync::Mutex::new(None),
             buf: RefCell::new(Vec::new()),
-            reader_task: RefCell::new(None),
+            reader_task: Default::default(),
             send_buffer: RefCell::new(Vec::new()),
             sending: Cell::new(false),
         })
@@ -194,7 +194,7 @@ impl AsyncSerial {
                 }
             }
         });
-        *self.reader_task.borrow_mut() = Some(h);
+        self.reader_task.set(h);
         log::info!("{} Connected", self.name);
         Ok(())
     }
@@ -227,9 +227,7 @@ impl AsyncSerial {
 
     fn close_now(&self) {
         // aborting the reader drops its AsyncFd, which closes the fd
-        if let Some(t) = self.reader_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.reader_task.cancel();
         if self.fd.take().is_some() {
             log::info!("{}: Disconnected", self.name);
         }

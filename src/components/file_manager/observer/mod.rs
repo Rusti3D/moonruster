@@ -71,7 +71,7 @@ struct InotifyState {
     processing_gcode_files: RefCell<IndexSet<String>>,
     pending_coroutines: RefCell<VecDeque<Coro>>,
     gc_notify_running: Cell<bool>,
-    reader: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    reader: crate::server::TaskSlot,
 }
 
 pub struct Observer {
@@ -99,7 +99,7 @@ impl Observer {
                     processing_gcode_files: RefCell::new(IndexSet::new()),
                     pending_coroutines: RefCell::new(VecDeque::new()),
                     gc_notify_running: Cell::new(false),
-                    reader: RefCell::new(None),
+                    reader: Default::default(),
                 });
             } else {
                 log::error!("Failed to initialize inotify");
@@ -110,7 +110,7 @@ impl Observer {
         if let Some(st) = &obs.inotify {
             let o = Rc::downgrade(&obs);
             let fd = st.fd;
-            *st.reader.borrow_mut() = Some(spawn(async move { inotify_reader(fd, o).await }));
+            st.reader.set(spawn(async move { inotify_reader(fd, o).await }));
         }
         Ok(obs)
     }
@@ -418,9 +418,7 @@ impl Observer {
     pub fn close(&self) {
         if let Some(st) = &self.inotify {
             st.pending_coroutines.borrow_mut().clear();
-            if let Some(r) = st.reader.borrow_mut().take() {
-                r.abort();
-            }
+            st.reader.cancel();
             for wd in st.watched_nodes.borrow().keys() {
                 // SAFETY: st.fd is the inotify fd (never closed); a stale wd only makes the call fail
                 unsafe { libc::inotify_rm_watch(st.fd, *wd) };

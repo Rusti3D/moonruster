@@ -259,7 +259,7 @@ impl SimplyPrint {
                 self.current_job_id.set(if jid != 0 { Some(jid) } else { None });
                 let s = self.clone();
                 let h = spawn(async move { s.download_sp_file(&url, start).await });
-                *self.download_task.borrow_mut() = Some(h);
+                self.download_task.set(h);
             }
             "start_print" => {
                 if kconn.is_connected() && self.cache.borrow().state == "operational" {

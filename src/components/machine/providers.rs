@@ -20,7 +20,7 @@ pub struct Provider {
     pub(super) spv_conf: String,
     pub(super) dbus_ready: Cell<bool>,
     pub(super) login_mgr: Cell<bool>,
-    pub(super) watchers: RefCell<Vec<tokio::task::JoinHandle<()>>>,
+    pub(super) watchers: crate::server::TaskSet,
 }
 
 impl Provider {
@@ -211,7 +211,7 @@ impl Provider {
                     }
                 }
             });
-            self.watchers.borrow_mut().push(handle);
+            self.watchers.push(handle);
         }
     }
 

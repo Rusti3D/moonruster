@@ -157,8 +157,8 @@ pub struct GpioEvent {
     last_event_time: Cell<f64>,
     error_count: Cell<u32>,
     last_error_reset: Cell<f64>,
-    reader: RefCell<Option<tokio::task::JoinHandle<()>>>,
-    debounce_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    reader: crate::server::TaskSlot,
+    debounce_task: crate::server::TaskSlot,
 }
 
 impl GpioEvent {
@@ -183,7 +183,7 @@ impl GpioEvent {
     }
 
     pub fn start(self: &Rc<Self>) {
-        if self.reader.borrow().is_some() {
+        if self.reader.is_set() {
             return;
         }
         self.value.set(self.read_value());
@@ -220,17 +220,13 @@ impl GpioEvent {
                 }
             }
         });
-        *self.reader.borrow_mut() = Some(h);
+        self.reader.set(h);
         log::debug!("GPIO {}: Listening for events, current state: {}", self.name, self.value.get());
     }
 
     pub fn stop(&self) {
-        if let Some(t) = self.debounce_task.borrow_mut().take() {
-            t.abort();
-        }
-        if let Some(r) = self.reader.borrow_mut().take() {
-            r.abort();
-        }
+        self.debounce_task.cancel();
+        self.reader.cancel();
     }
 
     fn on_event_trigger(self: &Rc<Self>, id: u32) {
@@ -241,19 +237,19 @@ impl GpioEvent {
             _ => return,
         }
         if self.debounce_period.get() > 0.0 {
-            if self.debounce_task.borrow().is_none() {
+            if !self.debounce_task.is_set() {
                 let w = Rc::downgrade(self);
                 let period = self.debounce_period.get();
                 let h = spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs_f64(period)).await;
                     if let Some(e) = w.upgrade() {
-                        *e.debounce_task.borrow_mut() = None;
+                        e.debounce_task.clear();
                         if last_value != e.value.get() {
                             e.run_callback();
                         }
                     }
                 });
-                *self.debounce_task.borrow_mut() = Some(h);
+                self.debounce_task.set(h);
             } else {
                 self.increment_error();
             }
@@ -441,8 +437,8 @@ impl GpioFactory {
             last_event_time: Cell::new(0.0),
             error_count: Cell::new(0),
             last_error_reset: Cell::new(0.0),
-            reader: RefCell::new(None),
-            debounce_task: RefCell::new(None),
+            reader: Default::default(),
+            debounce_task: Default::default(),
         });
         self.reserved.borrow_mut().insert(p.full_name, Reserved::Event(evt.clone()));
         Ok(evt)

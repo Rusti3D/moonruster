@@ -98,6 +98,58 @@ pub fn spawn<F: std::future::Future<Output = ()> + 'static>(fut: F) -> tokio::ta
     tokio::task::spawn_local(fut)
 }
 
+/// A component's background task, at most one: set by its owner, replaced,
+/// cancelled or taken to be awaited. Dropping the slot leaves the task
+/// running, as dropping a JoinHandle does.
+#[derive(Default)]
+pub struct TaskSlot(RefCell<Option<tokio::task::JoinHandle<()>>>);
+
+impl TaskSlot {
+    /// Holds a new task; a previous one keeps running, detached
+    pub fn set(&self, task: tokio::task::JoinHandle<()>) {
+        *self.0.borrow_mut() = Some(task);
+    }
+    /// Holds a new task, cancelling the previous one
+    pub fn replace(&self, task: tokio::task::JoinHandle<()>) {
+        if let Some(old) = self.0.borrow_mut().replace(task) {
+            old.abort();
+        }
+    }
+    /// Cancels the task, if any
+    pub fn cancel(&self) {
+        if let Some(t) = self.take() {
+            t.abort();
+        }
+    }
+    /// The task, to be awaited or cancelled by the caller
+    pub fn take(&self) -> Option<tokio::task::JoinHandle<()>> {
+        self.0.borrow_mut().take()
+    }
+    /// Forgets the task, leaving it running (a task clearing its own slot)
+    pub fn clear(&self) {
+        self.0.borrow_mut().take();
+    }
+    pub fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+}
+
+/// A component's background tasks that run side by side until it closes
+#[derive(Default)]
+pub struct TaskSet(RefCell<Vec<tokio::task::JoinHandle<()>>>);
+
+impl TaskSet {
+    pub fn push(&self, task: tokio::task::JoinHandle<()>) {
+        self.0.borrow_mut().push(task);
+    }
+    /// Cancels them all
+    pub fn cancel_all(&self) {
+        for t in self.0.borrow_mut().drain(..) {
+            t.abort();
+        }
+    }
+}
+
 /// An event's handlers, scheduled by send_event: awaiting it waits for
 /// them, dropping it leaves them running (not a Future, so it need not be
 /// used)

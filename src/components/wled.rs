@@ -15,7 +15,7 @@ const COLORSIZE: usize = 4;
 
 enum Transport {
     Http { url: String, timeout: f64, client: Rc<HttpClient> },
-    Serial { serial: Rc<AsyncSerial>, enabled: Cell<bool>, task: RefCell<Option<tokio::task::JoinHandle<()>>>, pending: RefCell<Option<tokio::sync::oneshot::Sender<Value>>> },
+    Serial { serial: Rc<AsyncSerial>, enabled: Cell<bool>, task: crate::server::TaskSlot, pending: RefCell<Option<tokio::sync::oneshot::Sender<Value>>> },
 }
 
 pub struct Strip {
@@ -57,7 +57,7 @@ impl Strip {
             Transport::Serial {
                 serial: AsyncSerial::from_config(config, 115200)?,
                 enabled: Cell::new(true),
-                task: RefCell::new(None),
+                task: Default::default(),
                 pending: RefCell::new(None),
             }
         };
@@ -97,9 +97,9 @@ impl Strip {
 
     async fn initialize(self: &Rc<Self>) -> Result<(), ServerError> {
         if let Transport::Serial { serial, task, .. } = &self.transport {
-            if task.borrow().is_none() {
+            if !task.is_set() {
                 let s = self.clone();
-                *task.borrow_mut() = Some(spawn(async move { s.run_serial().await }));
+                task.set(spawn(async move { s.run_serial().await }));
                 for _ in 0..5 {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     if serial.connected() {
@@ -356,7 +356,7 @@ impl Strip {
         if let Transport::Serial { serial, enabled, task, pending } = &self.transport {
             enabled.set(false);
             serial.close().await;
-            let t = task.borrow_mut().take();
+            let t = task.take();
             if let Some(t) = t {
                 let _ = t.await;
             }

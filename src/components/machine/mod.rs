@@ -152,7 +152,7 @@ impl Machine {
             spv_conf,
             dbus_ready: Cell::new(false),
             login_mgr: Cell::new(false),
-            watchers: RefCell::new(Vec::new()),
+            watchers: Default::default(),
         });
         log::info!("Using System Provider: {}", provider_type);
         let validator = InstallValidator::new(config)?;

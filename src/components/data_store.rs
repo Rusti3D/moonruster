@@ -22,7 +22,7 @@ pub struct DataStore {
     gcode_queue: RefCell<VecDeque<Value>>,
     temperature_store: RefCell<IndexMap<String, IndexMap<String, VecDeque<Value>>>>,
     temp_monitors: RefCell<Vec<String>>,
-    timer: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    timer: crate::server::TaskSlot,
 }
 
 #[async_trait(?Send)]
@@ -40,7 +40,7 @@ impl DataStore {
             gcode_queue: RefCell::new(VecDeque::new()),
             temperature_store: RefCell::new(IndexMap::new()),
             temp_monitors: RefCell::new(Vec::new()),
-            timer: RefCell::new(None),
+            timer: Default::default(),
         });
         let srv = server();
         let d = Rc::downgrade(&ds);
@@ -93,9 +93,7 @@ impl DataStore {
     }
 
     fn stop_timer(&self) {
-        if let Some(t) = self.timer.borrow_mut().take() {
-            t.abort();
-        }
+        self.timer.cancel();
     }
 
     fn push_limited(&self, store: &mut VecDeque<Value>, v: Value) {
@@ -185,7 +183,7 @@ impl DataStore {
         *self.temperature_store.borrow_mut() = new_store;
         self.stop_timer();
         let d = Rc::downgrade(&self);
-        *self.timer.borrow_mut() = Some(spawn(async move {
+        self.timer.set(spawn(async move {
             let mut iv = tokio::time::interval(std::time::Duration::from_secs_f64(TEMP_UPDATE_TIME));
             iv.tick().await;
             loop {

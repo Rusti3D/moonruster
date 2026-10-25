@@ -243,7 +243,7 @@ pub struct SsdpServer {
     boot_id: i64,
     config_id: i64,
     socket: RefCell<Option<Rc<tokio::net::UdpSocket>>>,
-    tasks: RefCell<Vec<tokio::task::JoinHandle<()>>>,
+    tasks: crate::server::TaskSet,
     responding: Cell<bool>,
 }
 
@@ -262,7 +262,7 @@ impl SsdpServer {
             boot_id: crate::utils::monotonic() as i64,
             config_id: 1,
             socket: RefCell::new(None),
-            tasks: RefCell::new(vec![]),
+            tasks: Default::default(),
             responding: Cell::new(false),
         });
         let s = ssdp.clone();
@@ -323,7 +323,7 @@ impl SsdpServer {
                 }
             }
         });
-        self.tasks.borrow_mut().push(h);
+        self.tasks.push(h);
     }
 
     async fn stop(&self) {
@@ -331,9 +331,7 @@ impl SsdpServer {
             return;
         }
         self.running.set(false);
-        for t in self.tasks.borrow_mut().drain(..) {
-            t.abort();
-        }
+        self.tasks.cancel_all();
         let sock = self.socket.borrow_mut().take();
         if let Some(s) = sock {
             for n in self.build_notifications("ssdp:byebye") {
@@ -389,7 +387,7 @@ impl SsdpServer {
                 tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
             }
         });
-        self.tasks.borrow_mut().push(h);
+        self.tasks.push(h);
     }
 
     fn handle_xml_request(&self) -> ApiResult {

@@ -41,7 +41,7 @@ pub struct JobQueue {
     queue_state: RefCell<String>,
     job_delay: f64,
     job_transition_gcode: String,
-    pop_queue_handle: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    pop_queue_handle: crate::server::TaskSlot,
     me: RefCell<std::rc::Weak<JobQueue>>,
 }
 
@@ -80,7 +80,7 @@ impl JobQueue {
             queue_state: RefCell::new("paused".into()),
             job_delay,
             job_transition_gcode: config.get_or("job_transition_gcode", "")?.trim().to_string(),
-            pop_queue_handle: RefCell::new(None),
+            pop_queue_handle: Default::default(),
             me: RefCell::new(std::rc::Weak::new()),
         });
         *jq.me.borrow_mut() = Rc::downgrade(&jq);
@@ -156,7 +156,7 @@ impl JobQueue {
                 jq.pop_job(need_transition).await;
             }
         });
-        *self.pop_queue_handle.borrow_mut() = Some(h);
+        self.pop_queue_handle.set(h);
     }
 
     async fn handle_ready(&self) {
@@ -183,7 +183,7 @@ impl JobQueue {
     }
 
     async fn pop_job(&self, need_transition: bool) {
-        *self.pop_queue_handle.borrow_mut() = None;
+        self.pop_queue_handle.clear();
         let _g = self.lock.lock().await;
         if *self.queue_state.borrow() == "paused" {
             return;
@@ -291,9 +291,7 @@ impl JobQueue {
 
     pub async fn pause_queue(&self) {
         self.set_queue_state("paused");
-        if let Some(h) = self.pop_queue_handle.borrow_mut().take() {
-            h.abort();
-        }
+        self.pop_queue_handle.cancel();
         let _g = self.lock.lock().await;
         self.pause_requested.set(true);
     }

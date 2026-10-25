@@ -94,11 +94,11 @@ pub struct PowerDevice {
     type_: String,
     state: RefCell<String>,
     request_lock: tokio::sync::Mutex<()>,
-    init_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    init_task: crate::server::TaskSlot,
     locked_while_printing: bool,
     off_when_shutdown: bool,
     off_when_shutdown_delay: f64,
-    shutdown_timer: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    shutdown_timer: crate::server::TaskSlot,
     restart_delay: f64,
     klipper_restart: bool,
     bound_services: RefCell<Vec<String>>,
@@ -106,10 +106,10 @@ pub struct PowerDevice {
     on_when_queued: bool,
     initial_state: Cell<Option<bool>>,
     restrict_actions: bool,
-    poll_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    poll_task: crate::server::TaskSlot,
     poll_interval: Cell<Option<f64>>,
     last_update_time: Cell<f64>,
-    timer_handle: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    timer_handle: crate::server::TaskSlot,
     kind: Kind,
 }
 
@@ -171,11 +171,11 @@ impl PowerDevice {
             type_,
             state: RefCell::new("init".into()),
             request_lock: tokio::sync::Mutex::new(()),
-            init_task: RefCell::new(None),
+            init_task: Default::default(),
             locked_while_printing,
             off_when_shutdown,
             off_when_shutdown_delay,
-            shutdown_timer: RefCell::new(None),
+            shutdown_timer: Default::default(),
             restart_delay,
             klipper_restart,
             bound_services: RefCell::new(bound_services),
@@ -183,10 +183,10 @@ impl PowerDevice {
             on_when_queued,
             initial_state: Cell::new(initial_state),
             restrict_actions,
-            poll_task: RefCell::new(None),
+            poll_task: Default::default(),
             poll_interval: Cell::new(poll_interval),
             last_update_time: Cell::new(0.0),
-            timer_handle: RefCell::new(None),
+            timer_handle: Default::default(),
             kind,
         });
         if klipper_restart {
@@ -583,9 +583,7 @@ impl PowerDevice {
         if self.off_when_shutdown_delay == 0.0 {
             self.power_off_on_shutdown();
         } else {
-            if let Some(h) = self.shutdown_timer.borrow_mut().take() {
-                h.abort();
-            }
+            self.shutdown_timer.cancel();
             let w = Rc::downgrade(self);
             let delay = self.off_when_shutdown_delay;
             let h = spawn(async move {
@@ -594,7 +592,7 @@ impl PowerDevice {
                     d.power_off_on_shutdown();
                 }
             });
-            *self.shutdown_timer.borrow_mut() = Some(h);
+            self.shutdown_timer.set(h);
         }
     }
 
@@ -637,7 +635,7 @@ impl PowerDevice {
         if has_init {
             let d = self.clone();
             let h = spawn(async move { d.init_state().await });
-            *self.init_task.borrow_mut() = Some(h);
+            self.init_task.set(h);
         }
         Ok(self.state() != "error")
     }
@@ -723,7 +721,7 @@ impl PowerDevice {
     }
 
     fn start_polling(self: &Rc<Self>) -> bool {
-        if self.poll_interval.get().is_none() || self.poll_task.borrow().is_some() {
+        if self.poll_interval.get().is_none() || self.poll_task.is_set() {
             return false;
         }
         let w = Rc::downgrade(self);
@@ -748,7 +746,7 @@ impl PowerDevice {
                 tokio::time::sleep(Duration::from_secs_f64(time_diff.max(0.0))).await;
             }
         });
-        *self.poll_task.borrow_mut() = Some(h);
+        self.poll_task.set(h);
         true
     }
 
@@ -757,11 +755,9 @@ impl PowerDevice {
     }
 
     async fn close(&self) {
-        if let Some(t) = self.init_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.init_task.cancel();
         self.reset_timer();
-        let task = self.poll_task.borrow_mut().take();
+        let task = self.poll_task.take();
         if let Some(t) = task {
             if self.request_lock.try_lock().is_err() {
                 self.poll_interval.set(None);
@@ -776,9 +772,7 @@ impl PowerDevice {
     }
 
     fn reset_timer(&self) {
-        if let Some(h) = self.timer_handle.borrow_mut().take() {
-            h.abort();
-        }
+        self.timer_handle.cancel();
     }
 
     fn check_timer(&self, timer: Option<f64>) {
@@ -791,7 +785,7 @@ impl PowerDevice {
                         p.set_device_power(&name, "off", false);
                     }
                 });
-                *self.timer_handle.borrow_mut() = Some(h);
+                self.timer_handle.set(h);
             }
         }
     }
@@ -844,7 +838,7 @@ impl PowerDevice {
                             tokio::time::sleep(Duration::from_secs(5)).await;
                         }
                         Ok(state) => {
-                            *self.init_task.borrow_mut() = None;
+                            self.init_task.clear();
                             self.set_state_val(&state);
                             self.set_initial_state().await;
                             self.notify_power_changed();

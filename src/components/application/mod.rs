@@ -119,7 +119,7 @@ pub struct MoonrakerApp {
     key_path: PathBuf,
     route_prefix: String,
     template_cache: RefCell<HashMap<String, Rc<crate::components::template::JinjaTemplate>>>,
-    listeners: RefCell<Vec<tokio::task::JoinHandle<()>>>,
+    listeners: crate::server::TaskSet,
     pub verbose: bool,
     pub http_running: Cell<bool>,
 }
@@ -162,7 +162,7 @@ impl MoonrakerApp {
             key_path,
             route_prefix: route_prefix.clone(),
             template_cache: RefCell::new(HashMap::new()),
-            listeners: RefCell::new(Vec::new()),
+            listeners: Default::default(),
             verbose: srv.is_verbose_enabled(),
             http_running: Cell::new(false),
         });
@@ -397,7 +397,7 @@ impl MoonrakerApp {
                     }
                 }
             });
-            self.listeners.borrow_mut().push(handle);
+            self.listeners.push(handle);
         }
         self.http_running.set(true);
         Ok(())
@@ -424,9 +424,7 @@ impl MoonrakerApp {
     }
 
     pub async fn close(&self) {
-        for h in self.listeners.borrow_mut().drain(..) {
-            h.abort();
-        }
+        self.listeners.cancel_all();
         self.api_cache.borrow_mut().clear();
     }
 

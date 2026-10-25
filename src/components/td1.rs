@@ -69,7 +69,7 @@ struct Td1Connection {
     serial: Rc<AsyncSerial>,
     error_state: Cell<bool>,
     enabled: Cell<bool>,
-    serial_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    serial_task: crate::server::TaskSlot,
     td: Cell<Option<f64>>,
     color: RefCell<Option<String>>,
     scan_time: RefCell<String>,
@@ -86,7 +86,7 @@ impl Td1Connection {
             serial: AsyncSerial::new(&name, port, baud),
             error_state: Cell::new(false),
             enabled: Cell::new(true),
-            serial_task: RefCell::new(None),
+            serial_task: Default::default(),
             td: Cell::new(None),
             color: RefCell::new(None),
             scan_time: RefCell::new(utc_now_iso()),
@@ -97,7 +97,7 @@ impl Td1Connection {
 
     async fn initialize(self: &Rc<Self>) {
         let c = self.clone();
-        *self.serial_task.borrow_mut() = Some(spawn(async move { c.run_serial().await }));
+        self.serial_task.set(spawn(async move { c.run_serial().await }));
         for _ in 0..5 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             if self.serial.connected() {
@@ -194,7 +194,7 @@ impl Td1Connection {
     async fn close(&self) {
         self.enabled.set(false);
         let _ = tokio::time::timeout(Duration::from_secs(1), self.serial.close()).await;
-        let t = self.serial_task.borrow_mut().take();
+        let t = self.serial_task.take();
         if let Some(t) = t {
             let ab = t.abort_handle();
             if tokio::time::timeout(Duration::from_secs(1), t).await.is_err() {
@@ -207,7 +207,7 @@ impl Td1Connection {
         log::info!("Rebooting {}", self.serial_number);
         self.enabled.set(false);
         // set_read_callback(None, force=True) ends the reader loop
-        let t = self.serial_task.borrow_mut().take();
+        let t = self.serial_task.take();
         if let Some(t) = t {
             t.abort();
         }
@@ -240,8 +240,8 @@ impl Td1Connection {
 pub struct Td1 {
     config: ConfigHelper,
     enabled: Cell<bool>,
-    watch_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
-    start_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    watch_task: crate::server::TaskSlot,
+    start_task: crate::server::TaskSlot,
     conns: RefCell<IndexMap<String, Rc<Td1Connection>>>,
 }
 
@@ -251,8 +251,8 @@ impl Td1 {
         let t = Rc::new(Td1 {
             config: config.clone(),
             enabled: Cell::new(true),
-            watch_task: RefCell::new(None),
-            start_task: RefCell::new(None),
+            watch_task: Default::default(),
+            start_task: Default::default(),
             conns: RefCell::new(IndexMap::new()),
         });
         let tt = t.clone();
@@ -332,7 +332,7 @@ impl Component for Td1 {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
         });
-        *self.start_task.borrow_mut() = Some(start);
+        self.start_task.set(start);
         let w = Rc::downgrade(&self);
         let watch = spawn(async move {
             loop {
@@ -364,22 +364,20 @@ impl Component for Td1 {
                 }
             }
         });
-        *self.watch_task.borrow_mut() = Some(watch);
+        self.watch_task.set(watch);
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
         self.enabled.set(false);
-        let st = self.start_task.borrow_mut().take();
+        let st = self.start_task.take();
         if let Some(t) = st {
             let ab = t.abort_handle();
             if tokio::time::timeout(Duration::from_secs(1), t).await.is_err() {
                 ab.abort();
             }
         }
-        if let Some(t) = self.watch_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.watch_task.cancel();
         let conns: Vec<Rc<Td1Connection>> = self.conns.borrow().values().cloned().collect();
         for c in conns {
             c.close().await;

@@ -486,7 +486,7 @@ pub struct UpdateManager {
     initial_refresh_complete: Cell<bool>,
     klippy_identified_evt: RefCell<Option<Rc<crate::utils::AsyncEvent>>>,
     auto_refresh_enabled: bool,
-    refresh_timer: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    refresh_timer: crate::server::TaskSlot,
 }
 
 impl UpdateManager {
@@ -560,7 +560,7 @@ impl UpdateManager {
             initial_refresh_complete: Cell::new(false),
             klippy_identified_evt: RefCell::new(None),
             auto_refresh_enabled,
-            refresh_timer: RefCell::new(None),
+            refresh_timer: Default::default(),
         });
         for ep in ["moonraker", "klipper", "system", "client", "upgrade"] {
             let u = um.clone();
@@ -981,14 +981,12 @@ impl Component for UpdateManager {
                 tokio::time::sleep(std::time::Duration::from_secs_f64(UPDATE_REFRESH_INTERVAL)).await;
             }
         });
-        *self.refresh_timer.borrow_mut() = Some(h);
+        self.refresh_timer.set(h);
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.refresh_timer.borrow_mut().take() {
-            t.abort();
-        }
+        self.refresh_timer.cancel();
         self.instance_tracker.close().await;
         for (_, updater) in self.updaters() {
             updater.close().await;

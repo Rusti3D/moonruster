@@ -49,7 +49,7 @@ pub struct KlippyConnection {
     connected: Cell<bool>,
     connection_mutex: tokio::sync::Mutex<()>,
     log_no_access: Cell<bool>,
-    connection_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    connection_task: crate::server::TaskSlot,
     connection_done: RefCell<Option<Rc<tokio::sync::Notify>>>,
     connecting: Cell<bool>,
     closing: Cell<bool>,
@@ -74,8 +74,8 @@ pub struct KlippyConnection {
     remote_methods: RefCell<HashMap<String, RemoteMethod>>,
     klippy_reg_methods: RefCell<Vec<String>>,
     next_request_id: Cell<i64>,
-    read_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
-    writer_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    read_task: crate::server::TaskSlot,
+    writer_task: crate::server::TaskSlot,
 }
 
 #[async_trait(?Send)]
@@ -104,7 +104,7 @@ impl KlippyConnection {
             connected: Cell::new(false),
             connection_mutex: tokio::sync::Mutex::new(()),
             log_no_access: Cell::new(true),
-            connection_task: RefCell::new(None),
+            connection_task: Default::default(),
             connection_done: RefCell::new(None),
             connecting: Cell::new(false),
             closing: Cell::new(false),
@@ -129,8 +129,8 @@ impl KlippyConnection {
             remote_methods: RefCell::new(HashMap::new()),
             klippy_reg_methods: RefCell::new(Vec::new()),
             next_request_id: Cell::new(crate::components::websockets::next_uid() as i64),
-            read_task: RefCell::new(None),
-            writer_task: RefCell::new(None),
+            read_task: Default::default(),
+            writer_task: Default::default(),
         });
         kc.set_state_message(KlippyState::DISCONNECTED, "Klippy Disconnected");
         let k = Rc::downgrade(&kc);
@@ -318,7 +318,7 @@ impl KlippyConnection {
             kc.connecting.set(false);
             notify.notify_waiters();
         });
-        *self.connection_task.borrow_mut() = Some(handle);
+        self.connection_task.set(handle);
     }
 
     async fn do_connect(self: &Rc<Self>) -> bool {
@@ -355,13 +355,13 @@ impl KlippyConnection {
             *self.writer_tx.borrow_mut() = Some(tx);
             self.connected.set(true);
             let kc = self.clone();
-            *self.writer_task.borrow_mut() = Some(spawn(async move { kc.writer_loop(write_half, rx).await }));
+            self.writer_task.set(spawn(async move { kc.writer_loop(write_half, rx).await }));
             if have_creds {
                 let pid = self.peer_cred.borrow().get("process_id").and_then(|v| v.as_i64()).unwrap_or(0);
                 self.get_service_info(pid).await;
             }
             let kc = self.clone();
-            *self.read_task.borrow_mut() = Some(spawn(async move { kc.read_stream(read_half).await }));
+            self.read_task.set(spawn(async move { kc.read_stream(read_half).await }));
         }
         drop(_guard);
         self.init_klippy_connection().await
@@ -1091,9 +1091,7 @@ impl KlippyConnection {
         }
         self.closing.set(true);
         if self.connecting.get() {
-            if let Some(t) = self.connection_task.borrow_mut().take() {
-                t.abort();
-            }
+            self.connection_task.cancel();
             self.connecting.set(false);
             if let Some(n) = self.connection_done.borrow().as_ref() {
                 n.notify_waiters();
@@ -1103,12 +1101,8 @@ impl KlippyConnection {
         if self.writer_tx.borrow().is_some() {
             *self.writer_tx.borrow_mut() = None;
             self.connected.set(false);
-            if let Some(t) = self.writer_task.borrow_mut().take() {
-                t.abort();
-            }
-            if let Some(t) = self.read_task.borrow_mut().take() {
-                t.abort();
-            }
+            self.writer_task.cancel();
+            self.read_task.cancel();
             drop(_g);
             self.closing.set(false);
             self.on_connection_closed().await;

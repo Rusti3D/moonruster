@@ -4,12 +4,12 @@ use super::*;
 
 /// FlexTimer equivalent: the callback returns the delay until the next call
 pub(super) struct Timer {
-    pub(super) handle: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    pub(super) handle: crate::server::TaskSlot,
 }
 
 impl Timer {
     pub(super) fn new() -> Self {
-        Timer { handle: RefCell::new(None) }
+        Timer { handle: Default::default() }
     }
     pub(super) fn start(&self, delay: f64, cb: Rc<dyn Fn() -> f64>) {
         self.stop();
@@ -22,15 +22,13 @@ impl Timer {
                 d = cb();
             }
         });
-        *self.handle.borrow_mut() = Some(h);
+        self.handle.set(h);
     }
     pub(super) fn stop(&self) {
-        if let Some(h) = self.handle.borrow_mut().take() {
-            h.abort();
-        }
+        self.handle.cancel();
     }
     pub(super) fn is_running(&self) -> bool {
-        self.handle.borrow().is_some()
+        self.handle.is_set()
     }
 }
 

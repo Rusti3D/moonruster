@@ -271,7 +271,7 @@ impl Sensor {
 
 pub struct Sensors {
     sensors: IndexMap<String, Rc<Sensor>>,
-    timer: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    timer: crate::server::TaskSlot,
 }
 
 impl Sensors {
@@ -302,7 +302,7 @@ impl Sensors {
                 }
             }
         }
-        let comp = Rc::new(Sensors { sensors, timer: RefCell::new(None) });
+        let comp = Rc::new(Sensors { sensors, timer: Default::default() });
         for (ep, which) in [("/server/sensors/list", 0), ("/server/sensors/info", 1), ("/server/sensors/measurements", 2)] {
             let c = comp.clone();
             let _ = srv.register_endpoint(
@@ -388,14 +388,12 @@ impl Component for Sensors {
                 tokio::time::sleep(std::time::Duration::from_secs_f64(SENSOR_UPDATE_TIME)).await;
             }
         });
-        *self.timer.borrow_mut() = Some(h);
+        self.timer.set(h);
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.timer.borrow_mut().take() {
-            t.abort();
-        }
+        self.timer.cancel();
     }
 }
 

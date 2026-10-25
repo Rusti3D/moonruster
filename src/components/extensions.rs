@@ -15,15 +15,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 pub struct ExtensionManager {
     agents: RefCell<IndexMap<String, Rc<RemoteConnection>>>,
     agent_methods: RefCell<HashMap<u64, Vec<String>>>,
-    uds_task: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    uds_task: crate::server::TaskSlot,
 }
 
 #[async_trait(?Send)]
 impl Component for ExtensionManager {
     async fn close(self: Rc<Self>) {
-        if let Some(t) = self.uds_task.borrow_mut().take() {
-            t.abort();
-        }
+        self.uds_task.cancel();
     }
 }
 
@@ -51,7 +49,7 @@ impl ExtensionManager {
         let ext = Rc::new(ExtensionManager {
             agents: RefCell::new(IndexMap::new()),
             agent_methods: RefCell::new(HashMap::new()),
-            uds_task: RefCell::new(None),
+            uds_task: Default::default(),
         });
         ext_endpoint!(srv, ext, "/connection/register_remote_method", RequestType::POST, register_agent_method, TransportType::WEBSOCKET);
         ext_endpoint!(srv, ext, "/connection/send_event", RequestType::POST, handle_agent_event, TransportType::WEBSOCKET);
@@ -151,7 +149,7 @@ impl ExtensionManager {
                 return;
             }
         };
-        *self.uds_task.borrow_mut() = Some(spawn(async move {
+        self.uds_task.set(spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
