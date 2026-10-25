@@ -627,7 +627,7 @@ impl Machine {
     }
 
     async fn parse_network_interfaces(&self, sequence: u64, notify: bool) {
-        if sequence % NETWORK_UPDATE_SEQUENCE != 0 {
+        if !sequence.is_multiple_of(NETWORK_UPDATE_SEQUENCE) {
             return;
         }
         // read from the kernel; `ip` is only needed for CAN bus details
@@ -653,7 +653,7 @@ impl Machine {
 
     async fn ip_network(&self) -> Option<(Map<String, Value>, Map<String, Value>)> {
         let shell = server().get::<ShellCommandFactory>()?;
-        let resp = match self.addr_cmd.run_with_response(&shell, 2.0, 1, false, 1, None, None).await {
+        let resp = match self.addr_cmd.run_with_response(&shell, crate::components::shell_command::RunOpts { log_complete: false, ..Default::default() }).await {
             Ok(r) => r,
             Err(e) => {
                 log::error!("Error processing network update\n{}", e);
@@ -794,7 +794,7 @@ impl Machine {
             Some(s) => s,
             None => return Map::new(),
         };
-        let resp = match self.iwgetid_cmd.run_with_response(&shell, 2.0, 1, false, 1, None, None).await {
+        let resp = match self.iwgetid_cmd.run_with_response(&shell, crate::components::shell_command::RunOpts { log_complete: false, ..Default::default() }).await {
             Ok(r) => r,
             Err(_) => {
                 log::info!("Failed to run 'iwgetid' command");

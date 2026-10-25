@@ -300,7 +300,7 @@ fn match_sectcre(value: &str) -> Option<String> {
 
 /// configparser.OPTCRE: r"(?P<option>.*?)\s*(?P<vi>[=:])\s*(?P<value>.*)$"
 fn match_optcre(value: &str) -> Option<(String, String)> {
-    let pos = value.find(|c| c == '=' || c == ':')?;
+    let pos = value.find(['=', ':'])?;
     let name = value[..pos].trim_end().to_string();
     let val = value[pos + 1..].trim_start().to_string();
     Some((name, val))

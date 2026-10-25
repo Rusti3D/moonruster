@@ -274,11 +274,11 @@ impl SpoolManager {
             return;
         }
         if let Some(sid) = self.spool_id.get() {
-            if event.get("type").and_then(|v| v.as_str()) == Some("deleted") {
-                if event.get("payload").and_then(|p| p.get("id")).and_then(|v| v.as_i64()) == Some(sid) {
-                    self.pending_reports.borrow_mut().shift_remove(&sid);
-                    self.set_active_spool(None);
-                }
+            if event.get("type").and_then(|v| v.as_str()) == Some("deleted")
+                && event.get("payload").and_then(|p| p.get("id")).and_then(|v| v.as_i64()) == Some(sid)
+            {
+                self.pending_reports.borrow_mut().shift_remove(&sid);
+                self.set_active_spool(None);
             }
         }
     }

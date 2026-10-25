@@ -280,7 +280,7 @@ impl MqttClient {
             return false;
         }
         self.first_connect.set(false);
-        let _ = self.publish_topic(&self.moonraker_status_topic, json!({"server": "online"}), None, true);
+        self.publish_topic(&self.moonraker_status_topic, json!({"server": "online"}), None, true);
         let subs: Vec<(String, u8)> = self.subscribed_topics.borrow().iter().map(|(k, v)| (k.clone(), v.0)).collect();
         if !subs.is_empty() {
             let mid = self.next_mid();

@@ -320,7 +320,7 @@ impl Provider {
     }
 
     pub(super) async fn update_service_status(&self, sequence: u64, notify: bool) {
-        if sequence % 2 != 0 {
+        if !sequence.is_multiple_of(2) {
             return;
         }
         let cmd = match self.svc_cmd.borrow().clone() {
@@ -330,7 +330,7 @@ impl Provider {
         let svcs: Vec<String> = self.available_services.borrow().keys().cloned().collect();
         let shell = self.shell();
         if self.kind == ProviderKind::SupervisordCli {
-            let resp = match cmd.run_with_response(&shell, 6.0, 1, false, 1, None, Some(&[0, 3])).await {
+            let resp = match cmd.run_with_response(&shell, crate::components::shell_command::RunOpts { timeout: 6.0, log_complete: false, success_codes: Some(&[0, 3]), ..Default::default() }).await {
                 Ok(r) => r,
                 Err(e) => {
                     log::error!("Error processing service state update\n{}", e);
@@ -343,7 +343,7 @@ impl Provider {
                 self.apply_state(svc, new_state, notify);
             }
         } else {
-            let resp = match cmd.run_with_response(&shell, 2.0, 1, false, 1, None, None).await {
+            let resp = match cmd.run_with_response(&shell, crate::components::shell_command::RunOpts { log_complete: false, ..Default::default() }).await {
                 Ok(r) => r,
                 Err(e) => {
                     log::error!("Error processing service state update\n{}", e);

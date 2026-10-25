@@ -62,11 +62,14 @@ use events::*;
 
 // ***** Observer *****
 
+/// A move-from event awaiting its move-to: the parent node, the name and the timeout
+type PendingMove = (Rc<Node>, String, tokio::task::JoinHandle<()>);
+
 struct InotifyState {
     fd: i32,
     watched_roots: RefCell<IndexMap<String, Rc<Node>>>,
     watched_nodes: RefCell<IndexMap<i32, Rc<Node>>>,
-    pending_moves: RefCell<HashMap<u32, (Rc<Node>, String, tokio::task::JoinHandle<()>)>>,
+    pending_moves: RefCell<HashMap<u32, PendingMove>>,
     initialized: Cell<bool>,
     processing_gcode_files: RefCell<IndexSet<String>>,
     pending_coroutines: RefCell<VecDeque<Coro>>,
@@ -241,10 +244,10 @@ impl Observer {
             None => return,
         };
         let node = st.watched_nodes.borrow_mut().shift_remove(&wd);
-        if need_low_level_rm && node.is_some() {
+        if let (true, Some(node)) = (need_low_level_rm, &node) {
             // SAFETY: st.fd is the inotify fd (never closed); a stale wd only makes the call fail
             if unsafe { libc::inotify_rm_watch(st.fd, wd) } < 0 {
-                log::error!("Error removing watch: '{}'", node.unwrap().get_path());
+                log::error!("Error removing watch: '{}'", node.get_path());
             }
         }
     }
@@ -355,7 +358,7 @@ impl Observer {
                         }
                     }
                 } else if p.is_file() {
-                    let suffix = crate::pycompat::pathlib::path_suffix(&p);
+                    let suffix = crate::pycompat::pathlib::path_suffix(p);
                     if VALID_GCODE_EXTS.contains(&suffix.as_str()) {
                         evts.push(self.parse_gcode_metadata(&full));
                     }
@@ -375,7 +378,7 @@ impl Observer {
             return;
         }
         let p = Path::new(item_path);
-        let suffix = crate::pycompat::pathlib::path_suffix(&p);
+        let suffix = crate::pycompat::pathlib::path_suffix(p);
         if p.is_file() && VALID_GCODE_EXTS.contains(&suffix.as_str()) {
             self.parse_gcode_metadata(item_path).wait().await;
         } else if p.is_dir() {
@@ -398,7 +401,7 @@ impl Observer {
             if is_dir {
                 self.scan_directory_metadata(dest_path).await;
             } else {
-                let suffix = crate::pycompat::pathlib::path_suffix(&dp);
+                let suffix = crate::pycompat::pathlib::path_suffix(dp);
                 if dp.is_file() && VALID_GCODE_EXTS.contains(&suffix.as_str()) {
                     self.parse_gcode_metadata(dest_path).wait().await;
                 }

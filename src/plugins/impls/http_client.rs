@@ -97,7 +97,11 @@ pub fn register(r: &mut Registry) {
         let c = a.this::<HttpClient>()?;
         rust_future(async move {
             let p = c
-                .download_file(&url, &ctype, dest, size, progress, request_timeout, attempts, pause)
+                .download_file(
+                    &url,
+                    &ctype,
+                    crate::components::http_client::DownloadOpts { destination: dest, download_size: size, progress, request_timeout, attempts, retry_pause_time: pause },
+                )
                 .await
                 .map_err(|e| server_error(&e.message, e.status_code))?;
             lookup("pathlib", "Path")?.call(&[&py_str(&p.to_string_lossy())])

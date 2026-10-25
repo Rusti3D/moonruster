@@ -493,7 +493,7 @@ impl Component for GcodeAnalysis {
                 let http: Rc<crate::components::http_client::HttpClient> =
                     server().get::<crate::components::http_client::HttpClient>().ok_or_else(|| ServerError::new("http_client", 500))?;
                 match http
-                    .download_file(&format!("{}{}", ESTIMATOR_URL, name), "application/octet-stream", Some(path.clone()), -1, None, 180.0, 1, 1.0)
+                    .download_file(&format!("{}{}", ESTIMATOR_URL, name), "application/octet-stream", crate::components::http_client::DownloadOpts { destination: Some(path.clone()), ..Default::default() })
                     .await
                 {
                     Err(e) => log::error!("Failed to download Klipper estimator\n{}", e.message),

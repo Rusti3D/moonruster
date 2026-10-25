@@ -481,7 +481,16 @@ impl NetDeploy {
             };
             let persist = tempdir.join(self.app.name());
             ch.http()
-                .download_file(&dl_url, &content_type, Some(tmp_file.clone()), size, Some(ch.on_download_progress()), 180.0, 1, 1.0)
+                .download_file(
+                    &dl_url,
+                    &content_type,
+                    crate::components::http_client::DownloadOpts {
+                        destination: Some(tmp_file.clone()),
+                        download_size: size,
+                        progress: Some(ch.on_download_progress()),
+                        ..Default::default()
+                    },
+                )
                 .await?;
             self.app.base.notify_status(&format!("Download Complete, extracting release to '{}'", self.app.path.display()), false);
             if self.app.type_ == AppType::Executable {

@@ -247,11 +247,12 @@ impl AsyncSerial {
         }
     }
 
-    pub fn send(self: &Rc<Self>, data: Vec<u8>) -> oneshot::Receiver<SendResult> {
+    /// Queues data to write; awaiting the result waits for the write
+    pub fn send(self: &Rc<Self>, data: Vec<u8>) -> crate::server::Completion<oneshot::Receiver<SendResult>> {
         let (tx, rx) = oneshot::channel();
         if !self.connected() {
             let _ = tx.send(Err("Serial Device Closed".into()));
-            return rx;
+            return crate::server::Completion(rx);
         }
         self.send_buffer.borrow_mut().push((tx, data));
         if !self.sending.get() {
@@ -259,7 +260,7 @@ impl AsyncSerial {
             let s = self.clone();
             spawn(async move { s.do_send().await });
         }
-        rx
+        crate::server::Completion(rx)
     }
 
     async fn do_send(&self) {

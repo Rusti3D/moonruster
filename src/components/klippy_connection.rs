@@ -43,6 +43,9 @@ enum WriteCmd {
     Request(i64, Vec<u8>),
 }
 
+/// A request sent to Klippy: its method and where its response goes
+type PendingRequest = (String, oneshot::Sender<Result<Value, ServerError>>);
+
 pub struct KlippyConnection {
     uds_address: PathBuf,
     writer_tx: RefCell<Option<mpsc::UnboundedSender<WriteCmd>>>,
@@ -70,7 +73,7 @@ pub struct KlippyConnection {
     state_messages: RefCell<[String; 5]>,
     subscriptions: RefCell<IndexMap<u64, SubEntry>>,
     subscription_cache: RefCell<Map<String, Value>>,
-    pending_requests: RefCell<HashMap<i64, (String, oneshot::Sender<Result<Value, ServerError>>)>>,
+    pending_requests: RefCell<HashMap<i64, PendingRequest>>,
     remote_methods: RefCell<HashMap<String, RemoteMethod>>,
     klippy_reg_methods: RefCell<Vec<String>>,
     next_request_id: Cell<i64>,
@@ -561,7 +564,7 @@ impl KlippyConnection {
             Ok(r) => r,
             Err(e) => {
                 let ia = self.init_attempts.get();
-                if ia % LOG_ATTEMPT_INTERVAL == 0 && ia <= MAX_LOG_ATTEMPTS {
+                if ia.is_multiple_of(LOG_ATTEMPT_INTERVAL) && ia <= MAX_LOG_ATTEMPTS {
                     log::info!(
                         "{}\nKlippy info request error.  This indicates that\nKlippy may have experienced an error during startup.\nPlease check klippy.log for more information",
                         e

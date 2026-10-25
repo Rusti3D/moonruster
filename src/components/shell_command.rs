@@ -287,16 +287,8 @@ impl ShellCommand {
         Some((!timed_out, timed_out, out, err))
     }
 
-    pub async fn run(
-        self: &Rc<Self>,
-        factory: &ShellCommandFactory,
-        timeout: f64,
-        verbose: bool,
-        log_complete: bool,
-        sig_idx: usize,
-        proc_input: Option<&str>,
-        success_codes: Option<&[i32]>,
-    ) -> bool {
+    pub async fn run(self: &Rc<Self>, factory: &ShellCommandFactory, opts: RunOpts<'_>) -> bool {
+        let RunOpts { timeout, verbose, log_complete, sig_idx, proc_input, success_codes, .. } = opts;
         let _g = self.run_lock.lock().await;
         factory.add_running_command(self);
         self.reset();
@@ -311,16 +303,8 @@ impl ShellCommand {
         self.check_proc_success(complete, log_complete, success_codes.unwrap_or(&[0]))
     }
 
-    pub async fn run_with_response(
-        self: &Rc<Self>,
-        factory: &ShellCommandFactory,
-        timeout: f64,
-        attempts: usize,
-        log_complete: bool,
-        sig_idx: usize,
-        proc_input: Option<&str>,
-        success_codes: Option<&[i32]>,
-    ) -> Result<String, ShellCommandError> {
+    pub async fn run_with_response(self: &Rc<Self>, factory: &ShellCommandFactory, opts: RunOpts<'_>) -> Result<String, ShellCommandError> {
+        let RunOpts { timeout, attempts, log_complete, sig_idx, proc_input, success_codes, .. } = opts;
         let _g = self.run_lock.lock().await;
         factory.add_running_command(self);
         let mut attempts = attempts.max(1);
@@ -480,12 +464,39 @@ impl ShellCommandFactory {
     /// Executes a command and returns decoded stdout
     pub async fn exec_cmd(&self, cmd: &str, opts: ExecOpts<'_>) -> Result<String, ShellCommandError> {
         let scmd = ShellCommand::new(cmd, None, None, opts.env, opts.log_stderr, opts.cwd).map_err(build_error)?;
-        scmd.run_with_response(self, opts.timeout, opts.attempts, opts.log_complete, opts.sig_idx, opts.proc_input, opts.success_codes)
-            .await
+        let run = RunOpts {
+            timeout: opts.timeout,
+            attempts: opts.attempts,
+            log_complete: opts.log_complete,
+            sig_idx: opts.sig_idx,
+            proc_input: opts.proc_input,
+            success_codes: opts.success_codes,
+            ..Default::default()
+        };
+        scmd.run_with_response(self, run).await
     }
 
     pub async fn exec(&self, cmd: &str, timeout: f64) -> Result<String, ShellCommandError> {
         self.exec_cmd(cmd, ExecOpts { timeout, ..Default::default() }).await
+    }
+}
+
+/// ShellCommand.run / run_with_response's arguments, with Moonraker's defaults
+pub struct RunOpts<'a> {
+    pub timeout: f64,
+    /// run only
+    pub verbose: bool,
+    /// run_with_response only
+    pub attempts: usize,
+    pub log_complete: bool,
+    pub sig_idx: usize,
+    pub proc_input: Option<&'a str>,
+    pub success_codes: Option<&'a [i32]>,
+}
+
+impl Default for RunOpts<'_> {
+    fn default() -> Self {
+        RunOpts { timeout: 2.0, verbose: true, attempts: 1, log_complete: true, sig_idx: 1, proc_input: None, success_codes: None }
     }
 }
 

@@ -319,11 +319,9 @@ impl OctoPrintCompat {
         };
         let user = req.get_current_user().cloned();
         let mut started = false;
-        if !["printing", "paused", "not_avail"].contains(&pstate.as_str()) {
-            if apis.start_print(filename, false, user.clone()).await.is_ok() {
-                log::debug!("Job '{}' started via OctoPrint API", filename);
-                started = true;
-            }
+        if !["printing", "paused", "not_avail"].contains(&pstate.as_str()) && apis.start_print(filename, false, user.clone()).await.is_ok() {
+            log::debug!("Job '{}' started via OctoPrint API", filename);
+            started = true;
         }
         if !started {
             if fm.upload_queue_enabled() {

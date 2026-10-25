@@ -168,6 +168,23 @@ impl Component for HttpClient {}
 
 pub type ProgressCallback = Rc<dyn Fn(i64, i64, i64)>;
 
+/// download_file's keyword arguments, with Moonraker's defaults
+pub struct DownloadOpts {
+    pub destination: Option<PathBuf>,
+    pub download_size: i64,
+    /// progress_callback(percent, size, received)
+    pub progress: Option<ProgressCallback>,
+    pub request_timeout: f64,
+    pub attempts: usize,
+    pub retry_pause_time: f64,
+}
+
+impl Default for DownloadOpts {
+    fn default() -> Self {
+        DownloadOpts { destination: None, download_size: -1, progress: None, request_timeout: 180.0, attempts: 1, retry_pause_time: 1.0 }
+    }
+}
+
 impl HttpClient {
     pub fn new(_config: &ConfigHelper) -> Rc<Self> {
         let client = reqwest::Client::builder()
@@ -399,17 +416,8 @@ impl HttpClient {
         })
     }
 
-    pub async fn download_file(
-        &self,
-        url: &str,
-        content_type: &str,
-        destination: Option<PathBuf>,
-        download_size: i64,
-        progress: Option<ProgressCallback>,
-        request_timeout: f64,
-        attempts: usize,
-        retry_pause_time: f64,
-    ) -> Result<PathBuf, ServerError> {
+    pub async fn download_file(&self, url: &str, content_type: &str, opts: DownloadOpts) -> Result<PathBuf, ServerError> {
+        let DownloadOpts { destination, download_size, progress, request_timeout, attempts, retry_pause_time } = opts;
         for i in 0..attempts.max(1) {
             let need_cd = destination.is_none();
             let mut dest = destination.clone().unwrap_or_else(|| {

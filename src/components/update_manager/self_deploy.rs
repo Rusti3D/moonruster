@@ -109,7 +109,18 @@ impl SelfDeploy {
         if crate::utils::access_write(dir) {
             let tmp = dir.join(".moonruster.update");
             ch.http()
-                .download_file(&dl.0, &dl.1, Some(tmp.clone()), dl.2, Some(ch.on_download_progress()), DOWNLOAD_TIMEOUT, 3, 1.0)
+                .download_file(
+                    &dl.0,
+                    &dl.1,
+                    crate::components::http_client::DownloadOpts {
+                        destination: Some(tmp.clone()),
+                        download_size: dl.2,
+                        progress: Some(ch.on_download_progress()),
+                        request_timeout: DOWNLOAD_TIMEOUT,
+                        attempts: 3,
+                        ..Default::default()
+                    },
+                )
                 .await?;
             use std::os::unix::fs::PermissionsExt;
             let res = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).and_then(|_| std::fs::rename(&tmp, exe));
@@ -122,7 +133,18 @@ impl SelfDeploy {
         let tmp = tempdir.join("moonruster");
         let res: Result<(), ServerError> = async {
             ch.http()
-                .download_file(&dl.0, &dl.1, Some(tmp.clone()), dl.2, Some(ch.on_download_progress()), DOWNLOAD_TIMEOUT, 3, 1.0)
+                .download_file(
+                    &dl.0,
+                    &dl.1,
+                    crate::components::http_client::DownloadOpts {
+                        destination: Some(tmp.clone()),
+                        download_size: dl.2,
+                        progress: Some(ch.on_download_progress()),
+                        request_timeout: DOWNLOAD_TIMEOUT,
+                        attempts: 3,
+                        ..Default::default()
+                    },
+                )
                 .await?;
             let machine = server().get::<Machine>().ok_or_else(|| ServerError::new("machine", 500))?;
             machine.exec_sudo_command(&format!("install -m 755 {} {}", tmp.display(), exe.display()), 1, 30.0).await?;

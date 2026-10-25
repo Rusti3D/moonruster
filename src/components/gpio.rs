@@ -145,6 +145,8 @@ impl GpioOutputPin {
 
 pub type GpioEventCallback = Rc<dyn Fn(f64, f64, i32)>;
 
+pub type ErrorCallback = Rc<dyn Fn(String)>;
+
 pub struct GpioEvent {
     pub name: String,
     pub info: PinInfo,
@@ -152,7 +154,7 @@ pub struct GpioEvent {
     closed: Cell<bool>,
     value: Cell<i32>,
     callback: GpioEventCallback,
-    on_error: RefCell<Option<Rc<dyn Fn(String)>>>,
+    on_error: RefCell<Option<ErrorCallback>>,
     debounce_period: Cell<f64>,
     last_event_time: Cell<f64>,
     error_count: Cell<u32>,
@@ -448,7 +450,7 @@ impl GpioFactory {
 #[async_trait(?Send)]
 impl Component for GpioFactory {
     async fn close(self: Rc<Self>) {
-        for (_, r) in self.reserved.borrow().iter() {
+        for r in self.reserved.borrow().values() {
             match r {
                 Reserved::Out(p) => p.close(),
                 Reserved::Event(e) => e.close(),

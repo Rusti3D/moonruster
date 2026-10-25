@@ -193,6 +193,19 @@ impl TaskSet {
     }
 }
 
+/// Work already started, e.g. a message sent: awaiting this waits for its
+/// outcome (an acknowledgement), dropping it leaves the work as it is. Not a
+/// Future, so a caller not interested in the outcome need not use it.
+pub struct Completion<F>(pub F);
+
+impl<F: std::future::Future> std::future::IntoFuture for Completion<F> {
+    type Output = F::Output;
+    type IntoFuture = F;
+    fn into_future(self) -> F {
+        self.0
+    }
+}
+
 /// An event's handlers, scheduled by send_event: awaiting it waits for
 /// them, dropping it leaves them running (not a Future, so it need not be
 /// used)
@@ -702,6 +715,7 @@ impl Server {
         self.app().register_endpoint(endpoint, request_types, cb, TransportType::all(), true, None, true, false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn register_endpoint_ext(
         &self,
         endpoint: &str,

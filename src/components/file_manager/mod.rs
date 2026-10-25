@@ -784,9 +784,8 @@ impl FileManager {
                         continue;
                     }
                     let rel = cp.strip_prefix(&root_parent).unwrap_or(&cp).to_string_lossy().to_string();
-                    match add(&mut zw, &cp, &rel) {
-                        Err(Some(e)) => return Err(e),
-                        _ => {}
+                    if let Err(Some(e)) = add(&mut zw, &cp, &rel) {
+                        return Err(e);
                     }
                 }
             }
@@ -959,10 +958,8 @@ impl FileManager {
         let mut started = false;
         let mut queued = false;
         if info.start_print {
-            if can_start {
-                if server().klippy_apis().start_print(&info.filename, false, user.clone()).await.is_ok() {
-                    started = true;
-                }
+            if can_start && server().klippy_apis().start_print(&info.filename, false, user.clone()).await.is_ok() {
+                started = true;
             }
             if self.queue_gcodes && !started {
                 if let Some(jq) = server().get::<crate::components::job_queue::JobQueue>() {

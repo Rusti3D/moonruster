@@ -85,13 +85,13 @@ impl MqttClient {
         payload: Value,
         qos: Option<u8>,
         retain: bool,
-    ) -> LocalBoxFuture<'static, Result<(), ServerError>> {
+    ) -> Published {
         let qos = match qos {
             Some(q) if q != 0 => q,
             _ => self.qos,
         };
         if qos > 2 {
-            return Box::pin(async { Err(ServerError::bad("QOS must be between 0 and 2")) });
+            return Completion(Box::pin(async { Err(ServerError::bad("QOS must be between 0 and 2")) }));
         }
         let data: Vec<u8> = match &payload {
             Value::Object(_) | Value::Array(_) => payload.to_string().into_bytes(),
@@ -111,16 +111,16 @@ impl MqttClient {
         data: Vec<u8>,
         qos: Option<u8>,
         retain: bool,
-    ) -> LocalBoxFuture<'static, Result<(), ServerError>> {
+    ) -> Published {
         let qos = match qos {
             Some(q) if q != 0 => q,
             _ => self.qos,
         };
         if qos > 2 {
-            return Box::pin(async { Err(ServerError::bad("QOS must be between 0 and 2")) });
+            return Completion(Box::pin(async { Err(ServerError::bad("QOS must be between 0 and 2")) }));
         }
         if topic.is_empty() || topic.contains('+') || topic.contains('#') || data.len() > 268435455 {
-            return Box::pin(async { Err(ServerError::new("MQTT Message Queue Full", 529)) });
+            return Completion(Box::pin(async { Err(ServerError::new("MQTT Message Queue Full", 529)) }));
         }
         let mut body = Vec::new();
         put_str(&mut body, topic.as_bytes());
@@ -136,13 +136,13 @@ impl MqttClient {
         if qos == 0 {
             // No delivery guarantee for qos 0, resolve immediately
             self.send_raw(pkt);
-            return Box::pin(async { Ok(()) });
+            return Completion(Box::pin(async { Ok(()) }));
         }
         let (tx, rx) = oneshot::channel();
         self.pending_acks.borrow_mut().insert(mid, PendingAck::Publish(tx));
         self.inflight.borrow_mut().insert(mid, pkt.clone());
         self.send_raw(pkt);
-        Box::pin(async move { rx.await.unwrap_or_else(|_| Err(ServerError::new("Moonraker Shutdown", 503))) })
+        Completion(Box::pin(async move { rx.await.unwrap_or_else(|_| Err(ServerError::new("Moonraker Shutdown", 503))) }))
     }
 
     pub(super) async fn handle_publish_request(self: Rc<Self>, req: WebRequest) -> ApiResult {

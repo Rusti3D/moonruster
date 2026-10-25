@@ -74,6 +74,10 @@ pub enum RawMissing {
     Option,
 }
 
+/// A numeric option's value as a number (and whether it is an int) and its
+/// bounds
+type NumericCheck<'a, T> = (&'a dyn Fn(&T) -> Option<(f64, bool)>, Bounds);
+
 #[derive(Default, Clone, Copy)]
 pub struct Bounds {
     pub above: Option<f64>,
@@ -195,7 +199,7 @@ impl ConfigHelper {
         func: &dyn Fn(&ConfigParser, &str, &str) -> Result<T, FetchErr>,
         option: &str,
         default: Option<T>,
-        numeric: Option<(&dyn Fn(&T) -> Option<(f64, bool)>, Bounds)>,
+        numeric: Option<NumericCheck<'_, T>>,
         deprecate: bool,
         to_json: &dyn Fn(&T) -> Value,
     ) -> CResult<T> {
@@ -282,7 +286,7 @@ impl ConfigHelper {
         fetch: &dyn Fn(&str, &str) -> Result<T, Result<String, String>>,
         option: &str,
         default: Option<T>,
-        numeric: Option<(&dyn Fn(&T) -> Option<(f64, bool)>, Bounds)>,
+        numeric: Option<NumericCheck<'_, T>>,
         deprecate: bool,
         to_json: &dyn Fn(&T) -> Value,
     ) -> CResult<T> {

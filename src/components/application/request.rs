@@ -66,7 +66,7 @@ pub fn split_host_and_port(netloc: &str) -> (String, Option<u16>) {
 
 /// python's urllib.parse.parse_qs_bytes with keep_blank_values=True
 pub fn parse_qs(qs: &str, out: &mut IndexMap<String, Vec<String>>) {
-    for part in qs.split(|c| c == '&') {
+    for part in qs.split('&') {
         if part.is_empty() {
             continue;
         }

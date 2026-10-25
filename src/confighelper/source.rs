@@ -72,7 +72,7 @@ pub fn splitlines(s: &str) -> Vec<String> {
 }
 
 pub(super) fn first_opt_name(line: &str) -> String {
-    line.split(|c| c == ':' || c == '=').next().unwrap_or("").trim().to_string()
+    line.split([':', '=']).next().unwrap_or("").trim().to_string()
 }
 
 #[derive(Default, Debug, Clone)]

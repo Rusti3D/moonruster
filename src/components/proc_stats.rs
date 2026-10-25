@@ -254,7 +254,7 @@ impl ProcStats {
                 "system_memory": Value::Object(self.memory_usage.borrow().clone()),
                 "websocket_connections": srv.wsm().get_count(),
             }));
-        if self.update_sequence.get() % THROTTLE_CHECK_INTERVAL == 0 && self.vcgencmd {
+        if self.update_sequence.get().is_multiple_of(THROTTLE_CHECK_INTERVAL) && self.vcgencmd {
             let ts = self.check_throttled_state().await;
             let cur = ts["bits"].as_u64().unwrap_or(0);
             if cur & !self.total_throttled.get() != 0 {

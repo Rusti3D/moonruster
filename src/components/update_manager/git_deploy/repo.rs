@@ -1265,7 +1265,7 @@ impl GitRepo {
                     }
                 }
             });
-            scmd.run(&shell, 0.0, false, true, 1, None, None).await;
+            scmd.run(&shell, crate::components::shell_command::RunOpts { timeout: 0.0, verbose: false, ..Default::default() }).await;
             watchdog.abort();
             if scmd.get_return_code() == Some(0) {
                 self.st.borrow_mut().git_messages.clear();

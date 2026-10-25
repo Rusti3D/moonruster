@@ -105,6 +105,9 @@ struct FqdnInfo {
     expires_at: f64,
 }
 
+/// A oneshot token's client address, user and expiry timer
+type OneshotToken = (Option<IpAddr>, Option<UserInfo>, tokio::task::JoinHandle<()>);
+
 pub struct Authorization {
     login_timeout: i64,
     force_logins: bool,
@@ -121,7 +124,7 @@ pub struct Authorization {
     trusted_users: RefCell<HashMap<IpAddr, TrustedUser>>,
     trusted_proxies: RefCell<Vec<IpAddr>>,
     last_proxy_clear_time: Cell<f64>,
-    oneshot_tokens: RefCell<HashMap<String, (Option<IpAddr>, Option<UserInfo>, tokio::task::JoinHandle<()>)>>,
+    oneshot_tokens: RefCell<HashMap<String, OneshotToken>>,
     cors_domains: Vec<Regex>,
     cors_patterns: Vec<String>,
     trusted_ips: Vec<IpAddr>,
@@ -1064,7 +1067,7 @@ fn base32_encode(data: &[u8]) -> String {
     if bits > 0 {
         out.push(ALPHABET[((value << (5 - bits)) & 31) as usize] as char);
     }
-    while out.len() % 8 != 0 {
+    while !out.len().is_multiple_of(8) {
         out.push('=');
     }
     out

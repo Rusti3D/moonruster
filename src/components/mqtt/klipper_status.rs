@@ -48,13 +48,13 @@ impl MqttClient {
                 if let Value::Object(o) = objval {
                     for (statekey, v) in o {
                         let payload = json!({"eventtime": eventtime, "value": v});
-                        let _ = self.publish_topic(&format!("{}/{}/{}", self.klipper_state_prefix, objkey, statekey), payload, None, true);
+                        self.publish_topic(&format!("{}/{}/{}", self.klipper_state_prefix, objkey, statekey), payload, None, true);
                     }
                 }
             }
         } else {
             let payload = json!({"eventtime": eventtime, "status": status});
-            let _ = self.publish_topic(&self.klipper_status_topic, payload, None, false);
+            self.publish_topic(&self.klipper_status_topic, payload, None, false);
         }
     }
 

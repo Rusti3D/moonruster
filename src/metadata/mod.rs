@@ -363,7 +363,7 @@ impl Slicer {
     fn parse_layer_count(&self) -> Option<Value> {
         let cd = self.config_data();
         match self.kind {
-            k if k == Kind::BambuStudio => ival(regex_find_int(r"; total layer number: (%D)", cd)),
+            Kind::BambuStudio => ival(regex_find_int(r"; total layer number: (%D)", cd)),
             k if k.is_prusa() => ival(regex_find_int(r"; total layers count = (%D)", cd)),
             Kind::Cura => ival(regex_find_int(r";LAYER_COUNT\:(%D)", &self.header_data)),
             Kind::IceSL => ival(regex_find_int(r";\slayer_count\s:\s+(%D)", &self.header_data)),
@@ -1065,7 +1065,7 @@ fn make_miniature(src: &Path, dest: &Path) -> Result<(u32, u32), String> {
         for p in r.pixels_mut() {
             let a = p[3] as u32;
             for c in 0..3 {
-                p[c] = if a == 0 { 0 } else { ((p[c] as u32 * 255 + a / 2) / a).min(255) as u8 };
+                p[c] = (p[c] as u32 * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255)) as u8;
             }
         }
         image::DynamicImage::ImageRgba8(r)
@@ -1281,7 +1281,7 @@ fn extract_ufp(ufp_path: &Path, dest_path: &Path) -> Result<(), String> {
         return Err("missing".into());
     }
     let name = dest_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let thumb_name = format!("{}.png", crate::pycompat::posixpath::splitext(&name).0.to_string());
+    let thumb_name = format!("{}.png", crate::pycompat::posixpath::splitext(&name).0);
     let thumb_dir = dest_path.parent().unwrap_or(Path::new(".")).join(".thumbs");
     let f = std::fs::File::open(ufp_path).map_err(|e| e.to_string())?;
     let mut zf = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;

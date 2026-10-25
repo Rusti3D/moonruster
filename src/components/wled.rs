@@ -217,7 +217,7 @@ impl Strip {
                 if want {
                     let (tx, rx) = tokio::sync::oneshot::channel();
                     *pending.borrow_mut() = Some(tx);
-                    let _ = serial.send(state.to_string().into_bytes());
+                    serial.send(state.to_string().into_bytes());
                     let r = tokio::time::timeout(std::time::Duration::from_secs(2), rx).await;
                     *pending.borrow_mut() = None;
                     match r {
@@ -226,7 +226,7 @@ impl Strip {
                         Err(_) => Err(String::new()),
                     }
                 } else {
-                    let _ = serial.send(state.to_string().into_bytes());
+                    serial.send(state.to_string().into_bytes());
                     Ok(json!({}))
                 }
             }

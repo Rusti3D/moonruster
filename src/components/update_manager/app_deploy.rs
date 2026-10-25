@@ -506,17 +506,15 @@ impl AppDeploy {
         let npm_hash = dep_info.get("npm_hash").and_then(|v| v.as_str()).map(String::from);
         let cur_hash = Self::get_file_hash(self.npm_pkg_json.as_ref());
         let need = matches!((&npm_hash, &cur_hash), (Some(a), Some(b)) if a != b);
-        if force || need {
-            if self.npm_pkg_json.is_some() {
-                self.base.notify_status("Updating Node Packages...", false);
-                let r = self
-                    .base
-                    .cmd_helper
-                    .run_cmd("npm ci --only=prod", 600.0, true, 1, None, Some(self.path.display().to_string()), 1, false)
-                    .await;
-                if r.is_err() {
-                    self.base.notify_status("Node Package Update failed", false);
-                }
+        if (force || need) && self.npm_pkg_json.is_some() {
+            self.base.notify_status("Updating Node Packages...", false);
+            let r = self
+                .base
+                .cmd_helper
+                .run_cmd("npm ci --only=prod", 600.0, true, 1, None, Some(self.path.display().to_string()), 1, false)
+                .await;
+            if r.is_err() {
+                self.base.notify_status("Node Package Update failed", false);
             }
         }
     }

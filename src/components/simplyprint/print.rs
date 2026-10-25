@@ -23,7 +23,7 @@ impl SimplyPrint {
                 s.on_download_progress(pct);
             }
         });
-        let res = Self::http().download_file(url, "text/plain,applicaton/octet-stream", None, -1, Some(cb), 3600.0, 1, 1.0).await;
+        let res = Self::http().download_file(url, "text/plain,applicaton/octet-stream", crate::components::http_client::DownloadOpts { progress: Some(cb), request_timeout: 3600.0, ..Default::default() }).await;
         self.download_progress.set(-1);
         let tmp_path = match res {
             Ok(p) => p,

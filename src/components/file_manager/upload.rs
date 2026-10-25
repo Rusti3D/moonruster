@@ -35,7 +35,7 @@ pub async fn process_upload(
     let stream = http_body_util::BodyStream::new(body).filter_map(|frame| async move {
         match frame {
             Ok(f) => f.into_data().ok().map(Ok::<_, std::io::Error>),
-            Err(e) => Some(Err(std::io::Error::new(std::io::ErrorKind::Other, e))),
+            Err(e) => Some(Err(std::io::Error::other(e))),
         }
     });
     let constraints = multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(max_upload_size));

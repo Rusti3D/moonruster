@@ -5,7 +5,7 @@
 
 use crate::common::*;
 use crate::confighelper::{Bounds, ConfigError, ConfigHelper};
-use crate::server::{server, spawn, Component};
+use crate::server::{server, spawn, Completion, Component};
 use crate::utils::AsyncEvent;
 use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
@@ -24,6 +24,10 @@ const PROTOCOLS: [(&str, u8); 3] = [("v3.1", 3), ("v3.1.1", 4), ("v5", 5)];
 
 pub type MqttCallback = Rc<dyn Fn(Vec<u8>)>;
 
+/// A message published: awaiting it waits for the broker's acknowledgement
+/// (QoS 1 and 2)
+pub type Published = crate::server::Completion<LocalBoxFuture<'static, Result<(), ServerError>>>;
+
 pub struct SubscriptionHandle {
     pub topic: String,
     callback: MqttCallback,
@@ -40,6 +44,9 @@ enum PendingAck {
     Subscribe(Vec<String>),
     Unsubscribe(Vec<String>),
 }
+
+/// A subscribed topic's QoS and its handles
+type Subscribed = (u8, Vec<Rc<SubscriptionHandle>>);
 
 pub struct MqttClient {
     uid: u64,
@@ -60,7 +67,7 @@ pub struct MqttClient {
     writer: RefCell<Option<mpsc::UnboundedSender<Vec<u8>>>>,
     session_id: Cell<u64>,
     first_connect: Cell<bool>,
-    subscribed_topics: RefCell<IndexMap<String, (u8, Vec<Rc<SubscriptionHandle>>)>>,
+    subscribed_topics: RefCell<IndexMap<String, Subscribed>>,
     pending_responses: RefCell<Vec<RespSlot>>,
     pending_acks: RefCell<HashMap<u16, PendingAck>>,
     // outgoing qos > 0 publish packets awaiting acknowledgement, resent on reconnect

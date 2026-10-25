@@ -54,7 +54,7 @@ pub(super) fn distro_release_info() -> Value {
         }
         if let Ok(data) = std::fs::read_to_string(&f) {
             let line = data.lines().next().unwrap_or("").trim().to_string();
-            let id = fname.split(|c| c == '-' || c == '_').next().unwrap_or("").to_string();
+            let id = fname.split(['-', '_']).next().unwrap_or("").to_string();
             let mut info = Map::new();
             if let Some(c) = re.captures(&line) {
                 info.insert("name".into(), json!(c.name("name").map(|m| m.as_str()).unwrap_or("")));

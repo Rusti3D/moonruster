@@ -557,7 +557,7 @@ impl PanelDue {
     fn write_response(&self, response: Value) {
         let mut data = response.to_string().into_bytes();
         data.extend_from_slice(b"\r\n");
-        let _ = self.ser_conn.send(data);
+        self.ser_conn.send(data);
     }
 
     fn get_printer_status(&self, p_state: &Map<String, Value>) -> String {

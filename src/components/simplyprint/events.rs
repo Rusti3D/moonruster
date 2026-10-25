@@ -34,9 +34,9 @@ impl SimplyPrint {
             log::debug!("SimplyPrint: Heaters Detected: {}", py_repr(&json!(avail)));
             let mut htrs = self.heaters.borrow_mut();
             for h in avail {
-                if h.starts_with("extruder") {
+                if let Some(num) = h.strip_prefix("extruder") {
                     sub_objs.insert(h.clone(), json!(["temperature", "target"]));
-                    let tool = if h == "extruder" { "tool0".to_string() } else { format!("tool{}", &h[8..]) };
+                    let tool = if num.is_empty() { "tool0".to_string() } else { format!("tool{}", num) };
                     htrs.retain(|(k, _)| *k != h);
                     htrs.push((h, tool));
                 } else if h == "heater_bed" {

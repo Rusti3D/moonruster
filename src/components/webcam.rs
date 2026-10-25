@@ -60,10 +60,7 @@ impl WebCam {
             return Err(ServerError::bad(format!("Invalid value for 'rotation': {}", py_str(&fields["rotation"]))));
         }
         let ar = fields.get("aspect_ratio").map(py_str).unwrap_or_default();
-        let (pre, post) = match ar.split_once(':') {
-            Some(x) => x,
-            None => ("", ""),
-        };
+        let (pre, post) = ar.split_once(':').unwrap_or_default();
         let isdigit = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
         if !(isdigit(pre) && ar.contains(':') && isdigit(post)) {
             return Err(ServerError::bad(format!("Invalid value for 'aspect_ratio': {}", ar)));
@@ -174,7 +171,7 @@ impl WebCam {
         if let Some(sh) = shell {
             if let Ok(resp) = sh.exec("ss -ltn", 2.0).await {
                 for line in resp.split('\n').skip(1) {
-                    let parts: Vec<&str> = line.trim().split_whitespace().collect();
+                    let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() < 5 {
                         continue;
                     }

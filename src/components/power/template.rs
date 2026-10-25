@@ -48,7 +48,7 @@ impl minijinja::value::Object for HttpRequestObj {
         args: &[minijinja::Value],
     ) -> Result<minijinja::Value, minijinja::Error> {
         let to_json = |v: &minijinja::Value| serde_json::to_value(v).unwrap_or(Value::Null);
-        let s = |i: usize| args.get(i).map(|a| to_json(a)).map(|v| crate::pyfmt::py_str(&v)).unwrap_or_default();
+        let s = |i: usize| args.get(i).map(to_json).map(|v| crate::pyfmt::py_str(&v)).unwrap_or_default();
         let none = minijinja::Value::from(());
         match method {
             "send" => {

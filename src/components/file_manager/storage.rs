@@ -15,13 +15,16 @@ use std::rc::Rc;
 pub const METADATA_NAMESPACE: &str = "gcode_metadata";
 pub const METADATA_VERSION: i64 = 3;
 
+/// A metadata request: its options and the event set when it is done
+type PendingRequest = (Map<String, Value>, Rc<AsyncEvent>);
+
 pub struct MetadataStorage {
     enable_object_proc: bool,
     default_timeout: f64,
     gc_path: RefCell<String>,
     mddb: NamespaceWrapper,
     metadata: RefCell<IndexMap<String, Value>>,
-    pending_requests: RefCell<IndexMap<String, (Map<String, Value>, Rc<AsyncEvent>)>>,
+    pending_requests: RefCell<IndexMap<String, PendingRequest>>,
     busy: Cell<bool>,
     processors: RefCell<IndexMap<String, Value>>,
     me: RefCell<std::rc::Weak<MetadataStorage>>,
@@ -409,7 +412,7 @@ impl MetadataStorage {
         let shell: Rc<crate::components::shell_command::ShellCommandFactory> =
             server().get::<crate::components::shell_command::ShellCommandFactory>().ok_or_else(|| ServerError::new("shell_command not loaded", 500))?;
         let scmd = shell.build_shell_command(&cmd, Some(Rc::new(move |line: Vec<u8>| r2.borrow_mut().extend(line))), None, None, true, None)?;
-        let ok = scmd.run(&shell, timeout, true, true, 1, None, None).await;
+        let ok = scmd.run(&shell, crate::components::shell_command::RunOpts { timeout, ..Default::default() }).await;
         let _ = std::fs::remove_file(&cfg_path);
         if !ok {
             return Err(ServerError::bad("Extract Metadata returned with error"));
