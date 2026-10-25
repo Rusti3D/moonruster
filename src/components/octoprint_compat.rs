@@ -57,7 +57,7 @@ impl OctoPrintCompat {
             last_print_stats: RefCell::new(Map::new()),
         });
         let ow = Rc::downgrade(&o);
-        srv.on_event_async("server:klippy_ready", move |_| {
+        srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
             let ow = ow.clone();
             async move {
                 if let Some(o) = ow.upgrade() {
@@ -66,11 +66,9 @@ impl OctoPrintCompat {
             }
         });
         let ow = Rc::downgrade(&o);
-        srv.on_event("server:status_update", move |args| {
+        srv.on::<crate::events::StatusUpdate>(move |status| {
             if let Some(o) = ow.upgrade() {
-                if let Some(Value::Object(status)) = args.first() {
-                    o.handle_status_update(status);
-                }
+                o.handle_status_update(status);
             }
         });
         octo_endpoint!(srv, o, "/api/version", RequestType::GET, get_version);

@@ -3,7 +3,7 @@
 use crate::common::*;
 use crate::components::application::{error_response, full_body, Body, HttpError, HttpRequest, HttpResponse};
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component, EventObject};
+use crate::server::{server, spawn, Component};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
@@ -252,7 +252,7 @@ impl RemoteConnection {
     }
 
     pub fn send_notification(&self, name: &str, data: Vec<Value>) {
-        server().wsm().notify_clients(name, data, &[self.uid]);
+        server().wsm().notify_clients(name, &data, &[self.uid]);
     }
 
     pub fn resolve_pending_response(&self, response_id: &Value, result: Result<Value, ServerError>) -> bool {
@@ -286,6 +286,17 @@ impl RemoteConnection {
             self.queue_message_str(resp);
         }
     }
+}
+
+/// The JSON-RPC notification notify_<name> with data as its params, as
+/// json!({"jsonrpc", "method", "params"}) encodes it, without building it
+fn notification(name: &str, data: &[Value]) -> String {
+    let method = serde_json::to_string(&format!("notify_{}", name)).unwrap_or_default();
+    if data.is_empty() {
+        return format!(r#"{{"jsonrpc":"2.0","method":{}}}"#, method);
+    }
+    let params = serde_json::to_string(data).unwrap_or_default();
+    format!(r#"{{"jsonrpc":"2.0","method":{},"params":{}}}"#, method, params)
 }
 
 fn is_empty_params(p: &Value) -> bool {
@@ -383,9 +394,9 @@ impl WebsocketManager {
             .unwrap_or_else(|| event_name.rsplit(':').next().unwrap_or(event_name).to_string());
         let is_logout = event_type == Some("logout");
         let wsm = Rc::downgrade(self);
-        server().on_event(event_name, move |args| {
+        server().on_values(event_name, move |args| {
             if let Some(w) = wsm.upgrade() {
-                w.notify_clients(&notify_name, args.clone(), &[]);
+                w.notify_clients(&notify_name, args, &[]);
                 if is_logout {
                     if let Some(user) = args.first() {
                         w.process_logout(user);
@@ -450,14 +461,14 @@ impl WebsocketManager {
     pub fn add_client(&self, sc: Rc<RemoteConnection>) {
         let uid = sc.uid();
         self.clients.borrow_mut().insert(uid, sc.clone());
-        server().send_event_object("websockets:client_added", vec![json!(uid)], EventObject::Transport(sc));
+        server().emit::<crate::events::ClientAdded>(sc);
         log::debug!("New Websocket Added: {}", uid);
     }
 
     pub fn remove_client(&self, sc: &RemoteConnection) {
         let old = self.clients.borrow_mut().shift_remove(&sc.uid());
         if let Some(old) = old {
-            server().send_event_object("websockets:client_removed", vec![json!(sc.uid())], EventObject::Transport(old));
+            server().emit::<crate::events::ClientRemoved>(old);
             log::debug!("Websocket Removed: {}", sc.uid());
         }
         self.check_closed_event();
@@ -485,13 +496,9 @@ impl WebsocketManager {
         }
     }
 
-    pub fn notify_clients(&self, name: &str, data: Vec<Value>, mask: &[u64]) {
-        let mut msg = json!({"jsonrpc": "2.0", "method": format!("notify_{}", name)});
-        if !data.is_empty() {
-            msg["params"] = Value::Array(data);
-        }
+    pub fn notify_clients(&self, name: &str, data: &[Value], mask: &[u64]) {
         // encoded once, shared by every client's queue
-        let encoded = Utf8Bytes::from(msg.to_string());
+        let encoded = Utf8Bytes::from(notification(name, data));
         let clients: Vec<Rc<RemoteConnection>> = self.clients.borrow().values().cloned().collect();
         for sc in clients {
             if mask.contains(&sc.uid()) || sc.need_auth() {
@@ -560,7 +567,7 @@ async fn handle_identify(req: WebRequest) -> ApiResult {
         client_type
     );
     let uid = sc.uid();
-    server().send_event_object("websockets:client_identified", vec![json!(uid)], EventObject::Transport(sc));
+    server().emit::<crate::events::ClientIdentified>(sc);
     Ok(json!({"connection_id": uid}))
 }
 
@@ -898,6 +905,24 @@ pub fn load_component(config: &ConfigHelper) -> Rc<WebsocketManager> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    // notification() makes the bytes json!() made: key order, escaping,
+    // float and unicode forms
+    #[test]
+    fn notification_as_json() {
+        let cases: Vec<(&str, Vec<serde_json::Value>)> = vec![
+            ("klippy_ready", vec![]),
+            ("status_update", vec![json!({"a": 1.5, "b": [1e300, -0.0, "\u{e9}\"\n"], "c": null}), json!(1234.25)]),
+            ("gcode_response", vec![json!("ok \u{1F600} \u{1}")]),
+        ];
+        for (name, data) in cases {
+            let mut msg = json!({"jsonrpc": "2.0", "method": format!("notify_{}", name)});
+            if !data.is_empty() {
+                msg["params"] = serde_json::Value::Array(data.clone());
+            }
+            assert_eq!(super::notification(name, &data), msg.to_string(), "{name}");
+        }
+    }
 
     #[test]
     fn status_update_format() {

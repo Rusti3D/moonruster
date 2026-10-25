@@ -85,7 +85,7 @@ impl JobQueue {
         });
         *jq.me.borrow_mut() = Rc::downgrade(&jq);
         let j = Rc::downgrade(&jq);
-        srv.on_event_async("server:klippy_ready", move |_| {
+        srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
             let j = j.clone();
             async move {
                 if let Some(jq) = j.upgrade() {
@@ -94,7 +94,7 @@ impl JobQueue {
             }
         });
         let j = Rc::downgrade(&jq);
-        srv.on_event_async("server:klippy_shutdown", move |_| {
+        srv.on_async::<crate::events::KlippyShutdown, _, _>(move |_| {
             let j = j.clone();
             async move {
                 if let Some(jq) = j.upgrade() {
@@ -105,11 +105,11 @@ impl JobQueue {
             }
         });
         let j = Rc::downgrade(&jq);
-        srv.on_event_async("job_state:state_changed", move |args| {
+        srv.on_async::<crate::events::JobStateChanged, _, _>(move |args| {
             let j = j.clone();
             async move {
                 if let Some(jq) = j.upgrade() {
-                    let ev = args.first().and_then(|v| v.as_str()).and_then(|s| JobEvent::from_string(s).ok());
+                    let ev = Some(args.event);
                     match ev {
                         Some(JobEvent::Complete) => jq.on_job_complete().await,
                         Some(e) if e.aborted() => {
@@ -338,7 +338,7 @@ impl JobQueue {
         let payload = json!({"action": action, "updated_queue": updated, "queue_state": self.queue_state.borrow().clone()});
         spawn(async move {
             crate::utils::sleep_ordered(std::time::Duration::from_millis(50)).await;
-            server().send_event("job_queue:job_queue_changed", vec![payload]);
+            server().emit::<crate::events::JobQueueChanged>(payload);
         });
     }
 

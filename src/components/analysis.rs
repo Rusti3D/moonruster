@@ -173,7 +173,7 @@ impl GcodeAnalysis {
             }),
         );
         let g = Rc::downgrade(&ga);
-        srv.on_event("server:klippy_ready", move |_| {
+        srv.on::<crate::events::KlippyReady>(move |_| {
             if let Some(g) = g.upgrade() {
                 g.on_klippy_ready();
             }

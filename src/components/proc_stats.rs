@@ -166,7 +166,7 @@ impl ProcStats {
             async move { p.handle_stat_request().await }
         }))?;
         let p = Rc::downgrade(&ps);
-        srv.on_event_async("server:klippy_shutdown", move |_| {
+        srv.on_async::<crate::events::KlippyShutdown, _, _>(move |_| {
             let p = p.clone();
             async move {
                 if let Some(ps) = p.upgrade() {
@@ -246,17 +246,14 @@ impl ProcStats {
             }
         }
         let srv = server();
-        srv.send_event(
-            "proc_stats:proc_stat_update",
-            vec![json!({
+        srv.emit::<crate::events::ProcStatUpdate>(json!({
                 "moonraker_stats": result,
                 "cpu_temp": cpu_temp,
                 "network": Value::Object(net),
                 "system_cpu_usage": Value::Object(self.cpu_usage.borrow().clone()),
                 "system_memory": Value::Object(self.memory_usage.borrow().clone()),
                 "websocket_connections": srv.wsm().get_count(),
-            })],
-        );
+            }));
         if self.update_sequence.get() % THROTTLE_CHECK_INTERVAL == 0 && self.vcgencmd {
             let ts = self.check_throttled_state().await;
             let cur = ts["bits"].as_u64().unwrap_or(0);
@@ -264,7 +261,7 @@ impl ProcStats {
                 srv.add_log_rollover_item("throttled", &format!("CPU Throttled Flags: {}", crate::pyfmt::py_repr(&ts["flags"])), true);
             }
             if cur != self.last_throttled.get() {
-                srv.send_event("proc_stats:cpu_throttled", vec![ts.clone()]);
+                srv.emit::<crate::events::CpuThrottled>(ts.clone());
             }
             self.last_throttled.set(cur);
             self.total_throttled.set(self.total_throttled.get() | cur);

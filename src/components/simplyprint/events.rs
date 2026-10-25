@@ -168,11 +168,9 @@ impl SimplyPrint {
         self.printer_status.borrow_mut().clear();
     }
 
-    pub(super) fn on_job_state_changed(self: &Rc<Self>, args: Vec<Value>) {
-        let evt = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let prev = args.get(1).cloned().unwrap_or(json!({}));
-        let new = args.get(2).cloned().unwrap_or(json!({}));
-        match evt.as_str() {
+    pub(super) fn on_job_state_changed(self: &Rc<Self>, args: &crate::events::JobStateArgs) {
+        let new = Value::Object(args.new.clone());
+        match args.event.as_str() {
             "started" => self.on_print_started(&new, true),
             "paused" => {
                 self.send_sp("job_info", json!({"paused": true}));
@@ -201,9 +199,8 @@ impl SimplyPrint {
                 self.cache.borrow_mut().job_info.clear();
                 self.layer_detect.borrow_mut().stop();
             }
-            _ => log::info!("No defined callback for Job Event: {}", evt),
+            _ => log::info!("No defined callback for Job Event: {}", args.event.as_str()),
         }
-        let _ = prev;
     }
 
     pub(super) fn on_print_started(&self, new_stats: &Value, need_start_event: bool) {
@@ -251,7 +248,7 @@ impl SimplyPrint {
         self.last_started.borrow_mut().clear();
     }
 
-    pub(super) fn on_proc_update(&self, stats: Value) {
+    pub(super) fn on_proc_update(&self, stats: &Value) {
         let cpu = match stats.get("system_cpu_usage") {
             Some(c) if crate::pyfmt::py_truthy(c) => c.clone(),
             _ => return,

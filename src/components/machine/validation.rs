@@ -457,10 +457,9 @@ impl InstallValidator {
         );
         if machine.public_ip().is_none() {
             let v = Rc::downgrade(self);
-            srv.on_event_async("machine:public_ip_changed", move |args| {
+            srv.on_async::<crate::events::PublicIpChanged, _, _>(move |ip| {
                 let v = v.clone();
                 async move {
-                    let ip = args.first().map(py_str).unwrap_or_default();
                     if ip.is_empty() {
                         return;
                     }

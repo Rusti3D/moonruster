@@ -4,6 +4,7 @@ mod assets;
 mod async_serial;
 mod common;
 mod confighelper;
+mod events;
 mod components;
 mod loghelper;
 mod metadata;

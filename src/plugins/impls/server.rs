@@ -66,7 +66,7 @@ fn event_py_args(a: &EventArgs) -> PyResult<Vec<PyRef>> {
         let n = t.call_method("__len__", &[])?.as_i64()?;
         return (0..n).map(|i| t.call_method("__getitem__", &[&py_int(i)])).collect();
     }
-    let mut out = a.values.iter().map(to_py).collect::<PyResult<Vec<_>>>()?;
+    let mut out = a.values().iter().map(to_py).collect::<PyResult<Vec<_>>>()?;
     if let (Some(o), Some(first)) = (&a.object, out.first_mut()) {
         *first = event_object(o)?;
     }
@@ -239,7 +239,9 @@ pub fn register(r: &mut Registry) {
         // Rust handlers get the values (an object JSON has no form for is null)
         let values = rest.iter().map(|v| from_py(v).unwrap_or(Value::Null)).collect();
         let py = tuple(&rest.iter().collect::<Vec<_>>());
-        let done = server().process_event(&event, &EventArgs { values, object: None, py: Some(py) });
+        let mut args = EventArgs::from_values(values, None);
+        args.py = Some(py);
+        let done = server().process_event(&event, &args);
         rust_future(async move {
             done.await;
             if !fut.call_method("done", &[])?.is_true()? {

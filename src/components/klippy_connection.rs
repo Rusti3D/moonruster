@@ -3,7 +3,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component, EventObject};
+use crate::server::{server, spawn, Component};
 use async_trait::async_trait;
 use futures::future::LocalBoxFuture;
 use indexmap::IndexMap;
@@ -139,7 +139,7 @@ impl KlippyConnection {
             remote_method(move |p| {
                 if k.upgrade().is_some() {
                     let resp = p.get("response").cloned().unwrap_or(Value::Null);
-                    server().send_event("server:gcode_response", vec![resp]);
+                    server().emit::<crate::events::GcodeResponse>(resp);
                 }
             }),
         );
@@ -604,7 +604,7 @@ impl KlippyConnection {
         if send_id {
             self.klippy_identified.set(true);
             self.save_path_info().await;
-            srv.send_event("server:klippy_identified", vec![]).await;
+            srv.emit::<crate::events::KlippyIdentified>(()).await;
             self.request_endpoints().await;
         }
         let new_state = KlippyState::from_string(&state_str).unwrap_or(KlippyState::ERROR);
@@ -616,13 +616,12 @@ impl KlippyConnection {
             self.request_initial_subscriptions().await;
             self.request_endpoints().await;
             let startup_state = self.state.get();
-            let state = EventObject::KlippyState(startup_state.as_str().to_string(), self.state_message_for(startup_state));
-            srv.send_event_object("server:klippy_started", vec![json!(startup_state.as_str())], state).await;
+            srv.emit::<crate::events::KlippyStarted>((startup_state, self.state_message_for(startup_state))).await;
             self.klippy_started.set(true);
             if self.state.get() != KlippyState::READY {
                 log::info!("\n{}", self.state_message());
                 if self.state.get() == KlippyState::SHUTDOWN && startup_state != KlippyState::SHUTDOWN {
-                    srv.send_event("server:klippy_shutdown", vec![]);
+                    srv.emit::<crate::events::KlippyShutdown>(());
                 }
             } else {
                 self.verify_klippy_requirements().await;
@@ -635,9 +634,9 @@ impl KlippyConnection {
                 self.methods_registered.set(true);
                 if self.state.get() == KlippyState::READY {
                     log::info!("Klippy ready");
-                    srv.send_event("server:klippy_ready", vec![]).await;
+                    srv.emit::<crate::events::KlippyReady>(()).await;
                     if self.state.get() == KlippyState::SHUTDOWN {
-                        srv.send_event("server:klippy_shutdown", vec![]);
+                        srv.emit::<crate::events::KlippyShutdown>(());
                     }
                 } else {
                     log::info!("Klippy state transition from ready during init, new state: {}", self.state.get());
@@ -790,7 +789,7 @@ impl KlippyConnection {
                 self.set_state_message(new_state, &state_message);
                 if new_state == KlippyState::SHUTDOWN && !self.klippy_initializing.get() && self.state.get() != KlippyState::SHUTDOWN {
                     log::info!("Klippy has shutdown");
-                    server().send_event("server:klippy_shutdown", vec![]);
+                    server().emit::<crate::events::KlippyShutdown>(());
                 }
                 self.state.set(new_state);
             }
@@ -825,7 +824,7 @@ impl KlippyConnection {
         if rpc_method == "gcode/script" {
             let script = web_request.get_str_or("script", "");
             if !script.is_empty() {
-                server().send_event("klippy_connection:gcode_received", vec![json!(script)]);
+                server().emit::<crate::events::GcodeReceived>(script.to_string());
             }
         }
         self.request_standard(&rpc_method, Value::Object(web_request.args), None).await
@@ -1076,7 +1075,7 @@ impl KlippyConnection {
         self.peer_cred.borrow_mut().clear();
         self.missing_reqs.borrow_mut().clear();
         log::info!("Klippy Connection Removed");
-        server().send_event("server:klippy_disconnect", vec![]).await;
+        server().emit::<crate::events::KlippyDisconnect>(()).await;
         if server().is_running() {
             self.start_connect_task();
         }

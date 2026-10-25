@@ -33,8 +33,6 @@ pub const CORE_COMPONENTS: [&str; 16] = [
     "extensions",
 ];
 
-pub type EventCallback = Rc<dyn Fn(Vec<Value>) -> Option<LocalBoxFuture<'static, ()>>>;
-
 /// An event's first argument when Moonraker passes an object, not a value.
 /// Rust handlers get the value (`EventArgs::values`); Python handlers get
 /// Moonraker's object
@@ -51,13 +49,58 @@ pub enum EventObject {
     User(Option<UserInfo>),
 }
 
+/// An event's arguments: typed (an Event sent by Rust) or values (by name,
+/// or from a Python component). The values of a typed event are made on
+/// first use, once.
 #[derive(Clone)]
 pub struct EventArgs {
-    pub values: Vec<Value>,
+    typed: Option<Rc<dyn Any>>,
+    to_values: Option<fn(&dyn Any) -> Vec<Value>>,
+    values: std::cell::OnceCell<Vec<Value>>,
     pub object: Option<EventObject>,
     /// the arguments as a Python component sent them (Server.send_event)
     #[cfg(feature = "plugins")]
     pub py: Option<crate::plugins::py::PyRef>,
+}
+
+impl EventArgs {
+    pub fn from_values(values: Vec<Value>, object: Option<EventObject>) -> Self {
+        EventArgs {
+            typed: None,
+            to_values: None,
+            values: values.into(),
+            object,
+            #[cfg(feature = "plugins")]
+            py: None,
+        }
+    }
+
+    fn typed<E: crate::events::Event>(args: E::Args) -> Self {
+        EventArgs {
+            object: E::object(&args),
+            typed: Some(Rc::new(args)),
+            to_values: Some(|a| E::values(a.downcast_ref::<E::Args>().expect("event args"))),
+            values: std::cell::OnceCell::new(),
+            #[cfg(feature = "plugins")]
+            py: None,
+        }
+    }
+
+    /// The arguments as Moonraker passes them
+    pub fn values(&self) -> &[Value] {
+        self.values.get_or_init(|| match (&self.typed, self.to_values) {
+            (Some(t), Some(f)) => f(t.as_ref()),
+            _ => Vec::new(),
+        })
+    }
+
+    /// The typed arguments of event E: sent typed, or decoded from values
+    fn args<E: crate::events::Event>(&self) -> Option<Rc<E::Args>> {
+        match &self.typed {
+            Some(t) => t.clone().downcast::<E::Args>().ok(),
+            None => E::from_values(self.values()).map(Rc::new),
+        }
+    }
 }
 
 pub type EventHandler = Rc<dyn Fn(&EventArgs) -> Option<LocalBoxFuture<'static, ()>>>;
@@ -680,8 +723,41 @@ impl Server {
         self.wsm().register_notification(event_name, notify_name, None);
     }
 
-    pub fn register_event_handler(&self, event: &str, cb: EventCallback) {
-        self.register_event_handler_args(event, Rc::new(move |a: &EventArgs| cb(a.values.clone())));
+    /// A handler of event E's typed arguments
+    pub fn on<E: crate::events::Event>(&self, f: impl Fn(&E::Args) + 'static) {
+        self.register_event_handler_args(
+            E::NAME,
+            Rc::new(move |a: &EventArgs| {
+                if let Some(args) = a.args::<E>() {
+                    f(&args);
+                }
+                None
+            }),
+        );
+    }
+
+    /// An async handler of event E's typed arguments
+    pub fn on_async<E, F, Fut>(&self, f: F)
+    where
+        E: crate::events::Event,
+        F: Fn(Rc<E::Args>) -> Fut + 'static,
+        Fut: std::future::Future<Output = ()> + 'static,
+    {
+        self.register_event_handler_args(
+            E::NAME,
+            Rc::new(move |a: &EventArgs| a.args::<E>().map(|args| Box::pin(f(args)) as LocalBoxFuture<'static, ()>)),
+        );
+    }
+
+    /// A handler of an event's values, borrowed (websocket notifications)
+    pub fn on_values(&self, event: &str, f: impl Fn(&[Value]) + 'static) {
+        self.register_event_handler_args(
+            event,
+            Rc::new(move |a: &EventArgs| {
+                f(a.values());
+                None
+            }),
+        );
     }
 
     /// A handler of the event's full arguments (Python components)
@@ -689,32 +765,19 @@ impl Server {
         self.events.borrow_mut().entry(event.to_string()).or_default().push(h);
     }
 
-    /// Convenience for synchronous event handlers
-    pub fn on_event<F: Fn(Vec<Value>) + 'static>(&self, event: &str, f: F) {
-        self.register_event_handler(event, Rc::new(move |args| {
-            f(args);
-            None
-        }));
-    }
-
-    /// Convenience for async event handlers
-    pub fn on_event_async<F, Fut>(&self, event: &str, f: F)
-    where
-        F: Fn(Vec<Value>) -> Fut + 'static,
-        Fut: std::future::Future<Output = ()> + 'static,
-    {
-        self.register_event_handler(event, Rc::new(move |args| Some(Box::pin(f(args)) as LocalBoxFuture<'static, ()>)));
-    }
-
     /// Schedules the event's handlers. Await the result to wait for them,
     /// or drop it: they run either way.
     pub fn send_event(&self, event: &str, args: Vec<Value>) -> EventSent {
-        self.send_event_args(event, EventArgs { values: args, object: None, #[cfg(feature = "plugins")] py: None })
+        self.send_event_args(event, EventArgs::from_values(args, None))
     }
 
-    /// send_event of an event whose first argument is an object in Moonraker
-    pub fn send_event_object(&self, event: &str, args: Vec<Value>, object: EventObject) -> EventSent {
-        self.send_event_args(event, EventArgs { values: args, object: Some(object), #[cfg(feature = "plugins")] py: None })
+    /// Sends event E with its typed arguments
+    pub fn emit<E: crate::events::Event>(&self, args: E::Args) -> EventSent {
+        // nothing to make for an event without handlers
+        if !self.events.borrow().contains_key(E::NAME) {
+            return EventSent(None);
+        }
+        self.send_event_args(E::NAME, EventArgs::typed::<E>(args))
     }
 
     fn send_event_args(&self, event: &str, args: EventArgs) -> EventSent {

@@ -74,10 +74,9 @@ impl ZeroconfRegistrar {
         });
         if bound_all {
             let z = Rc::downgrade(&zc);
-            srv.on_event("machine:net_state_changed", move |args| {
+            srv.on::<crate::events::NetStateChanged>(move |network| {
                 if let Some(z) = z.upgrade() {
-                    let network = args.into_iter().next().unwrap_or(Value::Null);
-                    z.update_service(&network);
+                    z.update_service(network);
                 }
             });
         }

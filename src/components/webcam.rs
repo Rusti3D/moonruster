@@ -387,9 +387,8 @@ impl WebcamManager {
             async move { w.handle_webcam_test(r).await }
         }))?;
         srv.register_notification("webcam:webcams_changed", None);
-        srv.on_event("machine:public_ip_changed", |args| {
-            let ip = args.first().map(py_str).unwrap_or_default();
-            Self::set_default_host_ip(&ip);
+        srv.on::<crate::events::PublicIpChanged>(|ip| {
+            Self::set_default_host_ip(ip);
         });
         Ok(wm)
     }

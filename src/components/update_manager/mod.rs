@@ -595,7 +595,7 @@ impl UpdateManager {
         srv.register_notification("update_manager:update_response", None);
         srv.register_notification("update_manager:update_refreshed", None);
         let u = Rc::downgrade(&um);
-        srv.on_event("server:klippy_identified", move |_| {
+        srv.on::<crate::events::KlippyIdentified>(move |_| {
             if let Some(u) = u.upgrade() {
                 u.set_klipper_repo();
             }

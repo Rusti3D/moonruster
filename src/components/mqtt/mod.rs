@@ -218,12 +218,12 @@ impl MqttClient {
         if !status_cfg.as_object().map(|m| m.is_empty()).unwrap_or(true) {
             log::debug!("MQTT: Status Objects Set: {}", crate::pyfmt::py_repr(&Value::Object(client.status_objs.clone())));
             let c = client.clone();
-            srv.on_event_async("server:klippy_started", move |_| {
+            srv.on_async::<crate::events::KlippyStarted, _, _>(move |_| {
                 let c = c.clone();
                 async move { c.handle_klippy_started().await }
             });
             let c = client.clone();
-            srv.on_event("server:klippy_disconnect", move |_| c.handle_klippy_disconnect());
+            srv.on::<crate::events::KlippyDisconnect>(move |_| c.handle_klippy_disconnect());
         }
 
         if enable_api {

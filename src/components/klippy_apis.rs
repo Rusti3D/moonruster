@@ -2,7 +2,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, spawn, Component, EventObject};
+use crate::server::{server, spawn, Component};
 use futures::future::LocalBoxFuture;
 use serde_json::{json, Map, Value};
 use std::cell::RefCell;
@@ -85,7 +85,7 @@ impl KlippyApi {
             a.do_restart("FIRMWARE_RESTART", false).await
         });
         let a = Rc::downgrade(&api);
-        srv.on_event("server:klippy_disconnect", move |_| {
+        srv.on::<crate::events::KlippyDisconnect>(move |_| {
             if let Some(a) = a.upgrade() {
                 a.host_subscription.borrow_mut().clear();
                 a.subscription_callbacks.borrow_mut().clear();
@@ -123,25 +123,24 @@ impl KlippyApi {
         }
         log::info!("Requesting Job Start, filename = {}", filename);
         let ret = self.run_gcode(&script).await?;
-        let uval = user.as_ref().map(|u| u.as_dict()).unwrap_or(Value::Null);
-        server().send_event_object("klippy_apis:job_start_complete", vec![uval], EventObject::User(user));
+        server().emit::<crate::events::JobStartComplete>(user);
         Ok(ret)
     }
 
     pub async fn pause_print(&self) -> ApiResult {
-        server().send_event("klippy_apis:pause_requested", vec![]);
+        server().emit::<crate::events::PauseRequested>(());
         log::info!("Requesting job pause...");
         self.send_klippy_request("pause_resume/pause", json!({}), None).await
     }
 
     pub async fn resume_print(&self) -> ApiResult {
-        server().send_event("klippy_apis:resume_requested", vec![]);
+        server().emit::<crate::events::ResumeRequested>(());
         log::info!("Requesting job resume...");
         self.send_klippy_request("pause_resume/resume", json!({}), None).await
     }
 
     pub async fn cancel_print(&self) -> ApiResult {
-        server().send_event("klippy_apis:cancel_requested", vec![]);
+        server().emit::<crate::events::CancelRequested>(());
         log::info!("Requesting job cancel...");
         self.send_klippy_request("pause_resume/cancel", json!({}), None).await
     }
@@ -273,7 +272,7 @@ impl KlippyApi {
                 }
             });
         }
-        server().send_event("server:status_update", vec![Value::Object(status.clone())]);
+        server().emit::<crate::events::StatusUpdate>(status.clone());
     }
 }
 

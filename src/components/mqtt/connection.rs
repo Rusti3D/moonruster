@@ -297,7 +297,7 @@ impl MqttClient {
             self.send_raw(p);
         }
         self.connect_evt.set();
-        server().send_event("mqtt:connected", vec![]);
+        server().emit::<crate::events::MqttConnected>(());
         true
     }
 
@@ -312,7 +312,7 @@ impl MqttClient {
                 let h = spawn(self.clone().do_reconnect(false));
                 self.connect_task.set(h);
             }
-            server().send_event("mqtt:disconnected", vec![]);
+            server().emit::<crate::events::MqttDisconnected>(());
         }
         self.connect_evt.clear();
     }

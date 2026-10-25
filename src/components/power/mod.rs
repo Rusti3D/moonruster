@@ -191,17 +191,16 @@ impl PowerDevice {
         });
         if klipper_restart {
             let w = Rc::downgrade(&dev);
-            srv.on_event("server:klippy_started", move |args| {
+            srv.on::<crate::events::KlippyStarted>(move |(state, _)| {
                 if let Some(d) = w.upgrade() {
-                    let st = args.first().and_then(|v| v.as_str()).and_then(|s| KlippyState::from_string(s).ok());
-                    d.schedule_firmware_restart(st.unwrap_or(KlippyState::STARTUP));
+                    d.schedule_firmware_restart(*state);
                 }
             });
         }
         match &dev.kind {
             Kind::Klipper { .. } => {
                 let w = Rc::downgrade(&dev);
-                srv.on_event_async("server:klippy_ready", move |_| {
+                srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
                     let w = w.clone();
                     async move {
                         if let Some(d) = w.upgrade() {
@@ -210,7 +209,7 @@ impl PowerDevice {
                     }
                 });
                 let w = Rc::downgrade(&dev);
-                srv.on_event("server:klippy_disconnect", move |_| {
+                srv.on::<crate::events::KlippyDisconnect>(move |_| {
                     if let Some(d) = w.upgrade() {
                         if let Kind::Klipper { is_shutdown, .. } = &d.kind {
                             is_shutdown.set(false);
@@ -230,7 +229,7 @@ impl PowerDevice {
                 let state_topic = config.get("state_topic")?;
                 m.mqtt.subscribe_topic(&state_topic, cb, m.qos).map_err(|e| ConfigHelper::error(e.message))?;
                 let w = Rc::downgrade(&dev);
-                srv.on_event_async("mqtt:connected", move |_| {
+                srv.on_async::<crate::events::MqttConnected, _, _>(move |_| {
                     let w = w.clone();
                     async move {
                         if let Some(d) = w.upgrade() {
@@ -239,7 +238,7 @@ impl PowerDevice {
                     }
                 });
                 let w = Rc::downgrade(&dev);
-                srv.on_event_async("mqtt:disconnected", move |_| {
+                srv.on_async::<crate::events::MqttDisconnected, _, _>(move |_| {
                     let w = w.clone();
                     async move {
                         if let Some(d) = w.upgrade() {
@@ -1220,7 +1219,7 @@ impl PrinterPower {
             }),
         );
         let p = Rc::downgrade(&pp);
-        srv.on_event("server:klippy_shutdown", move |_| {
+        srv.on::<crate::events::KlippyShutdown>(move |_| {
             if let Some(p) = p.upgrade() {
                 let devs: Vec<Device> = p.devices.borrow().values().cloned().collect();
                 for d in devs {
@@ -1229,11 +1228,11 @@ impl PrinterPower {
             }
         });
         let p = Rc::downgrade(&pp);
-        srv.on_event_async("job_queue:job_queue_changed", move |args| {
+        srv.on_async::<crate::events::JobQueueChanged, _, _>(move |queue_info| {
             let p = p.clone();
             async move {
                 if let Some(p) = p.upgrade() {
-                    p.handle_job_queued(args.into_iter().next().unwrap_or(Value::Null)).await;
+                    p.handle_job_queued(&queue_info).await;
                 }
             }
         });
@@ -1241,7 +1240,7 @@ impl PrinterPower {
         Ok(pp)
     }
 
-    async fn handle_job_queued(&self, queue_info: Value) {
+    async fn handle_job_queued(&self, queue_info: &Value) {
         if queue_info.get("action").and_then(|v| v.as_str()) != Some("jobs_added") {
             return;
         }

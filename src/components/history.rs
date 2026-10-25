@@ -677,7 +677,7 @@ impl History {
             job_paused: Cell::new(false),
         });
         let hw = Rc::downgrade(&h);
-        srv.on_event_async("server:klippy_disconnect", move |_| {
+        srv.on_async::<crate::events::KlippyDisconnect, _, _>(move |_| {
             let hw = hw.clone();
             async move {
                 if let Some(h) = hw.upgrade() {
@@ -686,7 +686,7 @@ impl History {
             }
         });
         let hw = Rc::downgrade(&h);
-        srv.on_event_async("server:klippy_shutdown", move |_| {
+        srv.on_async::<crate::events::KlippyShutdown, _, _>(move |_| {
             let hw = hw.clone();
             async move {
                 if let Some(h) = hw.upgrade() {
@@ -695,7 +695,7 @@ impl History {
             }
         });
         let hw = Rc::downgrade(&h);
-        srv.on_event_async("job_state:state_changed", move |args| {
+        srv.on_async::<crate::events::JobStateChanged, _, _>(move |args| {
             let hw = hw.clone();
             async move {
                 if let Some(h) = hw.upgrade() {
@@ -704,14 +704,9 @@ impl History {
             }
         });
         let hw = Rc::downgrade(&h);
-        srv.on_event("klippy_apis:job_start_complete", move |args| {
+        srv.on::<crate::events::JobStartComplete>(move |user| {
             if let Some(h) = hw.upgrade() {
-                let username = args
-                    .first()
-                    .and_then(|u| u.get("username"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("No User")
-                    .to_string();
+                let username = user.as_ref().map(|u| u.username.clone()).unwrap_or_else(|| "No User".to_string());
                 *h.job_user.borrow_mut() = username.clone();
                 if let Some(j) = h.current_job.borrow().as_ref() {
                     j.set("user", json!(username));
@@ -824,13 +819,10 @@ impl History {
         Ok(json!({"last_totals": Value::Object(last_totals), "last_auxiliary_totals": last_aux}))
     }
 
-    async fn on_job_state_changed(&self, args: Vec<Value>) {
-        let ev = match args.first().and_then(|v| v.as_str()).and_then(|s| JobEvent::from_string(s).ok()) {
-            Some(e) => e,
-            None => return,
-        };
-        let prev = args.get(1).and_then(|v| v.as_object()).cloned().unwrap_or_default();
-        let new = args.get(2).and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    async fn on_job_state_changed(&self, args: Rc<crate::events::JobStateArgs>) {
+        let ev = args.event;
+        let prev = args.prev.clone();
+        let new = args.new.clone();
         self.job_paused.set(ev == JobEvent::Paused);
         match ev {
             JobEvent::Started => {

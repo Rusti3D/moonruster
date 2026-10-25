@@ -113,7 +113,7 @@ impl SpoolManager {
         srv.register_notification("spoolman:active_spool_set", None);
         srv.register_notification("spoolman:spoolman_status_changed", None);
         let s = sm.clone();
-        srv.on_event_async("server:klippy_ready", move |_| {
+        srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
             let s = s.clone();
             async move {
                 if let Err(e) = s.handle_klippy_ready().await {

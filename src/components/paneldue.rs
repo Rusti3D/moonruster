@@ -130,7 +130,7 @@ impl PanelDue {
             serial_task: Default::default(),
         });
         let p = Rc::downgrade(&pd);
-        srv.on_event_async("server:klippy_ready", move |_| {
+        srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
             let p = p.clone();
             async move {
                 if let Some(p) = p.upgrade() {
@@ -141,13 +141,13 @@ impl PanelDue {
             }
         });
         let p = Rc::downgrade(&pd);
-        srv.on_event("server:klippy_shutdown", move |_| {
+        srv.on::<crate::events::KlippyShutdown>(move |_| {
             if let Some(p) = p.upgrade() {
                 p.is_shutdown.set(true);
             }
         });
         let p = Rc::downgrade(&pd);
-        srv.on_event("server:klippy_disconnect", move |_| {
+        srv.on::<crate::events::KlippyDisconnect>(move |_| {
             if let Some(p) = p.upgrade() {
                 p.write_response(json!({"status": "O"}));
                 *p.last_printer_state.borrow_mut() = "O".into();
@@ -156,9 +156,9 @@ impl PanelDue {
             }
         });
         let p = Rc::downgrade(&pd);
-        srv.on_event("server:gcode_response", move |args| {
+        srv.on::<crate::events::GcodeResponse>(move |resp| {
             if let Some(p) = p.upgrade() {
-                if let Some(r) = args.first().and_then(|v| v.as_str()) {
+                if let Some(r) = resp.as_str() {
                     p.handle_gcode_response(r);
                 }
             }

@@ -2,7 +2,7 @@
 
 use crate::common::*;
 use crate::confighelper::ConfigHelper;
-use crate::server::{server, Component, EventObject};
+use crate::server::{server, Component};
 use serde_json::{json, Map, Value};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,16 +19,16 @@ impl JobState {
         let js = Rc::new(JobState { last_print_stats: RefCell::new(Map::new()), last_event: Cell::new(JobEvent::Standby) });
         let srv = server();
         let j = Rc::downgrade(&js);
-        srv.on_event_async("server:klippy_started", move |args| {
+        srv.on_async::<crate::events::KlippyStarted, _, _>(move |args| {
             let j = j.clone();
             async move {
                 if let Some(js) = j.upgrade() {
-                    js.handle_started(args).await;
+                    js.handle_started(args.0).await;
                 }
             }
         });
         let j = Rc::downgrade(&js);
-        srv.on_event("server:klippy_disconnect", move |_| {
+        srv.on::<crate::events::KlippyDisconnect>(move |_| {
             if let Some(js) = j.upgrade() {
                 let mut ps = js.last_print_stats.borrow_mut();
                 let state = ps.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -41,8 +41,8 @@ impl JobState {
         js
     }
 
-    async fn handle_started(self: Rc<Self>, args: Vec<Value>) {
-        if args.first().and_then(|v| v.as_str()) != Some("ready") {
+    async fn handle_started(self: Rc<Self>, state: KlippyState) {
+        if state != KlippyState::READY {
             return;
         }
         let kapis = server().klippy_apis();
@@ -133,11 +133,7 @@ impl JobState {
             }
         };
         self.last_event.set(ev);
-        srv.send_event_object(
-            "job_state:state_changed",
-            vec![json!(ev.as_str()), Value::Object(prev_ps.clone()), Value::Object(new_ps.clone())],
-            EventObject::JobEvent(ev.as_str().to_string()),
-        );
+        srv.emit::<crate::events::JobStateChanged>(crate::events::JobStateArgs { event: ev, prev: prev_ps.clone(), new: new_ps.clone() });
     }
 
     pub fn get_last_stats(&self) -> Map<String, Value> {

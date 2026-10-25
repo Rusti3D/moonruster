@@ -217,23 +217,21 @@ impl SimplyPrint {
 
     fn register_events(sp: &Rc<Self>) {
         let srv = server();
+        use crate::events::*;
         macro_rules! on {
-            ($evt:expr, |$s:ident, $args:ident| $body:expr) => {{
+            ($evt:ty, |$s:ident, $args:pat_param| $body:expr) => {{
                 let w = Rc::downgrade(sp);
-                srv.on_event($evt, move |$args| {
+                srv.on::<$evt>(move |$args| {
                     if let Some($s) = w.upgrade() {
                         $body;
                     }
                 });
             }};
         }
-        on!("server:klippy_started", |s, args| {
-            let st = args.first().and_then(|v| v.as_str()).and_then(|v| KlippyState::from_string(v).ok()).unwrap_or(KlippyState::STARTUP);
-            s.on_klippy_startup(st)
-        });
+        on!(KlippyStarted, |s, (state, _)| s.on_klippy_startup(*state));
         {
             let w = Rc::downgrade(sp);
-            srv.on_event_async("server:klippy_ready", move |_| {
+            srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
                 let w = w.clone();
                 async move {
                     if let Some(s) = w.upgrade() {
@@ -242,51 +240,53 @@ impl SimplyPrint {
                 }
             });
         }
-        on!("server:klippy_shutdown", |s, _a| {
+        on!(KlippyShutdown, |s, _| {
             s.update_state("error");
             s.send_sp("printer_error", json!({"error": server().klippy().state_message()}));
         });
-        on!("server:klippy_disconnect", |s, _a| s.on_klippy_disconnected());
-        on!("job_state:state_changed", |s, args| s.on_job_state_changed(args));
-        on!("klippy_apis:pause_requested", |s, _a| {
+        on!(KlippyDisconnect, |s, _| s.on_klippy_disconnected());
+        on!(JobStateChanged, |s, args| s.on_job_state_changed(args));
+        on!(PauseRequested, |s, _| {
             s.print_request_event.set();
             if s.cache.borrow().state == "printing" {
                 s.update_state("pausing");
             }
         });
-        on!("klippy_apis:resume_requested", |s, _a| {
+        on!(ResumeRequested, |s, _| {
             s.print_request_event.set();
             if s.cache.borrow().state == "paused" {
                 s.update_state("resuming");
             }
         });
-        on!("klippy_apis:cancel_requested", |s, _a| {
+        on!(CancelRequested, |s, _| {
             s.print_request_event.set();
             let st = s.cache.borrow().state.clone();
             if ["printing", "paused", "pausing"].contains(&st.as_str()) {
                 s.update_state("cancelling");
             }
         });
-        on!("proc_stats:proc_stat_update", |s, args| s.on_proc_update(args.first().cloned().unwrap_or(Value::Null)));
-        on!("proc_stats:cpu_throttled", |s, args| s.cache.borrow_mut().throttled_state = args.first().cloned().unwrap_or(json!({})));
-        on!("websockets:client_identified", |s, args| s.on_websocket_identified(args.first().and_then(|v| v.as_u64()).unwrap_or(0)));
-        on!("websockets:client_removed", |s, args| s.on_websocket_removed(args.first().and_then(|v| v.as_u64()).unwrap_or(0)));
-        on!("server:gcode_response", |s, args| {
+        on!(ProcStatUpdate, |s, stats| s.on_proc_update(stats));
+        on!(CpuThrottled, |s, state| s.cache.borrow_mut().throttled_state = state.clone());
+        on!(ClientIdentified, |s, t| s.on_websocket_identified(t.transport_id()));
+        on!(ClientRemoved, |s, t| s.on_websocket_removed(t.transport_id()));
+        on!(GcodeResponse, |s, resp| {
             if s.gcode_terminal_enabled.get() {
-                let r = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let r = resp.as_str().unwrap_or("");
                 let resp: Vec<&str> = r.trim().split('\n').map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
                 s.send_sp("term_update", json!({"response": resp}));
             }
         });
-        on!("klippy_connection:gcode_received", |s, args| {
+        on!(GcodeReceived, |s, script| {
             if s.gcode_terminal_enabled.get() {
-                let r = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                let r = script.as_str();
                 let cmds: Vec<&str> = r.split_whitespace().collect();
                 s.send_sp("term_update", json!({"command": cmds}));
             }
         });
-        on!("power:power_changed", |s, args| {
-            let d = args.first().cloned().unwrap_or(Value::Null);
+        // power:power_changed has no Rust sender's type: its values
+        let w = Rc::downgrade(sp);
+        srv.on_values("power:power_changed", move |args| {
+            let (Some(s), Some(d)) = (w.upgrade(), args.first()) else { return };
             if !s.power_id.is_empty() && d.get("device").and_then(|v| v.as_str()) == Some(s.power_id.as_str()) {
                 s.send_sp("power_controller", json!({"on": d.get("status").and_then(|v| v.as_str()) == Some("on")}));
             }

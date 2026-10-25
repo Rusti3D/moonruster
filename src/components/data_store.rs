@@ -44,14 +44,14 @@ impl DataStore {
         });
         let srv = server();
         let d = Rc::downgrade(&ds);
-        srv.on_event("server:gcode_response", move |args| {
+        srv.on::<crate::events::GcodeResponse>(move |resp| {
             if let Some(ds) = d.upgrade() {
-                let resp = args.first().cloned().unwrap_or(Value::Null);
+                let resp = resp.clone();
                 ds.push_gcode(json!({"message": resp, "time": crate::utils::time_now(), "type": "response"}));
             }
         });
         let d = Rc::downgrade(&ds);
-        srv.on_event_async("server:klippy_ready", move |_| {
+        srv.on_async::<crate::events::KlippyReady, _, _>(move |_| {
             let d = d.clone();
             async move {
                 if let Some(ds) = d.upgrade() {
@@ -60,9 +60,9 @@ impl DataStore {
             }
         });
         let d = Rc::downgrade(&ds);
-        srv.on_event("klippy_connection:gcode_received", move |args| {
+        srv.on::<crate::events::GcodeReceived>(move |script| {
             if let Some(ds) = d.upgrade() {
-                let script = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let script = script.clone();
                 if !script.trim().is_empty() {
                     ds.push_gcode(json!({"message": script, "time": crate::utils::time_now(), "type": "command"}));
                 }

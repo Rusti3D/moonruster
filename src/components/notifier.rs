@@ -242,14 +242,15 @@ impl Notifier {
             }),
         );
         let n = Rc::downgrade(&nt);
-        srv.on_event_async("job_state:state_changed", move |args| {
+        srv.on_async::<crate::events::JobStateChanged, _, _>(move |args| {
             let n = n.clone();
             async move {
                 if let Some(n) = n.upgrade() {
-                    let evt = args.first().and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let evt = args.event.as_str().to_string();
                     let list = n.events.get(&evt).cloned().unwrap_or_default();
                     for inst in list {
-                        if let Err(e) = inst.notify(&evt, args[1..].to_vec(), "").await {
+                        let event_args = vec![Value::Object(args.prev.clone()), Value::Object(args.new.clone())];
+                        if let Err(e) = inst.notify(&evt, event_args, "").await {
                             log::error!("{}", e.message);
                         }
                     }

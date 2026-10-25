@@ -74,7 +74,7 @@ pub fn register(r: &mut Registry) {
             },
             None => vec![],
         };
-        a.this::<WebsocketManager>()?.notify_clients(&name, data, &mask);
+        a.this::<WebsocketManager>()?.notify_clients(&name, &data, &mask);
         Ok(none())
     });
     r.method(wsm!("get_count"), |a| Ok(py_int(a.this::<WebsocketManager>()?.get_count() as i64)));

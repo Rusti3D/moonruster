@@ -170,7 +170,7 @@ impl Sensor {
             qos,
         });
         let s = Rc::downgrade(&sensor);
-        srv.on_event("mqtt:disconnected", move |_| {
+        srv.on::<crate::events::MqttDisconnected>(move |_| {
             if let Some(s) = s.upgrade() {
                 *s.error_state.borrow_mut() = Some("MQTT Disconnected".into());
                 s.last_measurements.borrow_mut().clear();

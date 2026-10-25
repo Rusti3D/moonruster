@@ -151,7 +151,7 @@ impl FileManager {
         )?;
         srv.register_notification("file_manager:filelist_changed", None);
         let f = Rc::downgrade(&fm);
-        srv.on_event("server:klippy_identified", move |_| {
+        srv.on::<crate::events::KlippyIdentified>(move |_| {
             if let Some(fm) = f.upgrade() {
                 fm.update_fixed_paths();
             }

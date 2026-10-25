@@ -643,7 +643,7 @@ impl Machine {
         if network_v != prev {
             self.find_public_ip();
             if notify {
-                server().send_event("machine:net_state_changed", vec![network_v.clone()]);
+                server().emit::<crate::events::NetStateChanged>(network_v.clone());
             }
         }
         let mut si = self.system_info.borrow_mut();
@@ -781,7 +781,7 @@ impl Machine {
         }
         if src_ip != *self.public_ip.borrow() {
             *self.public_ip.borrow_mut() = src_ip.clone();
-            server().send_event("machine:public_ip_changed", vec![json!(src_ip)]);
+            server().emit::<crate::events::PublicIpChanged>(src_ip.clone());
         }
         if src_ip.is_empty() {
             log::info!("Failed to detect local IP address");
