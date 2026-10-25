@@ -9,7 +9,7 @@ printer images), SSH access, and a user with sudo (usually `pi`).
 
 ## 1. Get the binary (on your PC)
 
-Either download it from the [releases page](https://github.com/shawn-makes-stuff/moonruster/releases)
+Either download it from the [releases page](https://github.com/Rusti3D/moonruster/releases)
 (the install script does this for you), or build it yourself. Building needs Linux or WSL:
 
 ```bash
@@ -17,7 +17,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup target add aarch64-unknown-linux-musl armv7-unknown-linux-musleabihf \
     arm-unknown-linux-musleabihf x86_64-unknown-linux-musl
 pip install ziglang cargo-zigbuild
-git clone https://github.com/shawn-makes-stuff/moonruster.git
+git clone https://github.com/Rusti3D/moonruster.git
 cd moonruster
 bash tools/cross_build.sh
 ```
@@ -103,7 +103,7 @@ else needs Python.
 ## Updating
 
 From Mainsail/Fluidd: the update manager's `moonraker` entry shows the installed Moonruster version
-against the latest [release](https://github.com/shawn-makes-stuff/moonruster/releases). Updating
+against the latest [release](https://github.com/Rusti3D/moonruster/releases). Updating
 downloads the binary for the printer's architecture, replaces the installed one (with sudo when
 its folder isn't writable, e.g. `/usr/local/bin`) and restarts the service.
 

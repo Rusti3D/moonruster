@@ -17,7 +17,7 @@ if [ -z "$HOST" ] || [ "${HOST:0:1}" = "-" ]; then
 fi
 shift
 SRCDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-REPO="shawn-makes-stuff/moonruster"
+REPO="Rusti3D/moonruster"
 BINARY=""
 ARGS=()
 REVERT="n"

@@ -5,7 +5,7 @@
 use super::common::*;
 use super::*;
 
-const REPO: &str = "shawn-makes-stuff/moonruster";
+const REPO: &str = "Rusti3D/moonruster";
 const DOWNLOAD_TIMEOUT: f64 = 600.0;
 
 /// Release asset name for the architecture this binary was built for
