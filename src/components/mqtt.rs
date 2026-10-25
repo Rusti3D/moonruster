@@ -1036,6 +1036,25 @@ impl MqttClient {
     }
 }
 
+impl MqttClient {
+    /// screen_rpc_request's check of a request's mqtt_timestamp
+    pub fn screen_timestamp(&self, ts: Value) -> Result<(), ServerError> {
+        if ts.is_null() {
+            return Ok(());
+        }
+        let mut dq = self.timestamp_deque.borrow_mut();
+        if dq.contains(&ts) {
+            log::debug!("Duplicate MQTT API request received");
+            return Err(ServerError::new("Duplicate MQTT Request", DUP_API_REQ_CODE));
+        }
+        if dq.len() == 20 {
+            dq.pop_front();
+        }
+        dq.push_back(ts);
+        Ok(())
+    }
+}
+
 impl ApiTransport for MqttClient {
     fn transport_type(&self) -> TransportType {
         TransportType::MQTT
@@ -1045,18 +1064,10 @@ impl ApiTransport for MqttClient {
     }
 
     fn screen_rpc_request(&self, _api_def: &ApiDefinition, _rt: RequestType, args: &mut Args) -> Result<(), ServerError> {
-        if let Some(ts) = args.shift_remove("mqtt_timestamp") {
-            let mut dq = self.timestamp_deque.borrow_mut();
-            if dq.contains(&ts) {
-                log::debug!("Duplicate MQTT API request received");
-                return Err(ServerError::new("Duplicate MQTT Request", DUP_API_REQ_CODE));
-            }
-            if dq.len() == 20 {
-                dq.pop_front();
-            }
-            dq.push_back(ts);
+        match args.shift_remove("mqtt_timestamp") {
+            Some(ts) => self.screen_timestamp(ts),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {

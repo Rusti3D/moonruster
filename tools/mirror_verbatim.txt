@@ -73,3 +73,49 @@ moonraker.components.http_client.HttpClient.wrap_request
 moonraker.components.http_client.HttpRequestWrapper
 # KlippyAPI.subscribe_from_transport: Moonraker's own code over _send_klippy_request
 moonraker.components.klippy_apis.KlippyAPI.subscribe_from_transport
+# SQL (docs/PLUGINS.md "SQL"): Moonraker's own code over the connection of
+# plugins/sql.py; the record codec as the sqlite3 converter uses it
+moonraker.components.database.encode_record
+moonraker.components.database.decode_record
+moonraker.components.database.SqliteCursorProxy
+moonraker.components.database.SqlTableWrapper
+moonraker.components.database.DBProviderWrapper
+moonraker.components.database.MoonrakerDatabase.sql_execute
+moonraker.components.database.MoonrakerDatabase.sql_executemany
+moonraker.components.database.MoonrakerDatabase.sql_executescript
+moonraker.components.database.MoonrakerDatabase.sql_commit
+moonraker.components.database.MoonrakerDatabase.sql_rollback
+moonraker.components.database.MoonrakerDatabase.queue_sql_callback
+moonraker.components.database.MoonrakerDatabase.compact_database
+moonraker.components.database.MoonrakerDatabase.backup_database
+moonraker.components.database.MoonrakerDatabase.restore_database
+moonraker.components.database.MoonrakerDatabase.get_provider_wrapper
+moonraker.components.database.SqliteProvider.sql_execute
+moonraker.components.database.SqliteProvider.sql_executemany
+moonraker.components.database.SqliteProvider.sql_executescript
+moonraker.components.database.SqliteProvider.sql_commit
+moonraker.components.database.SqliteProvider.sql_rollback
+moonraker.components.database.SqliteProvider.get_provider_wapper
+moonraker.components.database.SqliteProvider._insert_record
+moonraker.components.database.SqliteProvider._get_record
+moonraker.components.database.SqliteProvider.get_namespace
+moonraker.components.database.SqliteProvider.iter_namespace
+moonraker.components.database.SqliteProvider.clear_namespace
+moonraker.components.database.SqliteProvider.sync_namespace
+moonraker.components.database.SqliteProvider.get_namespace_length
+moonraker.components.database.SqliteProvider.get_namespace_keys
+moonraker.components.database.SqliteProvider.get_namespace_values
+moonraker.components.database.SqliteProvider.get_namespace_items
+moonraker.components.database.SqliteProvider.namespace_contains
+moonraker.components.database.SqliteProvider.update_item
+moonraker.components.database.SqliteProvider.delete_item
+moonraker.components.database.SqliteProvider.get_item
+moonraker.components.database.SqliteProvider.move_batch
+moonraker.components.database.SqliteProvider.delete_batch
+moonraker.components.database.SqliteProvider.get_batch
+moonraker.components.database.parse_namespace_key
+moonraker.components.database.getitem_with_default
+# power devices of components (PrinterPower.add_device) subclass these:
+# Moonraker's own code
+moonraker.components.power.PowerDevice
+moonraker.components.power.HTTPDevice

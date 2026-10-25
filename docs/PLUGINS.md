@@ -504,6 +504,104 @@ shows its method's first statement.
 - Template error messages are minijinja's, Moonruster's template engine, not Jinja2's. The exception type is
   Jinja2's.
 
+## The rest of the API (2026-10-25)
+
+Each area below has cases in `mr_test_api` / `mr_test_sql`. `plugin_cmp` shows 0 differences against Moonraker.
+`tools/api_coverage.py` lists what is left.
+
+- **authorization:**
+  - `decode_jwt` / `validate_jwt`, API key, oneshot tokens, CORS, `check_logins_maxed`;
+  - base64url decoding is binascii's non-strict decoder, ported with its error messages;
+  - each `decode_jwt` step raises the exception Moonraker's code raises there (`binascii.Error`, `ValueError`,
+    `AttributeError`, `KeyError`, JSON decode errors). Where the message depends on the Python version
+    (unpacking, JSON, unhashable keys), Python raises it.
+- **template:** `add_environment_global`. Values, or Python callables run on the loop; the async renderer calls
+  them through its call-back channel. The UI environment gets none, as in Moonraker.
+- **http_client:** `register_cached_url`, `github_api_stats` / `github_api_request`, `download_file`;
+  `get_file`, `wrap_request` and `HttpRequestWrapper` are verbatim.
+- **file_manager:** the rest of FileManager's public methods, including `finalize_upload`
+  (`form_args["current_user"]`) and `delete_file`.
+- **update_manager:** `get_updaters` gives updater objects of the deploy class (identity kept), with
+  BaseDeploy's methods; `register_updater` raises `ConfigError` / `ValueError` / `ServerError` as Moonraker
+  does; `refresh_updater`.
+- **Transports.** A component's own `APITransport` subclass is bridged (`impls/transport.rs`): Moonruster calls
+  its `send_status`, reads `transport_type` / `user_info` / `ip_addr`, and gives the same object back.
+  - `KlippyConnection.request` takes a component's `WebRequest`;
+  - `KlippyAPI.subscribe_from_transport` is verbatim over `_send_klippy_request` with a transport.
+- **wled, octoprint_compat, proc_stats, spoolman:** their remaining public methods.
+- **Server:**
+  - `add_warning` (warn id `str(id(warning))` when none is given; an `exc_info` traceback is logged),
+    `remove_warning`, `get_warnings`;
+  - `get_app_arg`, `get_api_version`, `is_debug_enabled` / `is_verbose_enabled`;
+  - `add_log_rollover_item`, `set_failed_component`, `get_klippy_info`, `restart`.
+- **ConfigHelper:**
+  - `read_supplemental_dict` / `read_supplemental_config`;
+  - `get_hash` (a `hashlib.sha256` object), `get_file`, `set_option`, `write_config`;
+  - `get_parsed_config`, `get_orig_config`, `get_file_sections`, `get_config_files`, `validate_config`,
+    `create_backup`.
+- **power:** `add_device` takes a component's device.
+  - Moonraker's `PowerDevice` and `HTTPDevice` run verbatim, so a subclass works as in Moonraker.
+  - PrinterPower keeps Moonruster's devices and the components' devices side by side (`power::Device`). It
+    calls the components' devices through `ExternalDevice`: info, requests, klippy shutdown, job queue, close.
+- **analysis:**
+  - `estimate_file` / `post_process_file` run the estimator through Moonraker's own `ShellCommandFactory`,
+    under Moonruster's command lock. Their errors are Moonraker's (`ShellCommandError`, the JSON decoder's).
+  - `estimator_version_tuple` (a property).
+- **gpio:** `setup_gpio_out` / `register_gpio_event` and the pins (`write`, `get_value`, `start` / `stop`,
+  debounce, `close`). A callback's awaitable runs as a task.
+- **dbus_manager:**
+  - `is_connected`, `check_permission`;
+  - `get_interface(s)` return dbus_fast proxies. Moonruster's D-Bus connection is Rust's, so the components get
+    a dbus_fast bus of their own, connected on first use.
+- **Smaller ones:**
+  - ldap `authenticate_ldap_user`;
+  - notifier `notify_action`;
+  - mqtt `transport_type` / `screen_rpc_request` / `send_status`;
+  - machine `validate_installation`, `sudo_password` (and its setter), `log_service_info`, `update_usb_ids`,
+    `get_libcamera_devices` (none: no libcamera bindings);
+  - application `load_template`;
+  - extensions `register_agent` / `remove_agent`.
+
+**Not provided** (`tools/api_coverage.py` INTERNAL lists each with its reason). These are what the server or
+the component itself calls:
+- server start;
+- the history's job tracking;
+- PanelDue's serial loop;
+- SimplyPrint's connection;
+- connections registering themselves;
+- `register_websocket_handler` and `authenticate_request`, which take tornado classes and requests.
+
+With those set aside, every public method of the component classes, ConfigHelper, Server and EventLoop is
+served.
+
+**Fixes found on the way:** WLED's init stops at the first strip error, as Moonraker's does.
+
+**SQL.** Moonruster has one SQLite connection, in Rust, and its SQLite is bundled. Python's `sqlite3` must not
+open the same file: a second SQLite library in one process breaks POSIX locking (sqlite.org/howtocorrupt.html
+§2.2.1). Instead, `plugins/sql.py` provides the provider's `sqlite3` connections over Rust's:
+- **Statements run on Rust's connection.** `_prepare` checks the statement as `sqlite3` does: one statement
+  only, parameter names, read-only for `executemany`.
+- **Parameters are adapted and bound by `sqlite3` itself.** The statement's placeholders run as `SELECT ?, :x`
+  on an in-memory connection. Its row is the bound values, and the errors and deprecation warnings are
+  `sqlite3`'s own.
+- **Results.** Columns go through `sqlite3.converters` by declared type, with the bytes SQLite would give.
+  Rows are real `sqlite3.Row` objects. Errors are `sqlite3`'s classes, with `sqlite_errorcode` /
+  `sqlite_errorname`.
+- **Transactions use legacy control.** DML opens a transaction; `commit` / `rollback` / `with conn:` end it.
+- **Rust's writes match Moonraker's `with conn:`.** Each commits, and so commits a transaction a component left
+  open. Before, they joined it uncommitted.
+- **Two connections, as in Moonraker.** The provider's `sync_conn` is closed once the database is up.
+  `execute_db_function` uses the thread's connection, delivering its result on a later loop iteration.
+- **Converters and adapters.** Moonraker's `record` / `pyjson` / `pybool` converters and list/dict adapters are
+  registered when `sqlite3` is first imported.
+- **Moonraker's own code runs verbatim:** `SqlTableWrapper`, `SqliteCursorProxy`, `DBProviderWrapper`, the
+  provider's read and `sql_*` methods, and `encode_record` / `decode_record`. The methods that change the
+  namespace set are Rust's.
+- **`register_table`** takes a Python `SqlTableDefinition`; an exception from its `migrate` propagates.
+
+Not provided: `Connection.create_function` and the other callback registrations, `backup`, `iterdump`,
+`blobopen`. Closing the connection object closes only that object.
+
 ## Resource gates (2026-10-25, CC1)
 
 Measured on the CC1 with `tools/cc1_plugins_measure.sh`:

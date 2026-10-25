@@ -69,6 +69,19 @@ instance_name: mr_test_cmp
 
 [mr_test_api]
 
+[mr_test_sql]
+
+[notifier mr_n]
+url: json://127.0.0.1:1
+events: cancelled
+
+[power mr_cfg]
+type: tasmota
+address: 127.0.0.1
+port: 1
+
+[analysis]
+
 [octoprint_compat]
 
 [wled mr_strip]
@@ -211,6 +224,7 @@ REQUESTS = [
     ("POST", "/server/mr_test/services", None),
     ("POST", "/server/mr_test/mqtt", None),
     ("POST", "/server/mr_test/api", None),
+    ("POST", "/server/mr_test/sql", None),
 ]
 
 

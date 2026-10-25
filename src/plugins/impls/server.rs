@@ -120,6 +120,68 @@ pub fn register(r: &mut Registry) {
     );
     r.method(name!("get_app_args"), |_| to_py(&Value::Object(server().get_app_args())));
     r.method(name!("get_host_info"), |_| to_py(&server().get_host_info()));
+    r.method(name!("get_app_arg"), |a| {
+        let key = arg(a, 0, "key")?.as_string()?;
+        match server().get_app_args().get(&key) {
+            Some(v) => to_py(v),
+            None => match a.get(1, "default") {
+                Some(d) if !is_missing(d)? => Ok(d.clone()),
+                _ => Err(py_error("KeyError", format!("No key '{}' in Application Arguments", key))),
+            },
+        }
+    });
+    r.method(name!("get_api_version"), |_| {
+        let v = crate::server::API_VERSION;
+        Ok(tuple(&[&py_int(v.0), &py_int(v.1), &py_int(v.2)]))
+    });
+    r.method(name!("get_warnings"), |_| to_py(&Value::from(server().get_warnings())));
+    r.method(name!("is_debug_enabled"), |_| Ok(py_bool(server().is_debug_enabled())));
+    r.method(name!("is_verbose_enabled"), |_| Ok(py_bool(server().is_verbose_enabled())));
+    r.method(name!("add_log_rollover_item"), |a| {
+        let (name, item) = (arg(a, 0, "name")?.as_string()?, arg(a, 1, "item")?);
+        // `if log and item is not None: logging.info(item)`
+        let item_s = if item.is_none() { None } else { Some(item.str()?) };
+        server().add_log_rollover_item(&name, item_s.as_deref().unwrap_or(""), bool_or(a, 2, "log", true)? && item_s.is_some());
+        Ok(none())
+    });
+    // add_warning(warning, warn_id=None, log=True, exc_info=None) -> warn_id
+    r.method(name!("add_warning"), |a| {
+        let w = arg(a, 0, "warning")?;
+        let warning = w.str()?;
+        let warn_id = match opt(a, 1, "warn_id") {
+            Some(i) => i.str()?,
+            None => lookup("builtins", "id")?.call(&[w])?.str()?,
+        };
+        server().add_warning(&warning, Some(&warn_id), false);
+        if bool_or(a, 2, "log", true)? {
+            let msg = match opt(a, 3, "exc_info") {
+                Some(e) => {
+                    let lines = lookup("traceback", "format_exception")?.call(&[e])?;
+                    format!("{}\n{}", warning, py_str("").call_method("join", &[&lines])?.str()?.trim_end_matches('\n'))
+                }
+                None => warning,
+            };
+            log::warn!("{}", msg);
+        }
+        Ok(py_str(&warn_id))
+    });
+    r.method(name!("remove_warning"), |a| {
+        server().remove_warning(&arg(a, 0, "warn_id")?.str()?);
+        Ok(none())
+    });
+    r.method(name!("set_failed_component"), |a| {
+        server().set_failed_component(&arg(a, 0, "component_name")?.as_string()?);
+        Ok(none())
+    });
+    r.method(name!("get_klippy_info"), |_| to_py(&server().get_klippy_info()));
+    r.method(name!("restart"), |a| {
+        let delay = match opt(a, 0, "delay") {
+            Some(d) => Some(d.as_f64()?),
+            None => None,
+        };
+        server().restart(delay);
+        Ok(none())
+    });
     r.method(name!("is_running"), |_| Ok(py_bool(server().is_running())));
     r.method(name!("get_event_loop"), |_| event_loop());
     r.attr(name!("event_loop"), |_| event_loop(), None);

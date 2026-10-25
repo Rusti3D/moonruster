@@ -194,6 +194,42 @@ class PostImportHooks:
 _post_import = PostImportHooks()
 
 
+_dbus_bus = None
+
+
+async def dbus_interfaces(bus_name, bus_path, interface_names):
+    """DbusManager.get_interfaces: dbus_fast proxies need a dbus_fast bus,
+    Moonruster's own (Rust) connection is not one: the components get one of
+    their own, connected on first use"""
+    global _dbus_bus
+    from dbus_fast.aio import MessageBus
+    from dbus_fast.constants import BusType
+    if _dbus_bus is None or not _dbus_bus.connected:
+        _dbus_bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    introspection = await _dbus_bus.introspect(bus_name, bus_path)
+    proxy_obj = _dbus_bus.get_proxy_object(bus_name, bus_path, introspection)
+    return [proxy_obj.get_interface(n) for n in interface_names]
+
+
+def _sqlite3_types():
+    """SqliteProvider.__init__'s sqlite3 converters and adapters: Moonraker
+    registers them at start, here once sqlite3 is imported"""
+    import sqlite3
+    from moonraker.utils import json_wrapper as jsonw
+
+    def decode_record(bvalue):
+        # Moonraker's database module imports sqlite3, so it may still be
+        # importing here: its decode_record replaces this on first use
+        from moonraker.components.database import decode_record
+        sqlite3.register_converter("record", decode_record)
+        return decode_record(bvalue)
+    sqlite3.register_converter("record", decode_record)
+    sqlite3.register_converter("pyjson", jsonw.loads)
+    sqlite3.register_converter("pybool", lambda x: bool(x))
+    sqlite3.register_adapter(list, jsonw.dumps)
+    sqlite3.register_adapter(dict, jsonw.dumps)
+
+
 def run_startup(modnames):
     """Moonraker's import-time side effects that need a third-party package
     (`_mr_startup`: http_client's AsyncHTTPClient.configure). Each runs once
@@ -201,6 +237,10 @@ def run_startup(modnames):
     without loading the package for components that never do"""
     if _post_import not in sys.meta_path:
         sys.meta_path.insert(0, _post_import)
+    if "sqlite3" in sys.modules:
+        _sqlite3_types()
+    else:
+        _post_import.add("sqlite3", _sqlite3_types)
     for name in modnames:
         mod = importlib.import_module(name)
         for triggers, code in mod.__dict__.get("_mr_startup", ()):

@@ -1984,8 +1984,74 @@ fn loxone_state(res: &Value) -> Result<String, ServerError> {
 
 // ***** Printer Power *****
 
+/// A power device a Python component added (PrinterPower.add_device): its
+/// own object answers what PrinterPower asks of a device
+#[async_trait(?Send)]
+pub trait ExternalDevice {
+    fn get_name(&self) -> String;
+    fn get_device_info(&self) -> Value;
+    fn process_klippy_shutdown(&self);
+    fn should_turn_on_when_queued(&self) -> bool;
+    /// initialize(): its result, awaited when it is a coroutine
+    async fn initialize(&self) -> Result<bool, ServerError>;
+    async fn process_request(&self, req: &str, force: bool) -> Result<String, ServerError>;
+    async fn close(&self);
+}
+
+/// A device of PrinterPower: one of Moonruster's, or a component's
+#[derive(Clone)]
+pub enum Device {
+    Native(Rc<PowerDevice>),
+    External(Rc<dyn ExternalDevice>),
+}
+
+impl Device {
+    fn get_name(&self) -> String {
+        match self {
+            Device::Native(d) => d.name.clone(),
+            Device::External(d) => d.get_name(),
+        }
+    }
+    fn get_device_info(&self) -> Value {
+        match self {
+            Device::Native(d) => d.get_device_info(),
+            Device::External(d) => d.get_device_info(),
+        }
+    }
+    fn process_klippy_shutdown(&self) {
+        match self {
+            Device::Native(d) => d.process_klippy_shutdown(),
+            Device::External(d) => d.process_klippy_shutdown(),
+        }
+    }
+    fn should_turn_on_when_queued(&self) -> bool {
+        match self {
+            Device::Native(d) => d.on_when_queued,
+            Device::External(d) => d.should_turn_on_when_queued(),
+        }
+    }
+    async fn initialize(&self) -> Result<bool, ServerError> {
+        match self {
+            Device::Native(d) => d.initialize(),
+            Device::External(d) => d.initialize().await,
+        }
+    }
+    async fn process_request(&self, req: &str, force: bool) -> Result<String, ServerError> {
+        match self {
+            Device::Native(d) => d.process_request(req, force).await,
+            Device::External(d) => d.process_request(req, force).await,
+        }
+    }
+    async fn close(&self) {
+        match self {
+            Device::Native(d) => d.close().await,
+            Device::External(d) => d.close().await,
+        }
+    }
+}
+
 pub struct PrinterPower {
-    devices: RefCell<IndexMap<String, Rc<PowerDevice>>>,
+    devices: RefCell<IndexMap<String, Device>>,
 }
 
 const DEV_TYPES: [&str; 14] = [
@@ -2019,7 +2085,7 @@ impl PrinterPower {
             }
             match PowerDevice::new(&cfg) {
                 Ok(d) => {
-                    devices.insert(d.name.clone(), d);
+                    devices.insert(d.name.clone(), Device::Native(d));
                 }
                 Err(e) => {
                     srv.add_warning(&format!("Failed to load power device [{}]\n{}", cfg.get_name(), e.0), None, true);
@@ -2094,7 +2160,7 @@ impl PrinterPower {
         let p = Rc::downgrade(&pp);
         srv.on_event("server:klippy_shutdown", move |_| {
             if let Some(p) = p.upgrade() {
-                let devs: Vec<Rc<PowerDevice>> = p.devices.borrow().values().cloned().collect();
+                let devs: Vec<Device> = p.devices.borrow().values().cloned().collect();
                 for d in devs {
                     d.process_klippy_shutdown();
                 }
@@ -2117,9 +2183,9 @@ impl PrinterPower {
         if queue_info.get("action").and_then(|v| v.as_str()) != Some("jobs_added") {
             return;
         }
-        let devs: Vec<(String, Rc<PowerDevice>)> = self.devices.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let devs: Vec<(String, Device)> = self.devices.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         for (name, dev) in devs {
-            if dev.on_when_queued {
+            if dev.should_turn_on_when_queued() {
                 let fname = queue_info
                     .get("updated_queue")
                     .and_then(|q| q.get(0))
@@ -2170,6 +2236,19 @@ impl PrinterPower {
         Ok(Value::Object(result))
     }
 
+    /// PrinterPower.add_device(name, device)
+    pub async fn add_device(&self, name: &str, device: Rc<dyn ExternalDevice>) -> Result<(), ServerError> {
+        if self.devices.borrow().contains_key(name) {
+            return Err(ServerError::bad(format!("Device [{}] already configured", name)));
+        }
+        if !device.initialize().await? {
+            server().add_warning(&format!("Power device '{}' failed to initialize", device.get_name()), None, true);
+            return Ok(());
+        }
+        self.devices.borrow_mut().insert(name.to_string(), Device::External(device));
+        Ok(())
+    }
+
     pub fn set_device_power(&self, device: &str, request: &str, force: bool) {
         let dev = match self.devices.borrow().get(device).cloned() {
             None => {
@@ -2192,17 +2271,17 @@ impl Component for PrinterPower {
     }
 
     async fn component_init(self: Rc<Self>) -> Result<(), ServerError> {
-        let devs: Vec<Rc<PowerDevice>> = self.devices.borrow().values().cloned().collect();
+        let devs: Vec<Device> = self.devices.borrow().values().cloned().collect();
         for dev in devs {
-            if !dev.initialize()? {
-                server().add_warning(&format!("Power device '{}' failed to initialize", dev.name), None, true);
+            if !dev.initialize().await? {
+                server().add_warning(&format!("Power device '{}' failed to initialize", dev.get_name()), None, true);
             }
         }
         Ok(())
     }
 
     async fn close(self: Rc<Self>) {
-        let devs: Vec<Rc<PowerDevice>> = self.devices.borrow().values().cloned().collect();
+        let devs: Vec<Device> = self.devices.borrow().values().cloned().collect();
         futures::future::join_all(devs.iter().map(|d| d.close())).await;
     }
 }

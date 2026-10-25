@@ -1,6 +1,7 @@
 # Phase 4 parity component: shell_command as components use it (exec_cmd,
 # build_shell_command + run / run_with_response, failures, stderr logging)
 from __future__ import annotations
+import asyncio
 import logging
 import sys
 
@@ -32,6 +33,9 @@ class MrTestShell:
         lines = []
         scmd = sc.build_shell_command("printf 'a\\nb\\n'", callback=lines.append)
         out["run"] = await outcome(scmd.run(timeout=10.))
+        # Moonraker's run() can return before the pipe's last callback ran
+        # (asyncio delivers them separately): let them in before comparing
+        await asyncio.sleep(.1)
         out["run_lines"] = [bytes(x).decode() if not isinstance(x, str) else x for x in lines]
         out["return_code"] = scmd.get_return_code()
         # tornado's AsyncHTTPClient as Moonraker configured it (http_client's

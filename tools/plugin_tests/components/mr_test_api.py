@@ -8,6 +8,7 @@ import pathlib
 import shutil
 
 from ..common import RequestType, WebRequest, APITransport
+from .power import PowerDevice
 
 
 def log(msg):
@@ -36,9 +37,32 @@ class MrTransport(APITransport):
         self.statuses.append(status)
 
 
+class MrDevice(PowerDevice):
+    """a component's power device: Moonraker's PowerDevice base class"""
+
+    def __init__(self, config, fail=False):
+        super().__init__(config)
+        self.fail = fail
+
+    def init_state(self):
+        self.state = "off"
+
+    def initialize(self):
+        if self.fail:
+            return False
+        return super().initialize()
+
+    def refresh_status(self):
+        pass
+
+    def set_power(self, state):
+        self.state = state
+
+
 class MrTestApi:
     def __init__(self, config):
         self.server = config.get_server()
+        self.config = config
         tf = self.server.lookup_component("template")
         tf.add_environment_global("mr_value", {"a": [1, 2]})
         tf.add_environment_global("mr_double", lambda x, y=1: x * 2 + y)
@@ -142,6 +166,93 @@ class MrTestApi:
         out["kc_request_sub"] = [res[0], res[1]["status"] if res[0] == "ok" else res]
         out["kc_request_nosub"] = await outcome(kc.request(WebRequest("objects/subscribe", {"objects": {}}, RequestType.POST)))
         kc.remove_subscription(tr)
+        for name, part in (("server_config", self._server_config), ("power_analysis", self._power_analysis),
+                           ("services", self._services)):
+            try:
+                await part(out)
+            except Exception as e:
+                out[f"{name}_error"] = [type(e).__name__, str(e)]
+
+    async def _server_config(self, out):
+        srv = self.server
+        out["app_arg"] = [type(srv.get_app_arg("data_path")).__name__, now(lambda: srv.get_app_arg("nope")),
+                          srv.get_app_arg("nope", 5)]
+        out["api_version"] = srv.get_api_version()
+        out["debug"] = [srv.is_debug_enabled(), srv.is_verbose_enabled()]
+        wid = srv.add_warning("mr_test warning one", "mr_w1")
+        anon = srv.add_warning("mr_test warning two", log=False)
+        out["warnings"] = [wid, type(anon).__name__, "mr_test warning one" in srv.get_warnings(),
+                           "mr_test warning two" in srv.get_warnings()]
+        srv.remove_warning("mr_w1")
+        srv.remove_warning(anon)
+        out["warnings_removed"] = [w for w in srv.get_warnings() if w.startswith("mr_test")]
+        out["rollover"] = srv.add_log_rollover_item("mr_test_item", "mr_test rollover line")
+        out["klippy_info"] = sorted(srv.get_klippy_info().keys())
+        cfg = self.config
+        out["cfg_hash"] = cfg.get_hash().hexdigest()
+        out["cfg_file"] = [type(cfg.get_file()).__name__, cfg.get_file().name]
+        out["cfg_files"] = len(cfg.get_config_files())
+        out["cfg_file_sections"] = "mr_test_api" in list(cfg.get_file_sections().values())[0]
+        sup = cfg.read_supplemental_dict({"mr_sup one": {"a": "1", "b": "x"}})
+        out["supplemental"] = [sup.get_name(), sup.getint("a"), sup.get("b"), sup.get_file(), sup.get_hash().hexdigest()]
+        out["supplemental_empty"] = now(lambda: cfg.read_supplemental_dict({}))
+        sup_file = pathlib.Path(srv.get_app_arg("data_path")) / "mr_sup.cfg"
+        sup_file.write_text("[mr_file sec]\nkey: 7\n")
+        fc = cfg.read_supplemental_config(str(sup_file))
+        out["supplemental_file"] = [fc.get_name(), fc.getint("key"), fc.get_file().name]
+        sup_file.write_text("")
+        out["supplemental_file_empty"] = now(lambda: cfg.read_supplemental_config(str(sup_file)))
+        sup_file.unlink()
+        out["parsed"] = sorted(cfg.get_parsed_config().get("mr_test_api", {}).keys())
+        out["orig"] = sorted(cfg.get_orig_config().keys())[:3]
+
+    async def _services(self, out):
+        lc = self.server.lookup_component
+        mq = lc("mqtt")
+        out["mqtt_transport"] = [str(mq.transport_type), mq.send_status({}, 0.)]
+        args = {"mqtt_timestamp": 12.5, "x": 1}
+        out["mqtt_screen"] = [now(lambda: mq.screen_rpc_request(None, None, args)), args,
+                              now(lambda: mq.screen_rpc_request(None, None, {"mqtt_timestamp": 12.5}))]
+        nt = lc("notifier")
+        out["notify_missing"] = await outcome(nt.notify_action("nope"))
+        out["notify"] = await outcome(nt.notify_action("mr_n", "hello"))
+        db = lc("dbus_manager")
+        out["dbus"] = db.is_connected()
+        intf = await outcome(db.get_interface("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus"))
+        out["dbus_intf"] = [intf[0], type(intf[1]).__name__ if intf[0] == "ok" else intf]
+        if intf[0] == "ok":
+            out["dbus_call"] = (await intf[1].call_get_name_owner("org.freedesktop.DBus")).startswith(":")
+        ifs = await outcome(db.get_interfaces("org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                              ["org.freedesktop.DBus", "org.freedesktop.DBus.Introspectable"]))
+        out["dbus_intfs"] = [ifs[0], len(ifs[1]) if ifs[0] == "ok" else ifs]
+
+    async def _power_analysis(self, out):
+        lc = self.server.lookup_component
+        pw = lc("power")
+        cfg = self.config.read_supplemental_dict({"power mr_py": {"type": "mr", "on_when_job_queued": "True"}})
+        dev = MrDevice(cfg)
+        out["power_add"] = await outcome(pw.add_device("mr_py", dev))
+        out["power_dup"] = await outcome(pw.add_device("mr_py", dev))
+        out["power_on"] = [await dev.process_request("on"), dev.state, dev.get_device_info()]
+        out["power_set"] = pw.set_device_power("mr_py", "off")
+        bad = MrDevice(self.config.read_supplemental_dict({"power mr_bad": {"type": "mr"}}), fail=True)
+        out["power_bad"] = [await outcome(pw.add_device("mr_bad", bad)), [w for w in self.server.get_warnings() if "mr_bad" in w]]
+        an = lc("analysis")
+        out["est_version"] = an.estimator_version_tuple
+        # outside the watched roots: the file watcher's timing is not under test
+        tmp = pathlib.Path(self.server.get_app_arg("data_path")) / "mr_est_tmp"
+        tmp.mkdir(exist_ok=True)
+        gc = tmp / "mr_est.gcode"
+        gc.write_text("G1 X1\n; Processed by klipper_estimator v3.7.3, a\n")
+        est = gc.with_suffix(".json")
+        est.write_text("{}")
+        out["est_missing_cfg"] = await outcome(an.estimate_file(gc))
+        out["est_missing_gc"] = await outcome(an.estimate_file(gc.with_name("nope.gcode"), est))
+        out["est_unavailable"] = await outcome(an.estimate_file(gc, est))
+        out["post_processed"] = await outcome(an.post_process_file(gc, est))
+        out["post_force"] = await outcome(an.post_process_file(gc, est, force=True))
+        gc.unlink()
+        est.unlink()
 
     async def _file_manager(self, out):
         fm = self.server.lookup_component("file_manager")

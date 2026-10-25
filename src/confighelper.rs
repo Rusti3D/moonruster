@@ -801,6 +801,19 @@ impl ConfigHelper {
         Ok(ConfigHelper::new(source, &first, Rc::new(RefCell::new(IndexMap::new())), None))
     }
 
+    /// read_supplemental_config(file_name): the file's first section (None:
+    /// the file has none, sections[0] raises there)
+    pub fn read_supplemental_config(&self, file_name: &str) -> CResult<Option<ConfigHelper>> {
+        let fpath = utils::resolve_path(&utils::expand_user(file_name));
+        let source = Rc::new(ConfigSource::new_file());
+        source.read_file(&fpath)?;
+        let first = match source.config.borrow().sections().first() {
+            Some(s) => s.clone(),
+            None => return Ok(None),
+        };
+        Ok(Some(ConfigHelper::new(source, &first, Rc::new(RefCell::new(IndexMap::new())), None)))
+    }
+
     pub fn write_config(&self) -> String {
         self.source.config.borrow().write()
     }
@@ -1272,6 +1285,12 @@ impl ConfigSource {
         } else {
             None
         }
+    }
+
+    /// find_config_file(section): the file the section is (first) in
+    pub fn find_config_file(&self, section: &str) -> Option<PathBuf> {
+        let idx = *self.file_section_map.borrow().get(section)?.first()?;
+        self.files.borrow().get(idx).cloned()
     }
 
     pub fn get_file_sections(&self) -> IndexMap<String, Vec<String>> {

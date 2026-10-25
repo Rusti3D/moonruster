@@ -384,7 +384,7 @@ impl MoonrakerDatabase {
             "{} (\n    namespace TEXT NOT NULL,\n    key TEXT NOT NULL,\n    value record NOT NULL,\n    PRIMARY KEY (namespace, key)\n)",
             NAMESPACE_TABLE
         );
-        self.conn.borrow().execute(&format!("CREATE TABLE {}", proto), [])?;
+        self.with_commit(|c| c.execute(&format!("CREATE TABLE {}", proto), []))?;
         self.save_registered_table(NAMESPACE_TABLE, &proto, 1)?;
         server().add_log_rollover_item("db_default_table", &format!("Created default SQL table {}", NAMESPACE_TABLE), true);
         Ok(())
@@ -398,19 +398,21 @@ impl MoonrakerDatabase {
             "{} (\n    name TEXT NOT NULL PRIMARY KEY,\n    prototype TEXT NOT NULL,\n    version INT\n)",
             REGISTRATION_TABLE
         );
-        self.conn.borrow().execute(&format!("CREATE TABLE {}", proto), [])?;
+        self.with_commit(|c| c.execute(&format!("CREATE TABLE {}", proto), []))?;
         self.tables.borrow_mut().insert(REGISTRATION_TABLE.into());
         Ok(())
     }
 
     fn save_registered_table(&self, name: &str, prototype: &str, version: i64) -> Result<(), ServerError> {
-        self.conn.borrow().execute(
-            &format!(
-                "INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(name) DO UPDATE SET prototype=excluded.prototype, version=excluded.version",
-                REGISTRATION_TABLE
-            ),
-            params![name, prototype, version],
-        )?;
+        self.with_commit(|c| {
+            c.execute(
+                &format!(
+                    "INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(name) DO UPDATE SET prototype=excluded.prototype, version=excluded.version",
+                    REGISTRATION_TABLE
+                ),
+                params![name, prototype, version],
+            )
+        })?;
         self.tables.borrow_mut().insert(name.to_string());
         Ok(())
     }
@@ -423,6 +425,31 @@ impl MoonrakerDatabase {
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
         )
         .unwrap_or((String::new(), 0))
+    }
+
+    /// The connection, for Python components' SQL (plugins/sql.py)
+    pub fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> T) -> T {
+        f(&self.conn.borrow())
+    }
+
+    /// Python's `with conn:` around statements, as Moonraker's provider
+    /// writes: one transaction, committed at the end, rolled back on an
+    /// error. A transaction a Python component left open is part of it
+    fn with_commit<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+        let conn = self.conn.borrow();
+        if conn.is_autocommit() {
+            conn.execute_batch("BEGIN")?;
+        }
+        match f(&conn) {
+            Ok(v) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     pub fn get_database_path(&self) -> String {
@@ -442,13 +469,15 @@ impl MoonrakerDatabase {
                 return false;
             }
         };
-        let res = self.conn.borrow().execute(
-            &format!(
-                "INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(namespace, key) DO UPDATE SET value=excluded.value",
-                NAMESPACE_TABLE
-            ),
-            params![namespace, key, enc],
-        );
+        let res = self.with_commit(|c| {
+            c.execute(
+                &format!(
+                    "INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(namespace, key) DO UPDATE SET value=excluded.value",
+                    NAMESPACE_TABLE
+                ),
+                params![namespace, key, enc],
+            )
+        });
         if res.is_err() {
             if server().is_verbose_enabled() {
                 log::error!("Error inserting record for key");
@@ -493,7 +522,7 @@ impl MoonrakerDatabase {
     }
 
     pub fn clear_namespace(&self, namespace: &str) -> Result<(), ServerError> {
-        self.conn.borrow().execute(&format!("DELETE FROM {} WHERE namespace = ?", NAMESPACE_TABLE), params![namespace])?;
+        self.with_commit(|c| c.execute(&format!("DELETE FROM {} WHERE namespace = ?", NAMESPACE_TABLE), params![namespace]))?;
         Ok(())
     }
 
@@ -603,10 +632,9 @@ impl MoonrakerDatabase {
             remove_record = record.as_object().map(|o| o.is_empty()).unwrap_or(true);
         }
         if remove_record {
-            self.conn.borrow().execute(
-                &format!("DELETE FROM {} WHERE namespace = ? and key = ?", NAMESPACE_TABLE),
-                params![namespace, key_list[0]],
-            )?;
+            self.with_commit(|c| {
+                c.execute(&format!("DELETE FROM {} WHERE namespace = ? and key = ?", NAMESPACE_TABLE), params![namespace, key_list[0]])
+            })?;
         } else if !self.insert_record(namespace, &key_list[0], &record) {
             log::info!("Error deleting key '{}' from namespace '{}'", crate::pyfmt::py_str(key), namespace);
         }
@@ -679,15 +707,15 @@ impl MoonrakerDatabase {
     /// SqliteProvider.insert_batch: every record in one transaction
     pub fn insert_batch_sync(&self, namespace: &str, records: &Map<String, Value>) -> Result<(), ServerError> {
         let encoded = records.iter().map(|(k, v)| Ok((k, encode_record(v)?))).collect::<Result<Vec<_>, ServerError>>()?;
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
+        self.with_commit(|tx| {
         for (k, enc) in encoded {
             tx.execute(
                 &format!("INSERT INTO {} VALUES(?, ?, ?) ON CONFLICT(namespace, key) DO UPDATE SET value=excluded.value", NAMESPACE_TABLE),
                 params![namespace, k, enc],
             )?;
         }
-        tx.commit()?;
+            Ok(())
+        })?;
         self.namespaces.borrow_mut().insert(namespace.to_string());
         Ok(())
     }
@@ -695,13 +723,13 @@ impl MoonrakerDatabase {
     /// SqliteProvider.sync_namespace: replaces the namespace's records. As
     /// there, the values go in through sqlite3's adapters, not encode_record
     pub fn sync_namespace_sync(&self, namespace: &str, values: &Map<String, Value>) -> Result<(), ServerError> {
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
+        self.with_commit(|tx| {
         tx.execute(&format!("DELETE FROM {} WHERE namespace = ?", NAMESPACE_TABLE), params![namespace])?;
         for (k, v) in values {
             tx.execute(&format!("INSERT INTO {} VALUES(?, ?, ?)", NAMESPACE_TABLE), params![namespace, k, json_to_sql(v)])?;
         }
-        tx.commit()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -712,26 +740,26 @@ impl MoonrakerDatabase {
     }
 
     pub fn move_batch_sync(&self, namespace: &str, source: &[String], dest: &[String]) -> Result<(), ServerError> {
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
+        self.with_commit(|tx| {
         for (s, d) in source.iter().zip(dest.iter()) {
             tx.execute(
                 &format!("UPDATE OR REPLACE {} SET key = ? WHERE namespace = ? and key = ?", NAMESPACE_TABLE),
                 params![d, namespace, s],
             )?;
         }
-        tx.commit()?;
+            Ok(())
+        })?;
         Ok(())
     }
 
     pub fn delete_batch_sync(&self, namespace: &str, keys: &[String]) -> Result<Map<String, Value>, ServerError> {
         let vals = self.get_batch_sync(namespace, keys)?;
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
+        self.with_commit(|tx| {
         for k in keys {
             tx.execute(&format!("DELETE FROM {} WHERE namespace = ? and key = ?", NAMESPACE_TABLE), params![namespace, k])?;
         }
-        tx.commit()?;
+            Ok(())
+        })?;
         Ok(vals)
     }
 
@@ -829,7 +857,7 @@ impl MoonrakerDatabase {
             self.lookup_registered_table(&name)
         } else {
             log::info!("Creating table {}...", name);
-            self.conn.borrow().execute(&format!("CREATE TABLE {}", prototype), [])?;
+            self.with_commit(|c| c.execute(&format!("CREATE TABLE {}", prototype), []))?;
             (prototype.clone(), 0)
         };
         if table_def.version() > version {
@@ -867,23 +895,19 @@ impl MoonrakerDatabase {
 
     /// Execute a statement, returning (rowcount, lastrowid)
     pub fn sql_execute(&self, sql: &str, params: &[rusqlite::types::Value]) -> Result<(usize, i64), ServerError> {
-        let conn = self.conn.borrow();
-        let n = conn.execute(sql, rusqlite::params_from_iter(params.iter()))?;
-        Ok((n, conn.last_insert_rowid()))
+        let n = self.with_commit(|c| c.execute(sql, rusqlite::params_from_iter(params.iter())))?;
+        Ok((n, self.conn.borrow().last_insert_rowid()))
     }
 
     pub fn sql_executemany(&self, sql: &str, params: &[Vec<rusqlite::types::Value>]) -> Result<usize, ServerError> {
-        let mut conn = self.conn.borrow_mut();
-        let tx = conn.transaction()?;
-        let mut total = 0;
-        {
+        Ok(self.with_commit(|tx| {
             let mut stmt = tx.prepare(sql)?;
+            let mut total = 0;
             for p in params {
                 total += stmt.execute(rusqlite::params_from_iter(p.iter()))?;
             }
-        }
-        tx.commit()?;
-        Ok(total)
+            Ok(total)
+        })?)
     }
 
     pub fn compact_database(&self) -> Result<Value, ServerError> {

@@ -18,6 +18,33 @@ fn err(e: crate::common::ServerError) -> PyError {
 }
 
 pub fn register(r: &mut Registry) {
+    r.method(mc!("validate_installation"), |a| {
+        let m = a.this::<crate::components::machine::Machine>()?;
+        crate::plugins::futures::rust_future(async move { Ok(py_bool(m.validate_installation().await)) })
+    });
+    r.method(mc!("sudo_password"), |a| Ok(a.this::<crate::components::machine::Machine>()?.sudo_password().map(|p| py_str(&p)).unwrap_or_else(none)));
+    r.method(mc!("sudo_password.setter"), |a| {
+        let pw = match opt(a, 0, "pwd") {
+            Some(p) => Some(p.as_string()?),
+            None => None,
+        };
+        a.this::<crate::components::machine::Machine>()?.set_sudo_password_value(pw);
+        Ok(none())
+    });
+    r.method(mc!("log_service_info"), |a| {
+        a.this::<crate::components::machine::Machine>()?.log_service_info(&from_py(arg(a, 0, "svc_info")?)?);
+        Ok(none())
+    });
+    r.method(mc!("update_usb_ids"), |a| {
+        let force = bool_or(a, 0, "force", false)?;
+        let m = a.this::<crate::components::machine::Machine>()?;
+        crate::plugins::futures::rust_future(async move {
+            m.update_usb_ids(force).await;
+            Ok(none())
+        })
+    });
+    // Moonruster has no libcamera bindings: none found, as Moonraker without them
+    r.method(mc!("get_libcamera_devices"), |_| lookup("builtins", "list")?.call(&[]));
     // properties
     r.method(mc!("public_ip"), |a| Ok(py_str(&this(a)?.public_ip().unwrap_or_default())));
     r.method(mc!("unit_name"), |a| Ok(py_str(&this(a)?.unit_name())));

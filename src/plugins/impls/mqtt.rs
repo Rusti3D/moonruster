@@ -58,6 +58,22 @@ fn bytes_of(b: &PyRef) -> PyResult<Vec<u8>> {
 }
 
 pub fn register(r: &mut Registry) {
+    // the MQTT client as an APITransport
+    r.method(mq!("transport_type"), |_| lookup("moonraker.common", "TransportType")?.getattr("MQTT"));
+    r.method(mq!("screen_rpc_request"), |a| {
+        let ts = arg(a, 2, "args")?.call_method("pop", &[&py_str("mqtt_timestamp"), &none()])?;
+        let mq = a.this::<crate::components::mqtt::MqttClient>()?;
+        mq.screen_timestamp(from_py(&ts)?).map_err(|e| server_error(&e.message, e.status_code))?;
+        Ok(none())
+    });
+    r.method(mq!("send_status"), |a| {
+        let Value::Object(status) = from_py(arg(a, 0, "status")?)? else {
+            return Err(py_error("TypeError", "status must be a dict".into()));
+        };
+        let mq: Rc<dyn crate::common::ApiTransport> = a.this::<crate::components::mqtt::MqttClient>()?;
+        mq.send_status(&status, arg(a, 1, "eventtime")?.as_f64()?);
+        Ok(none())
+    });
     r.method(mq!("is_connected"), |a| Ok(py_bool(a.this::<MqttClient>()?.is_connected())));
     r.method(mq!("get_instance_name"), |a| Ok(py_str(&a.this::<MqttClient>()?.get_instance_name())));
     r.attr(mq!("qos"), |o| Ok(py_int(objects::unwrap_as::<MqttClient>(o)?.qos() as i64)), None);

@@ -190,6 +190,55 @@ pub fn register(r: &mut Registry) {
         let prefix = a.get(0, "prefix").ok_or_else(|| py_error("TypeError", "missing prefix".into()))?.as_string()?;
         to_py(&Value::Array(this(a)?.get_prefix_sections(&prefix).into_iter().map(Value::String).collect()))
     });
+    r.method(name!("set_option"), |a| {
+        this(a)?.set_option(&arg(a, 0, "option")?.str()?, &arg(a, 1, "value")?.str()?).map_err(config_error)?;
+        Ok(none())
+    });
+    r.method(name!("get_file"), |a| {
+        let c = this(a)?;
+        match c.source.find_config_file(c.get_name()) {
+            Some(p) => lookup("pathlib", "Path")?.call(&[&py_str(&p.to_string_lossy())]),
+            None => Ok(none()),
+        }
+    });
+    // get_hash(): hashlib.sha256 over the section's options and values
+    r.method(name!("get_hash"), |a| {
+        let h = lookup("hashlib", "sha256")?.call(&[])?;
+        for (option, val) in this(a)?.get_options() {
+            h.call_method("update", &[&py_bytes(option.as_bytes())?])?;
+            h.call_method("update", &[&py_bytes(val.as_bytes())?])?;
+        }
+        Ok(h)
+    });
+    r.method(name!("read_supplemental_dict"), |a| {
+        let obj = from_py(arg(a, 0, "obj")?)?;
+        objects::wrap(Rc::new(this(a)?.read_supplemental_dict(&obj).map_err(config_error)?))
+    });
+    r.method(name!("read_supplemental_config"), |a| {
+        match this(a)?.read_supplemental_config(&arg(a, 0, "file_name")?.str()?).map_err(config_error)? {
+            Some(c) => objects::wrap(Rc::new(c)),
+            None => Err(py_error("IndexError", "list index out of range".into())),
+        }
+    });
+    r.method(name!("write_config"), |a| {
+        arg(a, 0, "file_obj")?.call_method("write", &[&py_str(&this(a)?.write_config())])?;
+        Ok(none())
+    });
+    r.method(name!("get_parsed_config"), |a| to_py(&this(a)?.get_parsed_config()));
+    r.method(name!("get_orig_config"), |a| to_py(&this(a)?.get_orig_config()));
+    r.method(name!("get_file_sections"), |a| {
+        let m: serde_json::Map<String, Value> = this(a)?.get_file_sections().into_iter().map(|(k, v)| (k, Value::from(v))).collect();
+        to_py(&Value::Object(m))
+    });
+    r.method(name!("get_config_files"), |a| to_py(&Value::from(this(a)?.get_config_files())));
+    r.method(name!("validate_config"), |a| {
+        this(a)?.validate_config(&crate::server::server());
+        Ok(none())
+    });
+    r.method(name!("create_backup"), |a| {
+        this(a)?.create_backup(&crate::server::server().app_arg_str("config_file"));
+        Ok(none())
+    });
     r.method(name!("getsection"), |a| {
         let section = a.get(0, "section").ok_or_else(|| py_error("TypeError", "missing section".into()))?.as_string()?;
         let fallback = match a.get(1, "fallback") {

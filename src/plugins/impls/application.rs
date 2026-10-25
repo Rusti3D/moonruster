@@ -162,6 +162,34 @@ async fn call_endpoint(cb: PyRef, req: WebRequest) -> Result<Value, ServerError>
 }
 
 pub fn register(r: &mut Registry) {
+    // load_template(asset_name): the asset as a UI template (cached)
+    r.method(app!("load_template"), |a| {
+        let name = arg(a, 0, "asset_name")?.as_string()?;
+        let app = a.this::<crate::components::application::MoonrakerApp>()?;
+        crate::plugins::futures::rust_future(async move {
+            match app.load_template(&name).await {
+                Ok(t) => {
+                    let t: Rc<dyn std::any::Any> = t;
+                    objects::wrap_class(t, "moonraker.components.template", "JinjaTemplate")
+                }
+                Err(_) => {
+                    let exc = lookup("tornado.web", "HTTPError")?.call(&[&py_int(404), &py_str("Asset Not Found")])?;
+                    Err(PyError { type_name: "HTTPError".into(), message: "Asset Not Found".into(), traceback: String::new(), value: Some(exc) })
+                }
+            }
+        })
+    });
+    // extensions: an agent is a client connection of type "agent"
+    r.method("moonraker.components.extensions.ExtensionManager.register_agent", |a| {
+        let conn = objects::unwrap_as::<crate::components::websockets::RemoteConnection>(arg(a, 0, "connection")?)?;
+        a.this::<crate::components::extensions::ExtensionManager>()?.register_agent(&conn).map_err(|e| server_error(&e.message, e.status_code))?;
+        Ok(none())
+    });
+    r.method("moonraker.components.extensions.ExtensionManager.remove_agent", |a| {
+        let conn = objects::unwrap_as::<crate::components::websockets::RemoteConnection>(arg(a, 0, "connection")?)?;
+        a.this::<crate::components::extensions::ExtensionManager>()?.remove_agent(&conn);
+        Ok(none())
+    });
     r.method(app!("route_prefix"), |_| Ok(py_str(server().app().route_prefix())));
     r.method(app!("parse_endpoint"), |a| Ok(py_str(&server().app().parse_endpoint(&arg(a, 0, "http_path")?.as_string()?))));
     r.method(app!("get_server"), |_| objects::wrap(server()));

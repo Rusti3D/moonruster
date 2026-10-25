@@ -6,7 +6,7 @@
 // NamespaceWrapper is Moonraker's own class (mirror_verbatim.txt).
 use super::*;
 use crate::common::ServerError;
-use crate::components::database::MoonrakerDatabase;
+use crate::components::database::{MoonrakerDatabase, SqlTableDefinition};
 use crate::plugins::futures::to_exception;
 use crate::server::server;
 
@@ -120,11 +120,49 @@ fn namespace_wrapper(a: &Args, namespace: &str, parse_keys: bool) -> PyResult<Py
     lookup("moonraker.components.database", "NamespaceWrapper")?.call(&[&py_str(namespace), slf, &py_bool(parse_keys)])
 }
 
-fn flag(a: &Args, i: usize, n: &str, default: bool) -> PyResult<bool> {
-    match a.get(i, n) {
-        Some(v) => v.is_true(),
-        None => Ok(default),
+/// A Python component's SqlTableDefinition: its migrate() gets a
+/// DBProviderWrapper; its exception is raised from register_table
+struct PyTableDef {
+    obj: PyRef,
+    name: String,
+    version: i64,
+    prototype: String,
+    error: std::cell::RefCell<Option<PyError>>,
+}
+
+impl SqlTableDefinition for PyTableDef {
+    fn name(&self) -> &str {
+        &self.name
     }
+    fn version(&self) -> i64 {
+        self.version
+    }
+    fn prototype(&self) -> String {
+        self.prototype.clone()
+    }
+    fn migrate(&self, last_version: i64, _db: &MoonrakerDatabase) -> Result<(), ServerError> {
+        let r = provider_object().and_then(|p| {
+            let wrapper = lookup("moonraker.components.database", "DBProviderWrapper")?.call(&[&p])?;
+            self.obj.call_method("migrate", &[&py_int(last_version), &wrapper])
+        });
+        r.map(|_| ()).map_err(|e| {
+            let msg = e.message.clone();
+            *self.error.borrow_mut() = Some(e);
+            ServerError::exc(msg)
+        })
+    }
+}
+
+fn provider_object() -> PyResult<PyRef> {
+    thread_local! {
+        static PROVIDER: Rc<DbProvider> = Rc::new(DbProvider);
+    }
+    let p: Rc<dyn std::any::Any> = PROVIDER.with(|p| p.clone());
+    objects::wrap_class(p, "moonraker.components.database", "SqliteProvider")
+}
+
+fn sync_conn() -> PyResult<PyRef> {
+    super::sql::sql_module()?.getattr("sync_connection")
 }
 
 pub fn register(r: &mut Registry) {
@@ -262,14 +300,14 @@ pub fn register(r: &mut Registry) {
     });
     r.method(db!("register_local_namespace"), |a| {
         let ns = arg(a, 0, "namespace")?.as_string()?;
-        let forbidden = flag(a, 1, "forbidden", false)?;
-        let parse_keys = flag(a, 2, "parse_keys", false)?;
+        let forbidden = bool_or(a, 1, "forbidden", false)?;
+        let parse_keys = bool_or(a, 2, "parse_keys", false)?;
         this(a)?.register_local_namespace(&ns, forbidden, parse_keys).map_err(db_err)?;
         namespace_wrapper(a, &ns, parse_keys)
     });
     r.method(db!("wrap_namespace"), |a| {
         let ns = arg(a, 0, "namespace")?.as_string()?;
-        let parse_keys = flag(a, 1, "parse_keys", true)?;
+        let parse_keys = bool_or(a, 1, "parse_keys", true)?;
         this(a)?.wrap_namespace(&ns, parse_keys).map_err(db_err)?;
         namespace_wrapper(a, &ns, parse_keys)
     });
@@ -279,17 +317,64 @@ pub fn register(r: &mut Registry) {
     });
     r.attr(db!("server"), |_| objects::wrap(server()), None);
     r.attr(db!("eventloop"), |_| super::server::event_loop(), None);
-    r.attr(
-        db!("db_provider"),
-        |_| {
-            thread_local! {
-                static PROVIDER: Rc<DbProvider> = Rc::new(DbProvider);
-            }
-            let p: Rc<dyn std::any::Any> = PROVIDER.with(|p| p.clone());
-            objects::wrap_class(p, "moonraker.components.database", "SqliteProvider")
-        },
-        None,
-    );
+    r.attr(db!("db_provider"), |_| provider_object(), None);
+    // register_table(table_def) -> SqlTableWrapper
+    r.method(db!("register_table"), |a| {
+        let obj = arg(a, 0, "table_def")?.clone();
+        let def = PyTableDef {
+            name: obj.getattr("name")?.as_string()?,
+            version: obj.getattr("version")?.as_i64()?,
+            prototype: obj.getattr("prototype")?.as_string()?,
+            obj: obj.clone(),
+            error: Default::default(),
+        };
+        if let Err(e) = this(a)?.register_table(&def) {
+            return Err(def.error.borrow_mut().take().unwrap_or_else(|| db_err(e)));
+        }
+        let slf = a.slf.as_ref().expect("method without self");
+        lookup("moonraker.components.database", "SqlTableWrapper")?.call(&[slf, &obj])
+    });
+    // SqliteProvider: its connection is Moonruster's (plugins/sql.py), its
+    // functions run on the event loop (execute() above). The methods that
+    // change the namespace set are Moonruster's; the others are Moonraker's
+    // code over the connection (mirror_verbatim.txt)
+    r.attr(provider!("sync_conn"), |_| sync_conn(), None);
+    r.attr(provider!("server"), |_| objects::wrap(server()), None);
+    r.method(provider!("execute_db_function"), |a| {
+        let func = a.args.first().ok_or_else(|| py_error("TypeError", "missing argument 'command_func'".into()))?.clone();
+        // the thread's connection, or sync_conn before the thread starts
+        let conn = if server().database().is_alive() { super::sql::sql_module()?.getattr("connection")? } else { sync_conn()? };
+        let mut args = vec![conn];
+        args.extend(a.args.iter().skip(1).cloned());
+        execute(&server().database(), || func.call(&args.iter().collect::<Vec<_>>()))
+    });
+    r.method(provider!("insert_item"), |a| {
+        let ns = arg(a, 1, "namespace")?.as_string()?;
+        let key = from_py(arg(a, 2, "key")?)?;
+        let nested = matches!(key, Value::Array(ref k) if k.len() > 1) || key.as_str().is_some_and(|k| k.contains('.'));
+        let value = record(arg(a, 3, "value")?, !nested)?;
+        server().database().insert_item_sync(&ns, &key, value).map_err(db_err)?;
+        Ok(none())
+    });
+    r.method(provider!("insert_batch"), |a| {
+        let ns = arg(a, 1, "namespace")?.as_string()?;
+        server().database().insert_batch_sync(&ns, &records(arg(a, 2, "records")?, "records")?).map_err(db_err)?;
+        Ok(none())
+    });
+    r.method(provider!("drop_empty_namespace"), |a| {
+        server().database().drop_empty_namespace(&arg(a, 1, "namespace")?.as_string()?).map_err(db_err)?;
+        Ok(none())
+    });
+    r.method(provider!("compact_database"), |_| to_py(&server().database().compact_database().map_err(db_err)?));
+    r.method(provider!("backup_database"), |a| {
+        let p = std::path::PathBuf::from(arg(a, 1, "bkp_path")?.str()?);
+        server().database().backup_database(&p).map_err(db_err)?;
+        Ok(none())
+    });
+    r.method(provider!("restore_database"), |a| {
+        let p = std::path::PathBuf::from(arg(a, 1, "restore_path")?.str()?);
+        to_py(&server().database().restore_database(&p).map_err(db_err)?)
+    });
     r.attr(db!("registered_namespaces"), |o| py_set(objects::unwrap_as::<MoonrakerDatabase>(o)?.registered_namespaces()), None);
     r.attr(db!("protected_namespaces"), |o| py_set(objects::unwrap_as::<MoonrakerDatabase>(o)?.protected_namespaces()), None);
     r.attr(db!("forbidden_namespaces"), |o| py_set(objects::unwrap_as::<MoonrakerDatabase>(o)?.forbidden_namespaces()), None);

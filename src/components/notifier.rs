@@ -175,6 +175,12 @@ pub struct Notifier {
 }
 
 impl Notifier {
+    /// Notifier.notify_action(name, message)
+    pub async fn notify_action(&self, name: &str, message: &str) -> Result<(), ServerError> {
+        let inst = self.notifiers.get(name).cloned().ok_or_else(|| ServerError::new(format!("Notifier '{}' not found", name), 404))?;
+        inst.notify("remote_action", vec![], message).await
+    }
+
     pub fn new(config: &ConfigHelper) -> Result<Rc<Self>, ConfigError> {
         let srv = server();
         let sections = config.get_prefix_sections("notifier");
@@ -207,13 +213,8 @@ impl Notifier {
                     crate::server::spawn(async move {
                         let name = args.get("name").map(crate::pyfmt::py_str).unwrap_or_default();
                         let message = args.get("message").map(crate::pyfmt::py_str).unwrap_or_default();
-                        match n.notifiers.get(&name).cloned() {
-                            None => log::error!("Notifier '{}' not found", name),
-                            Some(inst) => {
-                                if let Err(e) = inst.notify("remote_action", vec![], &message).await {
-                                    log::error!("{}", e.message);
-                                }
-                            }
+                        if let Err(e) = n.notify_action(&name, &message).await {
+                            log::error!("Error running remote method: notify\n{}", e.message);
                         }
                     });
                 }
