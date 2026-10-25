@@ -22,9 +22,11 @@ pub fn to_py(v: &Value) -> PyResult<PyRef> {
         }
         Value::String(s) => py_str(s),
         Value::Array(a) => {
+            // SAFETY: GIL held (py.rs); returns a new empty list or NULL with an exception
             let list = PyRef::owned(unsafe { PyList_New(0) })?;
             for item in a {
                 let x = to_py(item)?;
+                // SAFETY: GIL held; list and x are valid objects (Append takes its own reference to x)
                 if unsafe { PyList_Append(list.as_ptr(), x.as_ptr()) } != 0 {
                     return Err(take_error());
                 }
@@ -32,9 +34,11 @@ pub fn to_py(v: &Value) -> PyResult<PyRef> {
             list
         }
         Value::Object(o) => {
+            // SAFETY: GIL held; returns a new empty dict or NULL with an exception
             let d = PyRef::owned(unsafe { PyDict_New() })?;
             for (k, item) in o {
                 let x = to_py(item)?;
+                // SAFETY: GIL held; d, the key (a temporary alive to the end of the statement) and x are valid objects; SetItem takes its own references
                 if unsafe { PyDict_SetItem(d.as_ptr(), py_str(k).as_ptr(), x.as_ptr()) } != 0 {
                     return Err(take_error());
                 }
@@ -75,17 +79,22 @@ pub fn from_py(o: &PyRef) -> PyResult<Value> {
     if is("dict")? {
         let mut m = Map::new();
         let items = o.call_method("items", &[])?;
+        // SAFETY: GIL held; items is a valid object
         let it = PyRef::owned(unsafe { PyObject_GetIter(items.as_ptr()) })?;
         loop {
+            // SAFETY: GIL held; it is a valid iterator; the result is a new reference or NULL
             let p = unsafe { PyIter_Next(it.as_ptr()) };
             if p.is_null() {
+                // SAFETY: GIL held; PyErr_Occurred only reads the thread's error state
                 if unsafe { !PyErr_Occurred().is_null() } {
                     return Err(take_error());
                 }
                 break;
             }
             let pair = PyRef::owned(p)?;
+            // SAFETY: GIL held; pair is a (key, value) tuple from dict.items(), so index 0 exists; borrowed() takes a reference before pair is dropped
             let k = PyRef::borrowed(unsafe { PyTuple_GetItem(pair.as_ptr(), 0) });
+            // SAFETY: GIL held; pair is a (key, value) tuple from dict.items(), so index 1 exists; borrowed() takes a reference before pair is dropped
             let v = PyRef::borrowed(unsafe { PyTuple_GetItem(pair.as_ptr(), 1) });
             // json.dumps' key conversion: None -> "null", bools lowercase
             let key = if k.is_none() {
@@ -100,11 +109,14 @@ pub fn from_py(o: &PyRef) -> PyResult<Value> {
         return Ok(Value::Object(m));
     }
     if is("list")? || is("tuple")? {
+        // SAFETY: GIL held; o is a valid object
         let it = PyRef::owned(unsafe { PyObject_GetIter(o.as_ptr()) })?;
         let mut out = vec![];
         loop {
+            // SAFETY: GIL held; it is a valid iterator; the result is a new reference or NULL
             let p = unsafe { PyIter_Next(it.as_ptr()) };
             if p.is_null() {
+                // SAFETY: GIL held; PyErr_Occurred only reads the thread's error state
                 if unsafe { !PyErr_Occurred().is_null() } {
                     return Err(take_error());
                 }

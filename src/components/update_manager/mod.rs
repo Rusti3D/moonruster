@@ -1067,6 +1067,7 @@ impl FileLock {
         let mut logged = false;
         loop {
             let cpath = std::ffi::CString::new(lock_path.to_string_lossy().as_bytes()).unwrap();
+            // SAFETY: cpath is a NUL-terminated CString alive for the call
             let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC, 0o644) };
             if fd < 0 {
                 log::info!(
@@ -1075,14 +1076,19 @@ impl FileLock {
                 );
                 return Ok(None);
             }
+            // SAFETY: fd is the lock file opened above; fchmod takes no pointers
             unsafe { libc::fchmod(fd, 0o644) };
+            // SAFETY: fd is the lock file opened above; flock takes no pointers
             if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                // SAFETY: a C struct of integers: all zero is a valid value
                 let mut st: libc::stat = unsafe { std::mem::zeroed() };
+                // SAFETY: fd is the lock file opened above and st is exclusively borrowed for fstat to fill
                 unsafe { libc::fstat(fd, &mut st) };
                 if st.st_nlink != 0 {
                     return Ok(Some(FileLock { lock_path, fd }));
                 }
             }
+            // SAFETY: fd was opened in this iteration and is not returned, so it is closed once
             unsafe { libc::close(fd) };
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             if !logged {
@@ -1098,6 +1104,7 @@ impl FileLock {
 
     fn release(self) {
         let _ = std::fs::remove_file(&self.lock_path);
+        // SAFETY: release() consumes the FileLock, so its fd is unlocked and closed once
         unsafe {
             libc::flock(self.fd, libc::LOCK_UN);
             libc::close(self.fd);

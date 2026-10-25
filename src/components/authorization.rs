@@ -1197,6 +1197,7 @@ fn getfqdn(ip: IpAddr) -> String {
     let sockaddr: std::net::SocketAddr = (ip, 0).into();
     let (storage, len) = socket_addr_to_raw(&sockaddr);
     let mut host = [0 as libc::c_char; 1025];
+    // SAFETY: storage holds a sockaddr of length len; host is host.len() writable bytes; no service buffer is passed (NULL, 0)
     let ret = unsafe {
         libc::getnameinfo(
             &storage as *const _ as *const libc::sockaddr,
@@ -1211,10 +1212,12 @@ fn getfqdn(ip: IpAddr) -> String {
     if ret != 0 {
         return ip.to_string();
     }
+    // SAFETY: getnameinfo succeeded, so host holds a NUL-terminated name within the array
     unsafe { CStr::from_ptr(host.as_ptr()) }.to_string_lossy().to_string()
 }
 
 fn socket_addr_to_raw(addr: &std::net::SocketAddr) -> (libc::sockaddr_storage, libc::socklen_t) {
+    // SAFETY: a C struct of integers and arrays: all zero is a valid value
     let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
     match addr {
         std::net::SocketAddr::V4(a) => {
@@ -1224,6 +1227,7 @@ fn socket_addr_to_raw(addr: &std::net::SocketAddr) -> (libc::sockaddr_storage, l
                 sin_addr: libc::in_addr { s_addr: u32::from_ne_bytes(a.ip().octets()) },
                 sin_zero: [0; 8],
             };
+            // SAFETY: sockaddr_storage is large and aligned enough for any sockaddr, so a sockaddr_in fits at its start
             unsafe { std::ptr::write(&mut storage as *mut _ as *mut libc::sockaddr_in, sin) };
             (storage, std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
         }
@@ -1235,6 +1239,7 @@ fn socket_addr_to_raw(addr: &std::net::SocketAddr) -> (libc::sockaddr_storage, l
                 sin6_addr: libc::in6_addr { s6_addr: a.ip().octets() },
                 sin6_scope_id: 0,
             };
+            // SAFETY: sockaddr_storage is large and aligned enough for any sockaddr, so a sockaddr_in6 fits at its start
             unsafe { std::ptr::write(&mut storage as *mut _ as *mut libc::sockaddr_in6, sin6) };
             (storage, std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
         }

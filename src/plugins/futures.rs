@@ -57,6 +57,7 @@ pub async fn await_py(aw: PyRef) -> PyResult<PyRef> {
     let (tx, rx) = oneshot::channel();
     PENDING.with(|p| p.borrow_mut().insert(id, tx));
     // the method takes its own reference to self
+    // SAFETY: GIL held; DONE is a static method definition; the method takes its own reference to self (the int, a temporary alive for the call)
     let cb = PyRef::owned(unsafe { PyCMethod_New(&DONE, py_int(id).as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) })?;
     let coro = lookup("_mr", "deliver")?.call(&[&aw, &cb])?;
     if let Err(e) = l.loop_.call_method("create_task", &[&coro]) {

@@ -1469,7 +1469,9 @@ fn disk_usage(path: &str) -> Value {
         Ok(c) => c,
         Err(_) => return json!({"total": 0, "used": 0, "free": 0}),
     };
+    // SAFETY: a C struct of integers: all zero is a valid value
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: c is a NUL-terminated CString alive for the call; st is exclusively borrowed for statvfs to fill
     if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
         return json!({"total": 0, "used": 0, "free": 0});
     }

@@ -109,6 +109,7 @@ pub fn py_error(type_name: &str, message: String) -> PyError {
 fn raise(err: PyError) -> *mut PyObject {
     match &err.value {
         Some(_) => restore(&err),
+        // SAFETY: GIL held (py.rs); exc_class gives the interpreter's own exception class (never freed) or NULL, replaced by RuntimeError; PyErr_SetObject takes its own reference to msg
         None => unsafe {
             let cls = exc_class(&format!("PyExc_{}", err.type_name));
             let cls = if cls.is_null() { exc_class("PyExc_RuntimeError") } else { cls };
@@ -173,6 +174,7 @@ static BOUND: PyMethodDef =
 pub fn bound_method(obj: &PyRef, f: Method) -> PyResult<PyRef> {
     let slf = tuple(&[obj, &py_int(f as usize as i64)]);
     // the function takes its own reference to self
+    // SAFETY: GIL held; BOUND is a static method definition; the method takes its own reference to slf
     PyRef::owned(unsafe { PyCMethod_New(&BOUND, slf.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) })
 }
 
@@ -366,7 +368,9 @@ pub fn create_module() -> PyResult<()> {
     LOOP_THREAD.with(|l| l.set(true));
     let m = exec_module("_moonruster", "")?;
     for d in [&CALL, &FCALL, &NEW, &GET, &SET, &DELETE, &PATCHED_CLASS, &PATCHED_INSTANCE, &SOURCE, &MODULE_VALUE, &LOG] {
+        // SAFETY: GIL held; d is a static method definition
         let f = PyRef::owned(unsafe { PyCMethod_New(d, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) })?;
+        // SAFETY: ml_name is a static NUL-terminated c"" literal
         m.setattr(unsafe { std::ffi::CStr::from_ptr(d.ml_name as *const c_char) }.to_str().unwrap(), &f)?;
     }
     Ok(())
@@ -399,9 +403,11 @@ fn mirror_source(name: &str) -> Option<String> {
 
 /// (name, is_package) of every mirrored module, as a Python list of tuples
 pub fn mirror_modules() -> PyRef {
+    // SAFETY: GIL held; returns a new empty list or NULL with an exception
     let list = PyRef::owned(unsafe { PyList_New(0) }).expect("list");
     for (name, is_pkg) in MODULES {
         let t = tuple(&[&py_str(name), &py_bool(*is_pkg)]);
+        // SAFETY: GIL held; list and t are valid objects (Append takes its own reference to t)
         unsafe { PyList_Append(list.as_ptr(), t.as_ptr()) };
     }
     list

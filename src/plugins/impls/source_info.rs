@@ -22,8 +22,10 @@ fn log(level: log::Level, func: &str, line: u32, msg: &str) {
 }
 
 fn kwargs(items: &[(&std::ffi::CStr, &PyRef)]) -> PyResult<PyRef> {
+    // SAFETY: GIL held (py.rs); returns a new empty dict or NULL with an exception
     let d = PyRef::owned(unsafe { PyDict_New() })?;
     for (k, v) in items {
+        // SAFETY: GIL held; d and v are valid objects (SetItem takes its own reference) and k a NUL-terminated CStr
         unsafe { PyDict_SetItemString(d.as_ptr(), k.as_ptr(), v.as_ptr()) };
     }
     Ok(d)
@@ -86,6 +88,7 @@ fn load_distribution_info(venv_path: &PyRef, project_name: &PyRef) -> PyResult<P
     let normalize = si.getattr("normalize_project_name")?;
     let proj_norm = normalize.call(&[project_name])?.as_string()?;
     let site_items = venv_path.call_method("joinpath", &[&py_str("lib")])?.call_method("glob", &[&py_str("python*/site-packages/")])?;
+    // SAFETY: GIL held; returns a new empty list or NULL with an exception
     let lib_paths = PyRef::owned(unsafe { crate::plugins::capi::PyList_New(0) })?;
     let it = lookup("builtins", "iter")?.call(&[&site_items])?;
     let next = lookup("builtins", "next")?;

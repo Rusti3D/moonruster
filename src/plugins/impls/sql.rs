@@ -22,6 +22,7 @@ pub fn sql_module() -> PyResult<PyRef> {
         ("_exec", exec),
         ("_script", script),
         ("_autocommit", |_| Ok(py_bool(with_conn(|c| c.is_autocommit())))),
+        // SAFETY: the handle is the open connection, valid while with_conn borrows it
         ("_total_changes", |_| Ok(py_int(with_conn(|c| unsafe { ffi::sqlite3_total_changes(c.handle()) }) as i64))),
     ];
     for (name, f) in natives {
@@ -53,6 +54,7 @@ fn programming_error(message: &str) -> PyError {
 fn db_error(e: rusqlite::Error) -> PyError {
     match e {
         rusqlite::Error::SqliteFailure(f, msg) => {
+            // SAFETY: sqlite3_errstr returns a static NUL-terminated string for any code
             let msg = msg.unwrap_or_else(|| unsafe { CStr::from_ptr(ffi::sqlite3_errstr(f.extended_code)) }.to_string_lossy().into_owned());
             sqlite_error(f.extended_code, &msg)
         }
@@ -90,6 +92,7 @@ fn has_statement(mut s: &[u8]) -> bool {
 /// as sqlite3 checks a statement before binding
 fn prepare(a: &Args) -> PyResult<PyRef> {
     let sql = sql_arg(a)?;
+    // SAFETY: db is the open connection, valid while with_conn borrows it; sql is a NUL-terminated CString that outlives stmt and tail (which points into it); stmt is finalized exactly once below, NULL included (a no-op)
     with_conn(|conn| unsafe {
         let db = conn.handle();
         let mut stmt = std::ptr::null_mut();

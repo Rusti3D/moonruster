@@ -138,6 +138,7 @@ fn main() {
     // past 128 kB free: about 0.8 MB more own memory than musl for the same
     // allocations (docs/PLUGINS.md "Build"); return freed memory promptly
     #[cfg(target_env = "gnu")]
+    // SAFETY: mallopt takes no pointers; set at start, before other threads allocate
     unsafe {
         libc::mallopt(libc::M_TOP_PAD, 0);
         libc::mallopt(libc::M_TRIM_THRESHOLD, 0);

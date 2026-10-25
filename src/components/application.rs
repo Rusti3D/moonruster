@@ -1598,6 +1598,7 @@ fn bind_socket(addr: &str, v6only: bool) -> std::io::Result<tokio::net::TcpListe
     if v6only {
         let fd = std::os::fd::AsRawFd::as_raw_fd(&socket);
         let one: libc::c_int = 1;
+        // SAFETY: fd is the socket's open descriptor; one is a c_int that outlives the call and 4 is its size
         unsafe {
             libc::setsockopt(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, &one as *const _ as *const libc::c_void, 4);
         }

@@ -42,16 +42,19 @@ pub type StatCallback = Rc<dyn Fn(u64) -> Option<LocalBoxFuture<'static, ()>>>;
 
 fn process_time() -> f64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: ts is a valid timespec, exclusively borrowed for clock_gettime to fill
     unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
     ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9
 }
 
 fn page_size_kb() -> i64 {
+    // SAFETY: sysconf takes no pointers
     (unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as i64 / 1024).max(1)
 }
 
 fn boot_time() -> f64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: ts is a valid timespec, exclusively borrowed for clock_gettime to fill
     unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
     ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9
 }
@@ -311,6 +314,7 @@ impl ProcStats {
         let cb = cmd.as_bytes();
         buf[24..24 + cb.len().min(MAX_STRING_SIZE)].copy_from_slice(&cb[..cb.len().min(MAX_STRING_SIZE)]);
         let path = std::ffi::CString::new(VCIO_PATH).unwrap();
+        // SAFETY: path is a NUL-terminated CString alive for the call
         let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR) };
         if fd < 0 {
             if !self.vc_err_logged.get() {
@@ -321,7 +325,9 @@ impl ProcStats {
         }
         // _IOWR(100, 0, char *)
         let req: libc::c_ulong = (3 << 30) | ((std::mem::size_of::<*const u8>() as libc::c_ulong) << 16) | (100 << 8);
+        // SAFETY: fd is the open vcio device; the mailbox ioctl reads and writes the property buffer `buf`, whose length is in its first word
         let ret = unsafe { libc::ioctl(fd, req as _, buf.as_mut_ptr()) };
+        // SAFETY: fd was opened above and is closed once, after its last use
         unsafe { libc::close(fd) };
         if ret < 0 {
             if !self.vc_err_logged.get() {

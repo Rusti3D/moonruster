@@ -153,6 +153,7 @@ pub async fn impls_cancel_shell_commands() {
 /// tokio on_thread_park: release the GIL while the loop thread waits
 pub fn park_hook() {
     if started() {
+        // SAFETY: the runtime's thread (current-thread runtime) holds the GIL whenever it runs; it gives it up here before parking and takes it back in unpark_hook
         SAVED.store(unsafe { PyEval_SaveThread() }, Ordering::Relaxed);
     }
 }
@@ -161,6 +162,7 @@ pub fn park_hook() {
 pub fn unpark_hook() {
     let t = SAVED.swap(null_mut(), Ordering::Relaxed);
     if !t.is_null() {
+        // SAFETY: t is the thread state park_hook saved on this same thread
         unsafe { PyEval_RestoreThread(t) };
     }
 }
@@ -171,6 +173,7 @@ pub fn unpark_hook() {
 fn start_interpreter(info: &PythonInfo) -> Result<(), String> {
     capi::load(&info.libpython)?;
     let prog = CString::new(info.executable.clone()).map_err(|e| e.to_string())?;
+    // SAFETY: prog is a NUL-terminated CString alive for the calls; the init config is created, used and freed here; Py_SetProgramName keeps its wide string, which is never freed
     unsafe {
         // PEP 741 only where Py_SetProgramName is gone; it starts from the
         // isolated configuration, the executable's is not isolated
@@ -262,6 +265,7 @@ impl AsRawFd for Fd {
 /// Whether the loop's epoll fd has events, without waiting
 fn fd_ready_now(fd: RawFd) -> bool {
     let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    // SAFETY: p is one valid pollfd, exclusively borrowed; a zero timeout never blocks
     unsafe { libc::poll(&mut p, 1, 0) > 0 }
 }
 

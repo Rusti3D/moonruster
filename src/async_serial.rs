@@ -102,18 +102,23 @@ impl AsyncSerial {
         }
         log::info!("{} :Attempting to open serial device: {}", self.name, self.port);
         let cpath = std::ffi::CString::new(self.port.as_bytes()).map_err(|e| e.to_string())?;
+        // SAFETY: cpath is a NUL-terminated CString alive for the call
         let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR | libc::O_NOCTTY | libc::O_NONBLOCK) };
         if fd < 0 {
             return Err(os_err(&self.port));
         }
         let fail = |msg: String| {
+            // SAFETY: fd was opened above and nothing owns it yet; each failure path closes it once and returns
             unsafe { libc::close(fd) };
             Err(msg)
         };
+        // SAFETY: fd is the open port; flock takes no pointers
         if exclusive && unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return fail(format!("Could not exclusively lock port {}: {}", self.port, std::io::Error::last_os_error()));
         }
+        // SAFETY: a C struct of integers and arrays: all zero is a valid value
         let mut tio: libc::termios = unsafe { std::mem::zeroed() };
+        // SAFETY: fd is the open port and tio is exclusively borrowed for tcgetattr to fill
         if unsafe { libc::tcgetattr(fd, &mut tio) } == 0 {
             tio.c_cflag |= libc::CLOCAL | libc::CREAD;
             tio.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ECHOE | libc::ECHOK | libc::ECHONL | libc::ISIG | libc::IEXTEN);
@@ -125,12 +130,14 @@ impl AsyncSerial {
             tio.c_cc[libc::VMIN] = 0;
             tio.c_cc[libc::VTIME] = 0;
             match baud_const(self.baud) {
+                // SAFETY: tio is a valid termios, exclusively borrowed
                 Some(b) => unsafe {
                     libc::cfsetispeed(&mut tio, b);
                     libc::cfsetospeed(&mut tio, b);
                 },
                 None => return fail(format!("Invalid baud rate: {}", self.baud)),
             }
+            // SAFETY: fd is the open port and tio a valid termios
             if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &tio) } != 0 {
                 return fail(format!("Could not configure port: {}", std::io::Error::last_os_error()));
             }
@@ -145,6 +152,7 @@ impl AsyncSerial {
         let w = Rc::downgrade(self);
         // the reader task owns the descriptor and closes it when it ends, so
         // its epoll registration never outlives the fd (abort is deferred)
+        // SAFETY: fd was opened above and is owned by nothing else: from here the reader task owns it
         let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
         let h = spawn(async move {
             // SAFETY: the OwnedFd keeps fd open for the AsyncFd's lifetime
@@ -158,6 +166,7 @@ impl AsyncSerial {
                     Ok(g) => g,
                     Err(_) => return,
                 };
+                // SAFETY: data is data.len() writable bytes; fd is open while afd (which owns it) lives
                 let n = unsafe { libc::read(fd, data.as_mut_ptr() as *mut libc::c_void, data.len()) };
                 if n < 0 {
                     let e = std::io::Error::last_os_error();
@@ -268,6 +277,7 @@ impl AsyncSerial {
                 let sent = match self.fd.get() {
                     None => 0,
                     Some(fd) => {
+                        // SAFETY: data is data.len() readable bytes; self.fd holds the port's fd while the reader task owns it open, and close_now() clears it before the task is aborted
                         let r = unsafe { libc::write(fd, data.as_ptr() as *const libc::c_void, data.len()) };
                         if r < 0 {
                             let e = std::io::Error::last_os_error();

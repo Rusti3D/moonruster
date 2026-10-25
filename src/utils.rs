@@ -137,6 +137,7 @@ pub fn time_now() -> f64 {
 /// Monotonic time in seconds, equivalent of asyncio's loop.time()
 pub fn monotonic() -> f64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: ts is a valid timespec, exclusively borrowed for clock_gettime to fill
     unsafe {
         libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
     }
@@ -151,6 +152,7 @@ pub fn float_value(f: f64) -> Value {
 
 pub fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| {
+        // SAFETY: getpwuid's result is NULL or points to a static passwd entry, read before any other getpwuid call (single loop thread); pw_dir is NUL-terminated
         unsafe {
             let pw = libc::getpwuid(libc::getuid());
             if !pw.is_null() {
@@ -242,6 +244,7 @@ fn access(p: &Path, mode: libc::c_int) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
+    // SAFETY: c is a NUL-terminated CString alive for the call
     unsafe { libc::access(c.as_ptr(), mode) == 0 }
 }
 
@@ -291,6 +294,7 @@ pub fn get_user() -> String {
             }
         }
     }
+    // SAFETY: getpwuid's result is NULL or points to a static passwd entry, read before any other getpwuid call (single loop thread); pw_name is NUL-terminated
     unsafe {
         let pw = libc::getpwuid(libc::getuid());
         if !pw.is_null() {
@@ -302,6 +306,7 @@ pub fn get_user() -> String {
 
 pub fn hostname() -> String {
     let mut buf = [0u8; 256];
+    // SAFETY: buf is buf.len() writable bytes for gethostname
     unsafe {
         if libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) == 0 {
             let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
@@ -314,6 +319,7 @@ pub fn hostname() -> String {
 pub fn get_unix_peer_credentials(fd: i32, name: &str) -> Option<(u32, u32, u32)> {
     let mut cred = libc::ucred { pid: 0, uid: 0, gid: 0 };
     let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: cred is a valid ucred and len its size, both exclusively borrowed for getsockopt to fill; fd is the caller's open socket
     let ret = unsafe {
         libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_PEERCRED, &mut cred as *mut _ as *mut libc::c_void, &mut len)
     };

@@ -358,6 +358,7 @@ fn get_resolutions(fd: i32, pixel_format: u32) -> Vec<String> {
     let mut out = Vec::new();
     for idx in 0..128 {
         let mut info = V4l2FrmSizeEnum { index: idx, pixel_format, typ: 0, size: [0; 6], reserved: [0; 2] };
+        // SAFETY: fd is an open V4L2 device; req encodes size_of the struct `info` points to, which the kernel fills while it is exclusively borrowed
         if unsafe { libc::ioctl(fd, req as _, &mut info) } < 0 {
             break;
         }
@@ -374,6 +375,7 @@ fn get_modes(fd: i32) -> Vec<Value> {
     let mut out = Vec::new();
     for idx in 0..128 {
         let mut info = V4l2FmtDesc { index: idx, typ: 1, flags: 0, description: [0; 32], pixelformat: 0, mbus_code: 0, reserved: [0; 3] };
+        // SAFETY: fd is an open V4L2 device; req encodes size_of the struct `info` points to, which the kernel fills while it is exclusively borrowed
         if unsafe { libc::ioctl(fd, req as _, &mut info) } < 0 {
             break;
         }
@@ -417,18 +419,23 @@ pub fn find_video_devices() -> Vec<Value> {
             Ok(c) => c,
             Err(_) => continue,
         };
+        // SAFETY: cpath is a NUL-terminated CString alive for the call
         let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK) };
         if fd < 0 {
             continue;
         }
+        // SAFETY: a C struct of integers and byte arrays: all zero is a valid value
         let mut cap: V4l2Capability = unsafe { std::mem::zeroed() };
         let req = ioc(2, b'V' as u64, 0, std::mem::size_of::<V4l2Capability>() as u64);
+        // SAFETY: fd is the device opened above; req encodes size_of::<V4l2Capability>() and cap is exclusively borrowed
         let ok = unsafe { libc::ioctl(fd, req as _, &mut cap) } >= 0;
         if !ok || cap.device_caps & 1 == 0 {
+            // SAFETY: fd was opened above and is closed once, not used after
             unsafe { libc::close(fd) };
             continue;
         }
         let modes = get_modes(fd);
+        // SAFETY: fd was opened above and is closed once, not used after
         unsafe { libc::close(fd) };
         let caps: Vec<&str> = V4L2_CAPS.iter().filter(|(b, _)| cap.device_caps & b != 0).map(|(_, n)| *n).collect();
         let ver: Vec<String> = [16, 8, 0].iter().map(|s| ((cap.version >> s) & 0xff).to_string()).collect();
@@ -475,23 +482,29 @@ const CANBUS_RESP_NEED_NODEID: u8 = 0x20;
 /// Queries unassigned klipper/katapult nodes on a CAN interface
 pub async fn query_can_uuids(interface: &str) -> Result<Vec<Value>, crate::common::ServerError> {
     let err = || crate::common::ServerError::new(format!("Unable to bind socket to interface '{}'", interface), 500);
+    // SAFETY: socket() takes no pointers
     let fd = unsafe { libc::socket(libc::PF_CAN, libc::SOCK_RAW | libc::SOCK_NONBLOCK, CAN_RAW) };
     if fd < 0 {
         return Err(err());
     }
     let cname = std::ffi::CString::new(interface).map_err(|_| err())?;
+    // SAFETY: cname is a NUL-terminated CString alive for the call
     let ifindex = unsafe { libc::if_nametoindex(cname.as_ptr()) };
+    // SAFETY: a C struct of integers: all zero is a valid value
     let mut addr: libc::sockaddr_can = unsafe { std::mem::zeroed() };
     addr.can_family = libc::AF_CAN as u16;
     addr.can_ifindex = ifindex as i32;
+    // SAFETY: addr is a valid sockaddr_can and the length passed is its size
     let r = unsafe {
         libc::bind(fd, &addr as *const _ as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_can>() as u32)
     };
     if ifindex == 0 || r < 0 {
+        // SAFETY: fd is the socket created above, closed once on this error path, not used after
         unsafe { libc::close(fd) };
         return Err(err());
     }
     // owned, so the socket is closed on every return and on cancellation
+    // SAFETY: fd is the socket created above and nothing else owns it
     let owned = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
     // SAFETY: the OwnedFd keeps fd open for the AsyncFd's lifetime
     let async_fd = unsafe { tokio::io::unix::AsyncFd::register(owned) }.map_err(|_| err())?;
@@ -500,6 +513,7 @@ pub async fn query_can_uuids(interface: &str) -> Result<Vec<Value>, crate::commo
     frame[0..4].copy_from_slice(&KLIPPER_ADMIN_ID.to_le_bytes());
     frame[4] = 1;
     frame[8] = CMD_QUERY_UNASSIGNED;
+    // SAFETY: frame is 16 readable bytes; fd stays open, owned by async_fd
     unsafe { libc::write(fd, frame.as_ptr() as *const libc::c_void, 16) };
     let mut uuids = Vec::new();
     let mut buffer: Vec<u8> = Vec::new();
@@ -516,6 +530,7 @@ pub async fn query_can_uuids(interface: &str) -> Result<Vec<Value>, crate::commo
             _ => continue,
         };
         let mut buf = [0u8; 4096];
+        // SAFETY: buf is buf.len() writable bytes; fd stays open, owned by async_fd
         let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         guard.clear_ready();
         if n <= 0 {

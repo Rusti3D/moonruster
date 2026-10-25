@@ -488,6 +488,7 @@ impl Observer {
         let mut inotify = None;
         if use_inotify {
             enable_warn = config.getboolean_dep("enable_inotify_warnings", enable_warn, true)?;
+            // SAFETY: inotify_init1 takes no pointers
             let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
             if fd >= 0 {
                 inotify = Some(InotifyState {
@@ -607,6 +608,7 @@ impl Observer {
         let st = self.inotify.as_ref().ok_or(())?;
         let dir_path = node.get_path();
         let c = std::ffi::CString::new(dir_path.clone()).map_err(|_| ())?;
+        // SAFETY: st.fd is the inotify fd (never closed); c is a NUL-terminated CString alive for the call
         let wd = unsafe { libc::inotify_add_watch(st.fd, c.as_ptr(), WATCH_FLAGS) };
         if wd < 0 {
             let msg = format!("Error adding inotify watch to root '{}', path: {}", node.get_root(), dir_path);
@@ -641,6 +643,7 @@ impl Observer {
         };
         let node = st.watched_nodes.borrow_mut().shift_remove(&wd);
         if need_low_level_rm && node.is_some() {
+            // SAFETY: st.fd is the inotify fd (never closed); a stale wd only makes the call fail
             if unsafe { libc::inotify_rm_watch(st.fd, wd) } < 0 {
                 log::error!("Error removing watch: '{}'", node.unwrap().get_path());
             }
@@ -820,6 +823,7 @@ impl Observer {
                 r.abort();
             }
             for wd in st.watched_nodes.borrow().keys() {
+                // SAFETY: st.fd is the inotify fd (never closed); a stale wd only makes the call fail
                 unsafe { libc::inotify_rm_watch(st.fd, *wd) };
             }
         }
@@ -1165,6 +1169,7 @@ async fn inotify_reader(fd: i32, obs: Weak<Observer>) {
             Ok(g) => g,
             Err(_) => return,
         };
+        // SAFETY: buf is buf.len() writable bytes; the inotify fd is never closed
         let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         if n <= 0 {
             guard.clear_ready();

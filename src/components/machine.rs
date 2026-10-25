@@ -141,7 +141,9 @@ fn dist_info() -> Map<String, Value> {
 }
 
 fn kernel_release() -> String {
+    // SAFETY: a C struct of byte arrays: all zero is a valid value
     let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+    // SAFETY: uts is exclusively borrowed for uname to fill; after success release is NUL-terminated within the array
     unsafe {
         if libc::uname(&mut uts) == 0 {
             return std::ffi::CStr::from_ptr(uts.release.as_ptr()).to_string_lossy().to_string();
@@ -151,7 +153,9 @@ fn kernel_release() -> String {
 }
 
 fn machine_arch() -> String {
+    // SAFETY: a C struct of byte arrays: all zero is a valid value
     let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+    // SAFETY: uts is exclusively borrowed for uname to fill; after success machine is NUL-terminated within the array
     unsafe {
         if libc::uname(&mut uts) == 0 {
             return std::ffi::CStr::from_ptr(uts.machine.as_ptr()).to_string_lossy().to_string();
@@ -1684,6 +1688,7 @@ fn native_network() -> Option<Map<String, Value>> {
         .collect();
     ifaces.sort();
     let mut addrs: IndexMap<String, Vec<Value>> = IndexMap::new();
+    // SAFETY: getifaddrs fills head with a list the loop only reads (each ifa_addr is checked for NULL and read as the sockaddr its family says), freed once by freeifaddrs after the walk
     unsafe {
         let mut head: *mut libc::ifaddrs = std::ptr::null_mut();
         if libc::getifaddrs(&mut head) != 0 {

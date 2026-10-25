@@ -72,6 +72,7 @@ impl PyRef {
 
     /// A new reference to a borrowed one
     pub fn borrowed(p: *mut PyObject) -> PyRef {
+        // SAFETY: GIL held (module note); p is a valid object the caller borrowed, and the new reference is owned by the PyRef returned
         unsafe { Py_IncRef(p) };
         PyRef(p)
     }
@@ -89,16 +90,19 @@ impl PyRef {
 
     pub fn getattr(&self, name: &str) -> PyResult<PyRef> {
         let c = CString::new(name).unwrap();
+        // SAFETY: GIL held; self.0 is a valid object (PyRef owns a non-NULL reference) and c a NUL-terminated CString alive for the call
         PyRef::owned(unsafe { PyObject_GetAttrString(self.0, c.as_ptr()) })
     }
 
     pub fn hasattr(&self, name: &str) -> bool {
         let c = CString::new(name).unwrap();
+        // SAFETY: GIL held; self.0 is a valid object and c a NUL-terminated CString alive for the call
         unsafe { PyObject_HasAttrString(self.0, c.as_ptr()) == 1 }
     }
 
     pub fn setattr(&self, name: &str, v: &PyRef) -> PyResult<()> {
         let c = CString::new(name).unwrap();
+        // SAFETY: GIL held; self.0 and v.0 are valid objects (borrowed: the call takes its own reference) and c a NUL-terminated CString
         if unsafe { PyObject_SetAttrString(self.0, c.as_ptr(), v.0) } != 0 {
             return Err(take_error());
         }
@@ -107,6 +111,7 @@ impl PyRef {
 
     pub fn call(&self, args: &[&PyRef]) -> PyResult<PyRef> {
         let t = tuple(args);
+        // SAFETY: GIL held; self.0 is a valid object and t a valid tuple, both kept alive across the call
         let r = PyRef::owned(unsafe { PyObject_CallObject(self.0, t.0) });
         wake_after_call();
         r
@@ -114,6 +119,7 @@ impl PyRef {
 
     pub fn call_kw(&self, args: &[&PyRef], kwargs: &PyRef) -> PyResult<PyRef> {
         let t = tuple(args);
+        // SAFETY: GIL held; self.0, the tuple t and kwargs are valid objects kept alive across the call
         let r = PyRef::owned(unsafe { PyObject_Call(self.0, t.0, kwargs.0) });
         wake_after_call();
         r
@@ -128,6 +134,7 @@ impl PyRef {
     }
 
     pub fn is_true(&self) -> PyResult<bool> {
+        // SAFETY: GIL held; self.0 is a valid object
         match unsafe { PyObject_IsTrue(self.0) } {
             -1 => Err(take_error()),
             v => Ok(v == 1),
@@ -135,6 +142,7 @@ impl PyRef {
     }
 
     pub fn is_instance(&self, cls: &PyRef) -> PyResult<bool> {
+        // SAFETY: GIL held; self.0 and cls.0 are valid objects
         match unsafe { PyObject_IsInstance(self.0, cls.0) } {
             -1 => Err(take_error()),
             v => Ok(v == 1),
@@ -142,11 +150,14 @@ impl PyRef {
     }
 
     pub fn is_callable(&self) -> bool {
+        // SAFETY: GIL held; self.0 is a valid object
         unsafe { PyCallable_Check(self.0) == 1 }
     }
 
     pub fn as_i64(&self) -> PyResult<i64> {
+        // SAFETY: GIL held; self.0 is a valid object (a non-int sets an exception, checked below)
         let v = unsafe { PyLong_AsLongLong(self.0) };
+        // SAFETY: GIL held; PyErr_Occurred only reads the thread's error state
         if v == -1 && unsafe { !PyErr_Occurred().is_null() } {
             return Err(take_error());
         }
@@ -154,7 +165,9 @@ impl PyRef {
     }
 
     pub fn as_f64(&self) -> PyResult<f64> {
+        // SAFETY: GIL held; self.0 is a valid object (a non-number sets an exception, checked below)
         let v = unsafe { PyFloat_AsDouble(self.0) };
+        // SAFETY: GIL held; PyErr_Occurred only reads the thread's error state
         if v == -1.0 && unsafe { !PyErr_Occurred().is_null() } {
             return Err(take_error());
         }
@@ -164,20 +177,24 @@ impl PyRef {
     /// The str object's text (TypeError for anything else)
     pub fn as_string(&self) -> PyResult<String> {
         let mut n: Py_ssize_t = 0;
+        // SAFETY: GIL held; self.0 is a valid object and n is exclusively borrowed for the size
         let p = unsafe { PyUnicode_AsUTF8AndSize(self.0, &mut n) };
         if p.is_null() {
             return Err(take_error());
         }
+        // SAFETY: p points to n bytes of UTF-8 owned by the str object self.0, which outlives this copy
         Ok(String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(p as *const u8, n as usize) }).into_owned())
     }
 
     /// str(obj)
     pub fn str(&self) -> PyResult<String> {
+        // SAFETY: GIL held; self.0 is a valid object
         PyRef::owned(unsafe { PyObject_Str(self.0) })?.as_string()
     }
 
     /// repr(obj)
     pub fn repr(&self) -> PyResult<String> {
+        // SAFETY: GIL held; self.0 is a valid object
         PyRef::owned(unsafe { PyObject_Repr(self.0) })?.as_string()
     }
 }
@@ -190,6 +207,7 @@ impl Clone for PyRef {
 
 impl Drop for PyRef {
     fn drop(&mut self) {
+        // SAFETY: GIL held (PyRef is !Send: it is only ever dropped on the loop thread); the PyRef owns this one reference, released once
         unsafe { Py_DecRef(self.0) }
     }
 }
@@ -209,22 +227,27 @@ pub fn py_bool(v: bool) -> PyRef {
 }
 
 pub fn py_int(v: i64) -> PyRef {
+    // SAFETY: GIL held; returns a new reference (NULL only when memory is exhausted)
     PyRef(unsafe { PyLong_FromLongLong(v) })
 }
 
 pub fn py_float(v: f64) -> PyRef {
+    // SAFETY: GIL held; returns a new reference (NULL only when memory is exhausted)
     PyRef(unsafe { PyFloat_FromDouble(v) })
 }
 
 pub fn py_str(s: &str) -> PyRef {
+    // SAFETY: GIL held; s is s.len() bytes of valid UTF-8, copied by the call (NULL only when memory is exhausted)
     PyRef(unsafe { PyUnicode_FromStringAndSize(s.as_ptr() as *const _, s.len() as Py_ssize_t) })
 }
 
 pub fn py_bytes(b: &[u8]) -> PyResult<PyRef> {
+    // SAFETY: GIL held; b is b.len() readable bytes, copied by the call
     PyRef::owned(unsafe { PyBytes_FromStringAndSize(b.as_ptr() as *const _, b.len() as Py_ssize_t) })
 }
 
 pub fn tuple(items: &[&PyRef]) -> PyRef {
+    // SAFETY: GIL held; PyTuple_New gives a tuple with items.len() empty slots, each filled once; SetItem steals the reference Py_IncRef just added, so the items stay owned by their PyRefs too (NULL from PyTuple_New only when memory is exhausted)
     unsafe {
         let t = PyTuple_New(items.len() as Py_ssize_t);
         for (i, it) in items.iter().enumerate() {
@@ -237,6 +260,7 @@ pub fn tuple(items: &[&PyRef]) -> PyRef {
 
 pub fn import(name: &str) -> PyResult<PyRef> {
     let c = CString::new(name).unwrap();
+    // SAFETY: GIL held; c is a NUL-terminated CString alive for the call
     PyRef::owned(unsafe { PyImport_ImportModule(c.as_ptr()) })
 }
 
@@ -250,6 +274,7 @@ pub fn exec_module(name: &str, src: &str) -> PyResult<PyRef> {
     let n = CString::new(name).unwrap();
     let s = CString::new(src).unwrap();
     let f = CString::new(format!("<moonruster {name}>")).unwrap();
+    // SAFETY: GIL held; s and f are NUL-terminated CStrings alive for the calls; co is a valid code object owned until the module ran
     unsafe {
         let co = PyRef::owned(Py_CompileString(s.as_ptr(), f.as_ptr(), FILE_INPUT))?;
         PyRef::owned(PyImport_ExecCodeModule(n.as_ptr(), co.0))
@@ -259,6 +284,7 @@ pub fn exec_module(name: &str, src: &str) -> PyResult<PyRef> {
 /// Take the pending Python exception (NULL return without one is a bug in
 /// the caller, reported as SystemError)
 pub fn take_error() -> PyError {
+    // SAFETY: GIL held; PyErr_Fetch moves the error's new references into t, v, tb, which the PyRefs below then own (NormalizeException may replace them, keeping ownership)
     unsafe {
         let (mut t, mut v, mut tb) = (null_mut(), null_mut(), null_mut());
         PyErr_Fetch(&mut t, &mut v, &mut tb);
@@ -291,6 +317,7 @@ pub fn take_error() -> PyError {
 
 /// Raise `err` in Python again (a native function then returns NULL)
 pub fn restore(err: &PyError) {
+    // SAFETY: GIL held; PyErr_Restore steals the references into_raw gives it (the class and the exception); PyErr_SetString copies msg, a NUL-terminated CString alive for the call, and borrows the RuntimeError class
     unsafe {
         match &err.value {
             Some(v) => {

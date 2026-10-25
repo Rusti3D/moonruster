@@ -30,7 +30,9 @@ pub struct MoonLogger;
 static LOGGER: MoonLogger = MoonLogger;
 
 fn platform_str() -> String {
+    // SAFETY: a C struct of byte arrays: all zero is a valid value
     let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+    // SAFETY: uts is exclusively borrowed for uname to fill; after success its fields are NUL-terminated within their arrays
     unsafe {
         if libc::uname(&mut uts) == 0 {
             let sys = std::ffi::CStr::from_ptr(uts.sysname.as_ptr()).to_string_lossy().to_string();

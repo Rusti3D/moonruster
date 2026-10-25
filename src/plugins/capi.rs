@@ -173,6 +173,7 @@ pub fn is_loaded() -> bool {
 /// A `PyExc_*` exception class (a data symbol of libpython)
 pub fn exc_class(name: &str) -> *mut PyObject {
     let c = CString::new(name).unwrap();
+    // SAFETY: c is a NUL-terminated CString alive for dlsym; a PyExc_* symbol is a `PyObject *` global of the loaded libpython, read as such
     unsafe {
         let p = libc::dlsym(libc::RTLD_DEFAULT, c.as_ptr()) as *const *mut PyObject;
         if p.is_null() { std::ptr::null_mut() } else { *p }
@@ -185,11 +186,14 @@ pub fn load(path: &str) -> Result<(), String> {
         return Ok(());
     }
     let c = CString::new(path).unwrap();
+    // SAFETY: c is a NUL-terminated CString alive for the call
     let h = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
     if h.is_null() {
+        // SAFETY: dlopen just failed, so dlerror returns a NUL-terminated message
         let e = unsafe { CStr::from_ptr(libc::dlerror()) };
         return Err(format!("{}: {}", path, e.to_string_lossy()));
     }
+    // SAFETY: h is the loaded libpython (never closed); each symbol is cast to its C API signature, and a missing symbol is an error, not a call
     unsafe {
         let api = Api::load(h)?;
         let sym = |n: &CStr| libc::dlsym(h, n.as_ptr());

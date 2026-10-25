@@ -130,6 +130,7 @@ pub struct ShellCommand {
 }
 
 fn send_signal(pid: u32, sig: i32) -> bool {
+    // SAFETY: kill takes no pointers (the pid is the command's child, signalled while it runs)
     unsafe { libc::kill(pid as i32, sig) == 0 }
 }
 
@@ -233,6 +234,7 @@ impl ShellCommand {
             cmd.stdout(Stdio::from(w));
             cmd.stderr(Stdio::from(w2));
             let fd: std::os::fd::OwnedFd = r.into();
+            // SAFETY: fd is the pipe's read end, owned here and open; fcntl takes no pointers
             unsafe {
                 let raw = std::os::fd::AsRawFd::as_raw_fd(&fd);
                 let fl = libc::fcntl(raw, libc::F_GETFL);

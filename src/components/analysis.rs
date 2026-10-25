@@ -182,8 +182,11 @@ impl GcodeAnalysis {
     }
 
     fn detect_platform() -> Option<&'static str> {
+        // SAFETY: a C struct of byte arrays: all zero is a valid value
         let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+        // SAFETY: uts is exclusively borrowed for uname to fill
         let arch = if unsafe { libc::uname(&mut uts) } == 0 {
+            // SAFETY: uname succeeded, so machine is NUL-terminated within the array
             unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }.to_string_lossy().to_string()
         } else {
             String::new()

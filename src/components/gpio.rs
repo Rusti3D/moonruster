@@ -71,10 +71,13 @@ fn label() -> [u8; 32] {
 }
 
 fn kernel_version() -> (i64, i64) {
+    // SAFETY: a C struct of byte arrays: all zero is a valid value
     let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+    // SAFETY: uts is a valid, exclusively borrowed utsname for uname to fill
     if unsafe { libc::uname(&mut uts) } != 0 {
         return (0, 0);
     }
+    // SAFETY: uname succeeded, so release is NUL-terminated within the array, which outlives the CStr
     let rel = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }.to_string_lossy().to_string();
     let parts: Vec<Option<i64>> = rel.split('.').take(2).map(|p| p.parse().ok()).collect();
     match (parts.first().copied().flatten(), parts.get(1).copied().flatten()) {
@@ -109,6 +112,7 @@ pub struct PinInfo {
 fn close_fd(fd: &Cell<RawFd>) {
     let f = fd.replace(-1);
     if f >= 0 {
+        // SAFETY: f was taken out of the cell (replaced by -1), so it is closed once
         unsafe { libc::close(f) };
     }
 }
@@ -124,6 +128,7 @@ impl GpioOutputPin {
         let v = (value != 0) as i32;
         let mut data = GpioHandleData { values: [0; 64] };
         data.values[0] = v as u8;
+        // SAFETY: the line handle fd is open (closing sets it to -1, which the kernel rejects); the request encodes size_of::<GpioHandleData>() and data is exclusively borrowed
         if unsafe { libc::ioctl(self.fd.get(), GPIOHANDLE_SET_LINE_VALUES_IOCTL as _, &mut data) } < 0 {
             return Err(io_err("Setting line value"));
         }
@@ -172,6 +177,7 @@ impl GpioEvent {
 
     fn read_value(&self) -> i32 {
         let mut data = GpioHandleData { values: [0; 64] };
+        // SAFETY: the event fd is open until close(); the request encodes size_of::<GpioHandleData>() and data is exclusively borrowed
         unsafe { libc::ioctl(self.fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL as _, &mut data) };
         data.values[0] as i32
     }
@@ -200,6 +206,7 @@ impl GpioEvent {
                     Err(_) => return,
                 };
                 let mut evt = GpioEventData { timestamp: 0, id: 0 };
+                // SAFETY: evt is a #[repr(C)] gpioevent_data (16 bytes, the kernel's layout) and the length is its size; fd is open while the reader task runs
                 let n = unsafe {
                     libc::read(fd, &mut evt as *mut _ as *mut libc::c_void, std::mem::size_of::<GpioEventData>())
                 };
@@ -280,6 +287,7 @@ impl GpioEvent {
     pub fn close(&self) {
         self.stop();
         if !self.closed.replace(true) {
+            // SAFETY: the closed flag makes this run once; the reader task was stopped first
             unsafe { libc::close(self.fd) };
         }
     }
@@ -350,6 +358,7 @@ impl GpioFactory {
             return Err(ServerError::bad(format!("Chip path {} does not exist", chip_path.display())));
         }
         let cpath = std::ffi::CString::new(chip_path.to_string_lossy().as_bytes()).unwrap();
+        // SAFETY: cpath is a NUL-terminated CString alive for the call
         let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
         if fd < 0 {
             return Err(io_err("Opening GPIO chip"));
@@ -378,8 +387,10 @@ impl GpioFactory {
         };
         req.lineoffsets[0] = p.pin_id;
         req.default_values[0] = p.output_high as u8;
+        // SAFETY: chip is the open chip fd; the request encodes size_of::<GpioHandleRequest>() (#[repr(C)], the kernel's layout) and req is exclusively borrowed
         let r = unsafe { libc::ioctl(chip, GPIO_GET_LINEHANDLE_IOCTL as _, &mut req) };
         let err = io_err("Opening output GPIO");
+        // SAFETY: the chip fd was opened by open_chip and is closed once, after its last use
         unsafe { libc::close(chip) };
         if r < 0 {
             Self::init_failed(&p.full_name);
@@ -404,13 +415,16 @@ impl GpioFactory {
             consumer_label: label(),
             fd: -1,
         };
+        // SAFETY: chip is the open chip fd; the request encodes size_of::<GpioEventRequest>() (#[repr(C)], the kernel's layout) and req is exclusively borrowed
         let r = unsafe { libc::ioctl(chip, GPIO_GET_LINEEVENT_IOCTL as _, &mut req) };
         let err = io_err("Opening input GPIO");
+        // SAFETY: the chip fd was opened by open_chip and is closed once, after its last use
         unsafe { libc::close(chip) };
         if r < 0 {
             Self::init_failed(&p.full_name);
             return Err(err);
         }
+        // SAFETY: req.fd is the event fd the kernel just returned; fcntl takes no pointers
         unsafe {
             let flags = libc::fcntl(req.fd, libc::F_GETFL);
             libc::fcntl(req.fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
