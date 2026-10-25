@@ -376,7 +376,10 @@ impl SsdpServer {
                     None => return,
                 };
                 if s.running.get() && s.registered.get() {
-                    if let Some(sock) = s.socket.borrow().clone() {
+                    // the borrow ends here, before the await (an `if let`
+                    // scrutinee's would last the whole block)
+                    let sock = s.socket.borrow().clone();
+                    if let Some(sock) = sock {
                         let _ = sock.send_to(&ads[idx % ads.len()], SocketAddr::from(SSDP_ADDR)).await;
                         idx += 1;
                     }
