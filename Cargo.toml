@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/pycompat"]
+
 [package]
 name = "moonruster"
 version = "0.2.0"
@@ -10,6 +13,7 @@ name = "moonruster"
 path = "src/main.rs"
 
 [dependencies]
+pycompat = { path = "crates/pycompat" }
 tokio = { version = "1", features = ["rt", "net", "fs", "time", "process", "signal", "io-util", "macros", "sync"] }
 hyper = { version = "1", features = ["server", "http1", "client"] }
 hyper-util = { version = "0.1", features = ["tokio"] }

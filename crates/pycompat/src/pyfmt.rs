@@ -58,6 +58,11 @@ fn py_digitpart(s: &str) -> Option<String> {
     (!out.is_empty()).then_some(out)
 }
 
+/// A float as JSON (NaN and infinities have no JSON number: null)
+pub fn float_value(f: f64) -> Value {
+    serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
+}
+
 /// Python's repr() for a float
 pub fn py_float_repr(f: f64) -> String {
     if f.is_nan() {
@@ -187,7 +192,7 @@ pub fn py_round(x: f64, ndigits: usize) -> f64 {
 /// round() applied to a json number, ints are returned unchanged
 pub fn round_value(v: &Value, ndigits: usize) -> Value {
     match v {
-        Value::Number(n) if n.is_f64() => crate::utils::float_value(py_round(n.as_f64().unwrap(), ndigits)),
+        Value::Number(n) if n.is_f64() => float_value(py_round(n.as_f64().unwrap(), ndigits)),
         other => other.clone(),
     }
 }

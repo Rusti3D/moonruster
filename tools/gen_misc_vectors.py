@@ -2,7 +2,7 @@
 # Test vectors from CPython for the smaller Python ports (docs/RUSTIFY.md
 # Phase 0): shlex.split (shell_command.rs shlex_split), inspect.cleandoc
 # (database.rs cleandoc).
-#   python3 tools/gen_misc_vectors.py > tests/data/misc_vectors.json
+#   python3 tools/gen_misc_vectors.py > crates/pycompat/tests/data/misc_vectors.json
 import inspect
 import json
 import shlex

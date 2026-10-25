@@ -146,9 +146,7 @@ pub fn monotonic() -> f64 {
 
 /// Converts a float to a json value, non-finite values become null since
 /// they cannot be encoded
-pub fn float_value(f: f64) -> Value {
-    serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null)
-}
+pub use pycompat::pyfmt::float_value;
 
 pub fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| {

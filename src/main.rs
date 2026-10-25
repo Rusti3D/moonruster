@@ -3,15 +3,12 @@
 mod assets;
 mod async_serial;
 mod common;
-mod configparser;
 mod confighelper;
 mod components;
 mod loghelper;
 #[cfg(feature = "plugins")]
 mod plugins;
-mod pyfmt;
-mod pyfmt_tables;
-mod pymimetypes;
+use pycompat::{configparser, pyfmt, pymimetypes};
 mod server;
 mod sysfs_devs;
 mod utils;

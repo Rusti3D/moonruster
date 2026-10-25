@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Unicode tables for src/pyfmt.rs from CPython's own unicode database (the
+# Unicode tables for crates/pycompat/src/pyfmt.rs from CPython's own unicode database (the
 # reference Moonraker runs on): code points str.isprintable() rejects (repr()
 # escapes them), Unicode decimal digits (int() / float() accept them) and
 # str.isspace() whitespace (int() / float() strip it).
-#   python3 tools/gen_unicode_tables.py > src/pyfmt_tables.rs
+#   python3 tools/gen_unicode_tables.py > crates/pycompat/src/pyfmt_tables.rs
 import sys
 import unicodedata
 
