@@ -192,7 +192,7 @@ pub(super) fn log_uncaught_exception(req: &HttpRequest, e: &ServerError, err: &H
         r(&req.uri),
         r("HTTP/1.1"),
         r(&req.remote_ip),
-        e.traceback.clone().unwrap_or_else(|| synthetic_traceback(err).trim_end().to_string())
+        e.traceback().map(str::to_string).unwrap_or_else(|| synthetic_traceback(err).trim_end().to_string())
     );
     crate::loghelper::emit(log::Level::Error, "web.py", "log_exception", 1972, &msg);
 }

@@ -131,7 +131,7 @@ pub fn to_server_error(e: &PyError) -> ServerError {
         ServerError::exc(e.message.clone())
     };
     // tornado logs the traceback of an uncaught exception of an HTTP request
-    err.traceback = Some(e.traceback.clone());
+    err.set_traceback(e.traceback.clone());
     err
 }
 

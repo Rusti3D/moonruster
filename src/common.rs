@@ -21,8 +21,6 @@ pub const ENDPOINT_PREFIXES: [&str; 6] = ["printer", "server", "machine", "acces
 pub struct ServerError {
     pub message: String,
     pub status_code: i64,
-    /// Present for AgentError (status 424)
-    pub error_data: Option<Value>,
     /// Raised as a tornado HTTPError (message is a log message)
     pub is_http: bool,
     /// A python exception that is not a ServerError (ValueError, KeyError,
@@ -30,6 +28,15 @@ pub struct ServerError {
     pub is_exc: bool,
     /// A python TypeError from an API callback (JSON-RPC: -32602 Invalid params)
     pub is_type_error: bool,
+    /// The rarely present parts, boxed: every Result carrying a ServerError
+    /// stays small (test below)
+    pub extra: Option<Box<ErrorExtra>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ErrorExtra {
+    /// Present for AgentError (status 424)
+    pub error_data: Option<Value>,
     /// The traceback of an exception from a Python component (the uncaught
     /// exception log of HTTP requests shows it)
     pub traceback: Option<String>,
@@ -37,15 +44,15 @@ pub struct ServerError {
 
 impl ServerError {
     pub fn new(message: impl Into<String>, status_code: i64) -> Self {
-        ServerError { message: message.into(), status_code, error_data: None, is_http: false, is_exc: false, is_type_error: false, traceback: None }
+        ServerError { message: message.into(), status_code, is_http: false, is_exc: false, is_type_error: false, extra: None }
     }
     /// A non-ServerError python exception
     pub fn exc(message: impl Into<String>) -> Self {
-        ServerError { message: message.into(), status_code: 500, error_data: None, is_http: false, is_exc: true, is_type_error: false, traceback: None }
+        ServerError { is_exc: true, ..Self::new(message, 500) }
     }
     /// tornado.web.HTTPError(code, log_message) raised from an API callback
     pub fn http(status_code: i64, log_message: impl Into<String>) -> Self {
-        ServerError { message: log_message.into(), status_code, error_data: None, is_http: true, is_exc: false, is_type_error: false, traceback: None }
+        ServerError { is_http: true, ..Self::new(log_message, status_code) }
     }
     pub fn bad(message: impl Into<String>) -> Self {
         Self::new(message, 400)
@@ -55,7 +62,17 @@ impl ServerError {
         ServerError { is_type_error: true, ..Self::exc(message) }
     }
     pub fn agent(message: impl Into<String>, data: Value) -> Self {
-        ServerError { message: message.into(), status_code: 424, error_data: Some(data), is_http: false, is_exc: false, is_type_error: false, traceback: None }
+        let extra = ErrorExtra { error_data: Some(data), traceback: None };
+        ServerError { extra: Some(Box::new(extra)), ..Self::new(message, 424) }
+    }
+    pub fn error_data(&self) -> Option<&Value> {
+        self.extra.as_ref()?.error_data.as_ref()
+    }
+    pub fn traceback(&self) -> Option<&str> {
+        self.extra.as_ref()?.traceback.as_deref()
+    }
+    pub fn set_traceback(&mut self, traceback: String) {
+        self.extra.get_or_insert_with(Default::default).traceback = Some(traceback);
     }
 }
 
@@ -923,7 +940,7 @@ impl JsonRpc {
         err.insert("code".into(), json!(code));
         err.insert("message".into(), json!(msg));
         if let Some(e) = exc {
-            if let Some(data) = &e.error_data {
+            if let Some(data) = e.error_data() {
                 err.insert("data".into(), data.clone());
                 if self.verbose {
                     log_msg.push_str(&format!("\nExtra data: {}", data));
@@ -942,4 +959,13 @@ where
     Fut: std::future::Future<Output = ApiResult> + 'static,
 {
     Rc::new(move |req| Box::pin(f(req)))
+}
+
+#[cfg(test)]
+mod tests {
+    // the error travels in every Result: keep it to a message, a code and a pointer
+    #[test]
+    fn server_error_size() {
+        assert!(std::mem::size_of::<super::ServerError>() <= 48, "{}", std::mem::size_of::<super::ServerError>());
+    }
 }
