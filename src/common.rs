@@ -477,6 +477,11 @@ pub trait ApiTransport {
         Ok(())
     }
     fn send_status(&self, _status: &Map<String, Value>, _eventtime: f64) {}
+    /// A status update: the transport's part of it, borrowed (send_status of
+    /// a copy unless the transport serializes it directly)
+    fn send_status_view(&self, view: &crate::components::klippy_connection::StatusView, eventtime: f64) {
+        self.send_status(&view.to_map(), eventtime);
+    }
     /// Unique identifier used to key subscriptions
     fn transport_id(&self) -> u64;
     /// Returns the remote connection if this transport is a websocket/unix connection

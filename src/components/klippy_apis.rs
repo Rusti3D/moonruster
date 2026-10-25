@@ -18,7 +18,8 @@ pub const STATUS_ENDPOINT: &str = "objects/query";
 pub const OBJ_LIST_ENDPOINT: &str = "objects/list";
 pub const REG_METHOD_ENDPOINT: &str = "register_remote_method";
 
-pub type SubCallback = Rc<dyn Fn(Map<String, Value>, f64) -> Option<LocalBoxFuture<'static, ()>>>;
+/// A subscriber's callback: the status changes it subscribed to, borrowed
+pub type SubCallback = Rc<dyn Fn(&Map<String, Value>, f64) -> Option<LocalBoxFuture<'static, ()>>>;
 
 pub struct KlippyApi {
     pub version: Value,
@@ -41,6 +42,11 @@ impl ApiTransport for HostTransport {
     fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {
         if let Some(api) = self.0.upgrade() {
             api.send_status(status, eventtime);
+        }
+    }
+    fn send_status_view(&self, view: &crate::components::klippy_connection::StatusView, eventtime: f64) {
+        if let Some(api) = self.0.upgrade() {
+            api.dispatch_status(std::borrow::Cow::Owned(view.to_map()), eventtime);
         }
     }
     fn transport_id(&self) -> u64 {
@@ -260,19 +266,30 @@ impl KlippyApi {
     }
 
     pub fn send_status(&self, status: &Map<String, Value>, eventtime: f64) {
+        self.dispatch_status(std::borrow::Cow::Borrowed(status), eventtime);
+    }
+
+    /// The subscribers' callbacks, then server:status_update; a status owned
+    /// already is handed on, not copied
+    fn dispatch_status(&self, status: std::borrow::Cow<Map<String, Value>>, eventtime: f64) {
+        use crate::events::{Event, StatusUpdate};
+        let srv = server();
+        let for_event = srv.has_event_handlers(StatusUpdate::NAME).then(|| status.as_ref().clone());
         // deferred like moonraker's register_callback, one task for all
         let cbs: Vec<SubCallback> = self.subscription_callbacks.borrow().clone();
         if !cbs.is_empty() {
-            let st = status.clone();
+            let st = status.into_owned();
             spawn(async move {
                 for cb in cbs {
-                    if let Some(f) = cb(st.clone(), eventtime) {
+                    if let Some(f) = cb(&st, eventtime) {
                         spawn(f);
                     }
                 }
             });
         }
-        server().emit::<crate::events::StatusUpdate>(status.clone());
+        if let Some(status) = for_event {
+            srv.emit::<StatusUpdate>(status);
+        }
     }
 }
 

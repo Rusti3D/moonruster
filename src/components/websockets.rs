@@ -214,7 +214,11 @@ impl RemoteConnection {
         if status.is_empty() {
             return;
         }
-        // serialized directly, the hottest message during a print
+        self.queue_status(status, eventtime);
+    }
+
+    // serialized directly, the hottest message during a print
+    fn queue_status(&self, status: &impl serde::Serialize, eventtime: f64) {
         let msg = format!(
             r#"{{"jsonrpc":"2.0","method":"notify_status_update","params":[{},{}]}}"#,
             serde_json::to_string(status).unwrap_or_default(),
@@ -331,6 +335,11 @@ impl ApiTransport for RemoteConnection {
     }
     fn send_status(&self, status: &serde_json::Map<String, Value>, eventtime: f64) {
         self.send_status_update(status, eventtime);
+    }
+    fn send_status_view(&self, view: &crate::components::klippy_connection::StatusView, eventtime: f64) {
+        if !view.is_empty() {
+            self.queue_status(view, eventtime);
+        }
     }
     fn transport_id(&self) -> u64 {
         self.uid

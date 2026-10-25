@@ -22,7 +22,7 @@ impl PowerDevice {
         let w = Rc::downgrade(&self);
         let cb: crate::components::klippy_apis::SubCallback = Rc::new(move |status, _| {
             if let Some(d) = w.upgrade() {
-                d.klipper_set_state_from_data(&status);
+                d.klipper_set_state_from_data(status);
             }
             None
         });

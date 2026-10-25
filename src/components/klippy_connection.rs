@@ -36,7 +36,65 @@ pub fn remote_method<F: Fn(Map<String, Value>) + 'static>(f: F) -> RemoteMethod 
 
 struct SubEntry {
     transport: Rc<dyn ApiTransport>,
-    sub: Subscription,
+    sub: Rc<Subscription>,
+}
+
+/// A transport's part of a status update: the objects and fields it
+/// subscribed to, borrowed from the update. It serializes as the filtered
+/// map did: objects in the subscription's order, fields in the update's,
+/// objects with nothing left out.
+pub struct StatusView<'a> {
+    status: &'a Map<String, Value>,
+    sub: &'a Subscription,
+}
+
+impl<'a> StatusView<'a> {
+    fn objects(&self) -> impl Iterator<Item = (&'a String, ObjectView<'a>)> + '_ {
+        let status = self.status;
+        self.sub.iter().filter_map(move |(name, fields)| match status.get(name) {
+            Some(Value::Object(val)) => {
+                let obj = ObjectView { val, fields: fields.as_deref() };
+                obj.fields().next().is_some().then_some((name, obj))
+            }
+            _ => None,
+        })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.objects().next().is_none()
+    }
+
+    /// The filtered status as a map (transports that keep or pass it on)
+    pub fn to_map(&self) -> Map<String, Value> {
+        self.objects()
+            .map(|(name, obj)| (name.clone(), Value::Object(obj.fields().map(|(k, v)| (k.clone(), v.clone())).collect())))
+            .collect()
+    }
+}
+
+/// One object's fields of a StatusView: all, or those subscribed to
+#[derive(Clone, Copy)]
+struct ObjectView<'a> {
+    val: &'a Map<String, Value>,
+    fields: Option<&'a [String]>,
+}
+
+impl<'a> ObjectView<'a> {
+    fn fields(self) -> impl Iterator<Item = (&'a String, &'a Value)> {
+        self.val.iter().filter(move |(k, _)| self.fields.is_none_or(|f| f.contains(k)))
+    }
+}
+
+impl serde::Serialize for StatusView<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_map(self.objects())
+    }
+}
+
+impl serde::Serialize for ObjectView<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_map(self.fields())
+    }
 }
 
 enum WriteCmd {
@@ -797,22 +855,11 @@ impl KlippyConnection {
                 self.state.set(new_state);
             }
         }
-        let subs: Vec<(Rc<dyn ApiTransport>, Subscription)> =
+        // each transport's part, borrowed from the update
+        let subs: Vec<(Rc<dyn ApiTransport>, Rc<Subscription>)> =
             self.subscriptions.borrow().values().map(|e| (e.transport.clone(), e.sub.clone())).collect();
         for (conn, sub) in subs {
-            let mut conn_status = Map::new();
-            for (name, fields) in &sub {
-                if let Some(Value::Object(val)) = status.get(name) {
-                    let filtered: Map<String, Value> = match fields {
-                        None => val.clone(),
-                        Some(f) => val.iter().filter(|(k, _)| f.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect(),
-                    };
-                    if !filtered.is_empty() {
-                        conn_status.insert(name.clone(), Value::Object(filtered));
-                    }
-                }
-            }
-            conn.send_status(&conn_status, eventtime);
+            conn.send_status_view(&StatusView { status, sub: &sub }, eventtime);
         }
     }
 
@@ -874,7 +921,7 @@ impl KlippyConnection {
         let requested_sub = Self::parse_subscription(args.get("objects"));
         let mut all_subs = requested_sub.clone();
         for entry in self.subscriptions.borrow().values() {
-            for (obj, items) in &entry.sub {
+            for (obj, items) in entry.sub.iter() {
                 if let Some(prev) = all_subs.get(obj).cloned() {
                     match (items, prev) {
                         (None, _) | (_, None) => {
@@ -965,7 +1012,7 @@ impl KlippyConnection {
         }
         result["status"] = Value::Object(pruned);
         if !requested_sub.is_empty() {
-            self.subscriptions.borrow_mut().insert(conn_id, SubEntry { transport: conn, sub: requested_sub });
+            self.subscriptions.borrow_mut().insert(conn_id, SubEntry { transport: conn, sub: Rc::new(requested_sub) });
         }
         Ok(result)
     }
@@ -1116,4 +1163,53 @@ impl KlippyConnection {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<KlippyConnection>, crate::confighelper::ConfigError> {
     KlippyConnection::new(config)
+}
+
+#[cfg(test)]
+mod status_view_tests {
+    use super::{StatusView, Subscription};
+    use serde_json::{json, Map, Value};
+
+    // the filtered map process_status_update built for each transport
+    fn filtered(status: &Map<String, Value>, sub: &Subscription) -> Map<String, Value> {
+        let mut conn_status = Map::new();
+        for (name, fields) in sub {
+            if let Some(Value::Object(val)) = status.get(name) {
+                let filtered: Map<String, Value> = match fields {
+                    None => val.clone(),
+                    Some(f) => val.iter().filter(|(k, _)| f.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+                };
+                if !filtered.is_empty() {
+                    conn_status.insert(name.clone(), Value::Object(filtered));
+                }
+            }
+        }
+        conn_status
+    }
+
+    #[test]
+    fn as_the_filtered_map() {
+        let status = json!({
+            "toolhead": {"position": [1.5, 2.0, 0.0, 0.0], "homed_axes": "xyz", "print_time": 12.25},
+            "extruder": {"temperature": 210.4, "target": 0},
+            "print_stats": {"state": "printing", "message": "\u00e9"},
+            "webhooks": "not an object",
+            "fan": {}
+        });
+        let status = status.as_object().unwrap();
+        let subs: Vec<Subscription> = vec![
+            [("toolhead".to_string(), None), ("extruder".to_string(), Some(vec!["target".into(), "temperature".into()]))].into_iter().collect(),
+            [("print_stats".to_string(), Some(vec!["missing".into()])), ("fan".to_string(), None)].into_iter().collect(),
+            [("webhooks".to_string(), None), ("absent".to_string(), None)].into_iter().collect(),
+            [("extruder".to_string(), Some(vec!["target".into()])), ("toolhead".to_string(), Some(vec!["homed_axes".into()]))].into_iter().collect(),
+            Subscription::new(),
+        ];
+        for sub in &subs {
+            let view = StatusView { status, sub };
+            let old = filtered(status, sub);
+            assert_eq!(serde_json::to_string(&view).unwrap(), serde_json::to_string(&old).unwrap());
+            assert_eq!(view.to_map(), old);
+            assert_eq!(view.is_empty(), old.is_empty());
+        }
+    }
 }

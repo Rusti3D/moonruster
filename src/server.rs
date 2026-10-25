@@ -787,11 +787,19 @@ impl Server {
 
     /// Sends event E with its typed arguments
     pub fn emit<E: crate::events::Event>(&self, args: E::Args) -> EventSent {
-        // nothing to make for an event without handlers
+        self.emit_with::<E>(|| args)
+    }
+
+    pub fn has_event_handlers(&self, event: &str) -> bool {
+        self.events.borrow().contains_key(event)
+    }
+
+    /// emit, making the arguments only when the event has handlers
+    pub fn emit_with<E: crate::events::Event>(&self, args: impl FnOnce() -> E::Args) -> EventSent {
         if !self.events.borrow().contains_key(E::NAME) {
             return EventSent(None);
         }
-        self.send_event_args(E::NAME, EventArgs::typed::<E>(args))
+        self.send_event_args(E::NAME, EventArgs::typed::<E>(args()))
     }
 
     fn send_event_args(&self, event: &str, args: EventArgs) -> EventSent {

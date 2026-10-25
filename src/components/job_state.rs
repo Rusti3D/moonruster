@@ -51,7 +51,7 @@ impl JobState {
         let j = Rc::downgrade(&self);
         let cb: crate::components::klippy_apis::SubCallback = Rc::new(move |data, _et| {
             if let Some(js) = j.upgrade() {
-                js.status_update(&data);
+                js.status_update(data);
             }
             None
         });

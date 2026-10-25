@@ -83,7 +83,7 @@ pub fn register(r: &mut Registry) {
         let cb: Option<SubCallback> = match a.get(1, "callback") {
             Some(c) if !c.is_none() => {
                 let c = c.clone();
-                Some(Rc::new(move |status: Map<String, Value>, eventtime: f64| match to_py(&Value::Object(status)) {
+                Some(Rc::new(move |status: &Map<String, Value>, eventtime: f64| match to_py(&Value::Object(status.clone())) {
                     Ok(st) => flex_callback(&c, &[&st, &py_float(eventtime)]),
                     Err(e) => {
                         log::error!("moonruster: status callback\n{}", e.traceback);

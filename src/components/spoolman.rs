@@ -308,7 +308,7 @@ impl SpoolManager {
         let s = Rc::downgrade(&self);
         let cb: crate::components::klippy_apis::SubCallback = Rc::new(move |status, _| {
             if let Some(s) = s.upgrade() {
-                s.handle_status_update(&status);
+                s.handle_status_update(status);
             }
             None
         });
