@@ -9,6 +9,9 @@
 #  - the x86-64 binary size (and armv7 with --armv7: tools/scratch_cc1build.sh)
 #   tools/resource_gate.sh            measure and compare with the baseline
 #   tools/resource_gate.sh --record   measure and record the baseline
+#   REF=<binary> tools/resource_gate.sh   measure REF and the binary in
+#                                     alternating runs and compare with REF:
+#                                     drift of the machine between sessions cancels
 # A metric fails when it exceeds the baseline's worst run by more than
 # TOL percent (default 3).
 # the machine's gate lock (kaliru's gates measure resources here): taken by
@@ -58,7 +61,7 @@ EOC
 }
 
 # one run: prints "cpu_ns hwm_kb anon_kb"
-run() {  # mode with_component
+run() {  # mode with_component [binary]
     D=$W/run
     rm -rf "$D"
     S=$W/mk.sock
@@ -67,7 +70,7 @@ run() {  # mode with_component
     MK=$!
     sleep 1
     conf "$D" "$S" "$2"
-    MOONRUSTER_MOONRAKER_DIR=$TREE MOONRUSTER_PYTHON=$PY "$BIN" -d "$D" -l "$D/logs/moonraker.log" > "$D/out" 2>&1 &
+    MOONRUSTER_MOONRAKER_DIR=$TREE MOONRUSTER_PYTHON=$PY "${3:-$BIN}" -d "$D" -l "$D/logs/moonraker.log" > "$D/out" 2>&1 &
     P=$!
     sleep "$SETTLE"
     WS=""
@@ -85,19 +88,34 @@ run() {  # mode with_component
     wait $P 2>/dev/null
 }
 
+# min and max of each column over the runs
+minmax() {  # key
+    awk -v k="$1" '
+        { for (i = 1; i <= 3; i++) { if (NR == 1 || $i < mn[i]) mn[i] = $i; if (NR == 1 || $i > mx[i]) mx[i] = $i } }
+        END { split("cpu_ns hwm_kb anon_kb", n, " ");
+              for (i = 1; i <= 3; i++) printf "%s.%s %d %d\n", k, n[i], mn[i], mx[i] }'
+}
+
 measure() {
+    : > "$W/ref"
     for mode in idle load; do
         for comp in no yes; do
-            vals=$(for i in $(seq "$RUNS"); do run $mode $comp; done)
-            # min and max of each column over the runs
-            echo "$vals" | awk -v k="${mode}_${comp}comp" '
-                { for (i = 1; i <= 3; i++) { if (NR == 1 || $i < mn[i]) mn[i] = $i; if (NR == 1 || $i > mx[i]) mx[i] = $i } }
-                END { split("cpu_ns hwm_kb anon_kb", n, " ");
-                      for (i = 1; i <= 3; i++) printf "%s.%s %d %d\n", k, n[i], mn[i], mx[i] }'
+            : > "$W/vals"
+            : > "$W/refvals"
+            for i in $(seq "$RUNS"); do
+                [ -n "$REF" ] && run $mode $comp "$REF" >> "$W/refvals"
+                run $mode $comp >> "$W/vals"
+            done
+            minmax "${mode}_${comp}comp" < "$W/vals"
+            [ -n "$REF" ] && minmax "${mode}_${comp}comp" < "$W/refvals" >> "$W/ref"
         done
     done
     s=$(stat -c %s "$BIN")
     echo "binary.x86_64 $s $s"
+    if [ -n "$REF" ]; then
+        r=$(stat -c %s "$REF")
+        echo "binary.x86_64 $r $r" >> "$W/ref"
+    fi
     if [ "$ARMV7" = 1 ]; then
         bash tools/scratch_cc1build.sh > /dev/null 2>&1
         a=$(stat -c %s "$HOME/mr/cc1run/moonruster-gnu")
@@ -108,6 +126,7 @@ measure() {
 [ "$1" = "--armv7" ] || [ "$2" = "--armv7" ] && ARMV7=1
 OUT=$W/current
 measure > "$OUT"
+[ -n "$REF" ] && BASE=$W/ref
 if [ "$1" = "--record" ]; then
     cp "$OUT" "$BASE"
     echo "recorded $BASE"
