@@ -16,6 +16,12 @@ cd "$(dirname "$0")/.."
 OUT=${GATE_OUT:-$HOME/mr/gate}
 mkdir -p "$OUT"
 rm -f "$OUT"/*.out
+# the gcode samples: generated ones, plus real slicer output kept out of git
+# (a worktree has to be given them; the expected summary covers them)
+~/mr/venv/bin/python tools/gen_samples.py tools/samples > /dev/null || exit 2
+for f in cube1h43.gcode doorbell.gcode; do
+    [ -f "tools/samples/$f" ] || { echo "tools/samples/$f missing (real slicer output, not in git)"; exit 2; }
+done
 SUITES="power machine_cli machine_dbus mqtt_tls config scenario ext difftest ldap ppc"
 bash tools/run_all.sh $SUITES > /dev/null 2>&1
 if grep -q "BUILD FAILED" /tmp/mr_done.out; then
