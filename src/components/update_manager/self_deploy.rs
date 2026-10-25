@@ -102,7 +102,7 @@ impl SelfDeploy {
     }
 
     /// Replaces the running binary: renamed into place when its folder is
-    /// writable (COSMOS, root), otherwise `sudo install` (Debian, /usr/local/bin)
+    /// writable (running as root), otherwise `sudo install` (Debian, /usr/local/bin)
     async fn install(&self, exe: &Path, dl: &(String, String, i64)) -> Result<(), ServerError> {
         let ch = self.app.base.cmd_helper.clone();
         let dir = exe.parent().unwrap_or(Path::new("/"));

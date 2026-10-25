@@ -6,7 +6,6 @@ use crate::pyfmt::py_str;
 use crate::server::{server, Component};
 use async_trait::async_trait;
 use indexmap::IndexMap;
-use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -84,26 +83,7 @@ impl WebCam {
     }
 
     pub fn as_dict(&self) -> Value {
-        let mut data = self.fields.clone();
-        for key in ["stream_url", "snapshot_url"] {
-            if let Some(Value::String(url)) = data.get(key) {
-                let expanded = Self::expand_url(url);
-                data.insert(key.into(), json!(expanded));
-            }
-        }
-        Value::Object(data)
-    }
-
-    /// ":8080/stream" -> default host on port 8080 (COSMOS patch to moonraker)
-    fn expand_url(url: &str) -> String {
-        static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| crate::utils::regex(r"^:(\d+)(/.*)?$"));
-        match RE.captures(url) {
-            Some(c) => {
-                let host = DEFAULT_HOST.with(|h| h.borrow().clone());
-                format!("{}:{}{}", host, &c[1], c.get(2).map(|m| m.as_str()).unwrap_or(""))
-            }
-            None => url.to_string(),
-        }
+        Value::Object(self.fields.clone())
     }
 
     pub async fn get_stream_url(&self, convert_local: bool) -> Result<String, ServerError> {
@@ -118,7 +98,7 @@ impl WebCam {
         if url.is_empty() {
             return Err(ServerError::bad("Empty URL Provided"));
         }
-        let mut url = Self::expand_url(url);
+        let mut url = url.to_string();
         if !crate::utils::regex(r"^\w+://[^/]+").is_match(&url) {
             let host = DEFAULT_HOST.with(|h| h.borrow().clone());
             url = format!("{}/{}", host, url.trim_start_matches('/'));
@@ -572,16 +552,4 @@ impl WebcamManager {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<WebcamManager>, crate::confighelper::ConfigError> {
     WebcamManager::new(config)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn expand_url() {
-        let e = super::WebCam::expand_url;
-        assert_eq!(e(":8080/stream"), "http://127.0.0.1:8080/stream");
-        assert_eq!(e(":8080"), "http://127.0.0.1:8080");
-        assert_eq!(e("/webcam/?action=stream"), "/webcam/?action=stream");
-        assert_eq!(e("http://cam:8080/stream"), "http://cam:8080/stream");
-    }
 }

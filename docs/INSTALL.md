@@ -5,8 +5,7 @@ Nothing is compiled on the printer: you install it from a PC over SSH, and only 
 small install script are copied over.
 
 Requirements on the printer: Linux with systemd (Raspberry Pi OS, Armbian, Debian/Ubuntu based
-printer images), SSH access, and a user with sudo (usually `pi`). COSMOS printers are supported
-too, see [2c](#2c-cosmos-elegoo-centauri-carbon-with-opencentauri-firmware).
+printer images), SSH access, and a user with sudo (usually `pi`).
 
 ## 1. Get the binary (on your PC)
 
@@ -81,35 +80,6 @@ Use the full path (a `~` would expand on your PC). This creates the data folder 
 same PolicyKit rules Moonraker installs (needed for service control, reboot/shutdown and system
 updates without sudo). Klipper must be started with `-a <data path>/comms/klippy.sock` (the
 default for KIAUH installs).
-
-## 2c. COSMOS (Elegoo Centauri Carbon with OpenCentauri firmware)
-
-The same command works; the script detects COSMOS (a sysvinit `moonraker` service, no systemd):
-
-```bash
-scripts/remote-install.sh root@<printer ip>
-```
-
-On the printer it uses `scripts/install-cosmos.sh` (plain `sh`, COSMOS has no bash) to:
-
-- install the binary to `/etc/moonruster/moonruster` (the root filesystem is read-only; `/etc` is
-  the writable overlay)
-- back up `/etc/init.d/moonraker` to `/etc/moonruster/moonraker.init-backup`
-- change only its `MOONRAKER_EXEC=` line, and drop the Python interpreter flags from
-  `MOONRAKER_ARGS` (`-d /etc/klipper -l ... -u ...` stay)
-- set `MOONRUSTER_LOG_MAX_BYTES=5242880` in it: logs rotate at 5 MB (2 backups) instead of daily,
-  as on COSMOS's Moonraker
-- restart the service
-
-`-r` restores the init script. The COSMOS additions to Moonraker are supported: `[machine]
-provider: sysvinit`, `[server] web_client` and `webcam_redirect` (Mainsail/Fluidd served on port
-80 without nginx), `:port/path` webcam URLs and `[update_manager]` sections with `type: swupdate`
-(COSMOS firmware updates). They only take effect when configured, so other installs are not
-affected.
-
-The init script lives in the `/etc` overlay, so a COSMOS firmware update keeps Moonruster, and
-`-r` puts back the script from install time. To go back to the firmware's own script instead,
-delete `/data/overlay-etc/upper/init.d/moonraker` on the printer and reboot.
 
 ## Installing without the PC script
 

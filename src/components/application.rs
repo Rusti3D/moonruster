@@ -361,9 +361,6 @@ pub enum HandlerKind {
     Upload { location_prefix: String, max_upload_size: u64 },
     WebSocket,
     BridgeSocket,
-    // web_client / webcam_redirect (COSMOS patch to moonraker)
-    WebClientRoot { path: String },
-    WebcamRedirect { upstream: String },
 }
 
 struct Rule {
@@ -419,7 +416,6 @@ pub struct MoonrakerApp {
     cert_path: PathBuf,
     key_path: PathBuf,
     route_prefix: String,
-    web_client_path: Option<String>,
     template_cache: RefCell<HashMap<String, Rc<crate::components::template::JinjaTemplate>>>,
     listeners: RefCell<Vec<tokio::task::JoinHandle<()>>>,
     pub verbose: bool,
@@ -452,21 +448,6 @@ impl MoonrakerApp {
             home_pattern = format!("{}/?", route_prefix);
         }
         let max_ws_conns = config.getint_or("max_websocket_connections", MAX_WS_CONNS_DEFAULT)?;
-        // Optional static web client: a full path, or a name under /var/www
-        let mut web_client_path = None;
-        if let Some(mut wcp) = config.get_opt("web_client")? {
-            if !wcp.starts_with('/') && !wcp.starts_with('~') {
-                wcp = format!("/var/www/{}", wcp);
-            }
-            let wcp = utils::expand_user(&wcp).to_string_lossy().to_string();
-            if Path::new(&wcp).is_dir() {
-                log::info!("Static web client enabled, serving from: {}", wcp);
-                web_client_path = Some(wcp);
-            } else {
-                log::warn!("web_client '{}' is not a valid directory, static file serving disabled", wcp);
-            }
-        }
-        let webcam_redirect = config.get_opt("webcam_redirect")?;
         let app = Rc::new(MoonrakerApp {
             json_rpc: json_rpc.clone(),
             api_cache: RefCell::new(HashMap::new()),
@@ -478,19 +459,12 @@ impl MoonrakerApp {
             cert_path,
             key_path,
             route_prefix: route_prefix.clone(),
-            web_client_path: web_client_path.clone(),
             template_cache: RefCell::new(HashMap::new()),
             listeners: RefCell::new(Vec::new()),
             verbose: srv.is_verbose_enabled(),
             http_running: Cell::new(false),
         });
-        match web_client_path {
-            Some(path) => app.add_handler(&home_pattern, HandlerKind::WebClientRoot { path }),
-            None => app.add_handler(&home_pattern, HandlerKind::Welcome),
-        }
-        if let Some(upstream) = webcam_redirect {
-            app.add_handler("/webcam/?(.*)", HandlerKind::WebcamRedirect { upstream: upstream.trim_end_matches('/').to_string() });
-        }
+        app.add_handler(&home_pattern, HandlerKind::Welcome);
         app.add_handler(&format!("{}/server/redirect", route_prefix), HandlerKind::Redirect);
         app.add_handler(&format!("{}/server/jsonrpc", route_prefix), HandlerKind::Rpc);
         srv.register_component("jsonrpc", json_rpc).map_err(crate::confighelper::ConfigError::from)?;
@@ -964,10 +938,7 @@ impl MoonrakerApp {
             (error_response(&HttpError::new(405), None), None)
         } else {
             match route {
-                None => match self.web_client_file(&info.path) {
-                    Some((root, rel)) => self.handle_web_client(&info, &root, &rel).await,
-                    None => self.handle_not_found(&info).await,
-                },
+                None => self.handle_not_found(&info).await,
                 Some(m) => match m.kind.clone() {
                     HandlerKind::Welcome => (self.handle_welcome(&info).await, None),
                     HandlerKind::Redirect => self.handle_redirect(&info).await,
@@ -986,11 +957,6 @@ impl MoonrakerApp {
                     HandlerKind::BridgeSocket => {
                         let (resp, user) = crate::components::websockets::serve_websocket(raw_req.take().unwrap(), &info, true).await;
                         return self.finish_ws(&info, resp, user);
-                    }
-                    HandlerKind::WebClientRoot { path } => (Self::web_client_root(&info, &path), None),
-                    HandlerKind::WebcamRedirect { upstream } => {
-                        let sub = m.path_args.first().cloned().flatten().unwrap_or_default();
-                        (Self::webcam_redirect(&info, &upstream, &sub), None)
                     }
                 },
             }
@@ -1077,9 +1043,7 @@ impl MoonrakerApp {
     }
 
     fn log_request(&self, req: &HttpRequest, status: u16, user: Option<&UserInfo>) {
-        // COSMOS's moonraker also skips redirects (webcam_redirect)
-        let skip_302 = status == 302 && crate::loghelper::log_max_bytes().is_some();
-        if !self.verbose && ([200, 204, 206, 304].contains(&status) || skip_302) {
+        if !self.verbose && [200, 204, 206, 304].contains(&status) {
             return;
         }
         let request_time = 1000.0 * req.request_time();
@@ -1382,57 +1346,6 @@ impl MoonrakerApp {
         }
     }
 
-    /// Web client file for an unrouted path: the file itself, else index.html
-    /// for client side routing
-    fn web_client_file(&self, path: &str) -> Option<(String, String)> {
-        let root = self.web_client_path.clone()?;
-        let rel = utils::url_unescape(path).trim_matches('/').to_string();
-        if !rel.contains("..") && Path::new(&root).join(&rel).is_file() {
-            return Some((root, rel));
-        }
-        Path::new(&root).join("index.html").is_file().then(|| (root, "index.html".to_string()))
-    }
-
-    async fn handle_web_client(&self, req: &HttpRequest, root: &str, rel: &str) -> (HttpResponse, Option<UserInfo>) {
-        let resp = match req.method.as_str() {
-            "GET" => self.static_get(req, root, rel, true, true).await,
-            "HEAD" => self.static_get(req, root, rel, false, true).await,
-            _ => Err(HttpError::new(405)),
-        };
-        (resp.unwrap_or_else(|e| error_response(&e, None)), None)
-    }
-
-    fn web_client_root(req: &HttpRequest, root: &str) -> HttpResponse {
-        if req.method != "GET" {
-            return error_response(&HttpError::new(405), None);
-        }
-        match std::fs::read(Path::new(root).join("index.html")) {
-            Ok(data) => {
-                let mut resp = HttpResponse::new(200);
-                resp.set_header("Content-Type", "text/html; charset=UTF-8");
-                resp.set_body(data);
-                resp
-            }
-            Err(_) => error_response(&HttpError::new(500), None),
-        }
-    }
-
-    fn webcam_redirect(req: &HttpRequest, upstream: &str, path: &str) -> HttpResponse {
-        if req.method != "GET" {
-            return error_response(&HttpError::new(405), None);
-        }
-        let host = req.host.split(':').next().unwrap_or("");
-        let mut url = format!("{}/{}", upstream.replace("127.0.0.1", host).replace("localhost", host), path);
-        if let Some((_, query)) = req.uri.split_once('?') {
-            if !query.is_empty() {
-                url = format!("{}?{}", url, query);
-            }
-        }
-        let mut resp = HttpResponse::new(302);
-        resp.set_header("Location", url);
-        resp
-    }
-
     async fn handle_static(&self, req: &HttpRequest, m: &RouteMatch, root: &str) -> (HttpResponse, Option<UserInfo>) {
         // AuthorizedFileHandler: images are served without auth for GET
         let need_auth = if req.method != "GET" {
@@ -1448,8 +1361,8 @@ impl MoonrakerApp {
         };
         let path_arg = m.path_args.first().cloned().flatten().unwrap_or_default();
         let resp = match req.method.as_str() {
-            "GET" => self.static_get(req, root, &path_arg, true, false).await,
-            "HEAD" => self.static_get(req, root, &path_arg, false, false).await,
+            "GET" => self.static_get(req, root, &path_arg, true).await,
+            "HEAD" => self.static_get(req, root, &path_arg, false).await,
             "DELETE" => self.static_delete(req).await,
             "OPTIONS" => Ok(self.options_response(req, cors)),
             _ => Err(HttpError::new(405)),
@@ -1476,9 +1389,7 @@ impl MoonrakerApp {
         Ok(HttpResponse::json(200, &json!({"result": filename})))
     }
 
-    /// `web_client`: tornado's plain StaticFileHandler, no reserved path check
-    /// and no attachment header
-    async fn static_get(&self, req: &HttpRequest, root: &str, path: &str, include_body: bool, web_client: bool) -> Result<HttpResponse, HttpError> {
+    async fn static_get(&self, req: &HttpRequest, root: &str, path: &str, include_body: bool) -> Result<HttpResponse, HttpError> {
         // StaticFileHandler.get_absolute_path / validate_absolute_path
         let abs_root = utils::normpath(&utils::absolute(Path::new(root)));
         let joined = if path.is_empty() { abs_root.clone() } else { abs_root.join(path) };
@@ -1497,8 +1408,7 @@ impl MoonrakerApp {
         if !absolute_path.is_file() {
             return Err(HttpError::new(403));
         }
-        let fm: Option<Rc<crate::components::file_manager::FileManager>> =
-            if web_client { None } else { server().lookup_component("file_manager") };
+        let fm: Option<Rc<crate::components::file_manager::FileManager>> = server().lookup_component("file_manager");
         if let Some(fm) = fm {
             fm.check_reserved_path(&absolute_path.to_string_lossy(), false)
                 .map_err(|e| HttpError::std_from(&e))?;
@@ -1522,9 +1432,7 @@ impl MoonrakerApp {
         let basename = absolute_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let ascii: String = basename.chars().map(|c| if c.is_ascii() { c } else { '?' }).collect::<String>().replace('"', "\\\"");
         let utf8 = utils::url_quote(&basename);
-        if !web_client {
-            resp.set_header("Content-Disposition", format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", ascii, utf8));
-        }
+        resp.set_header("Content-Disposition", format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", ascii, utf8));
         // should_return_304 (If-None-Match is ignored by moonraker)
         if let Some(ims) = req.header("If-Modified-Since") {
             if let Ok(since) = httpdate::parse_http_date(&ims) {
