@@ -65,40 +65,95 @@ pub fn float_value(f: f64) -> Value {
 
 /// Python's repr() for a float
 pub fn py_float_repr(f: f64) -> String {
+    let mut out = String::new();
+    py_float_repr_into(&mut out, f);
+    out
+}
+
+/// A fixed buffer for a formatted number (no heap allocation)
+struct NumBuf {
+    buf: [u8; 32],
+    len: usize,
+}
+
+impl std::fmt::Write for NumBuf {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let b = s.as_bytes();
+        let end = self.len + b.len();
+        if end > self.buf.len() {
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(b);
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Python's repr() for a float, appended to `out`
+pub fn py_float_repr_into(out: &mut String, f: f64) {
+    use std::fmt::Write;
     if f.is_nan() {
-        return "nan".into();
+        return out.push_str("nan");
     }
     if f.is_infinite() {
-        return if f > 0.0 { "inf".into() } else { "-inf".into() };
+        return out.push_str(if f > 0.0 { "inf" } else { "-inf" });
     }
     if f == 0.0 {
-        return if f.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
+        return out.push_str(if f.is_sign_negative() { "-0.0" } else { "0.0" });
     }
-    // Rust's {:e} produces the shortest round trip digits
-    let sci = format!("{:e}", f);
-    let (mantissa, exp) = sci.split_once('e').unwrap();
-    let exp: i32 = exp.parse().unwrap();
-    let neg = mantissa.starts_with('-');
-    let digits: String = mantissa.chars().filter(|c| c.is_ascii_digit()).collect();
-    let sign = if neg { "-" } else { "" };
+    // Rust's {:e} produces the shortest round trip digits: "-d.ddde-7"
+    let mut sci = NumBuf { buf: [0; 32], len: 0 };
+    write!(sci, "{:e}", f).expect("a float fits 32 bytes");
+    let sci = &sci.buf[..sci.len];
+    let e = sci.iter().position(|&c| c == b'e').expect("exponent");
+    let (mantissa, exp) = (&sci[..e], &sci[e + 1..]);
+    let exp: i32 = std::str::from_utf8(exp).expect("ascii").parse().expect("exponent");
+    let neg = mantissa[0] == b'-';
+    let mut digits = [0u8; 24];
+    let mut nd = 0;
+    for &c in mantissa {
+        if c.is_ascii_digit() {
+            digits[nd] = c;
+            nd += 1;
+        }
+    }
+    let digits = std::str::from_utf8(&digits[..nd]).expect("ascii");
+    if neg {
+        out.push('-');
+    }
+    let zeros = |out: &mut String, n: i32| {
+        for _ in 0..n {
+            out.push('0');
+        }
+    };
     if (-4..16).contains(&exp) {
         // fixed notation
-        let ndigits = digits.len() as i32;
-        let s = if exp >= 0 {
+        let ndigits = nd as i32;
+        if exp >= 0 {
             let int_len = exp + 1;
             if ndigits <= int_len {
-                format!("{}{}.0", digits, "0".repeat((int_len - ndigits) as usize))
+                out.push_str(digits);
+                zeros(out, int_len - ndigits);
+                out.push_str(".0");
             } else {
-                format!("{}.{}", &digits[..int_len as usize], &digits[int_len as usize..])
+                out.push_str(&digits[..int_len as usize]);
+                out.push('.');
+                out.push_str(&digits[int_len as usize..]);
             }
         } else {
-            format!("0.{}{}", "0".repeat((-exp - 1) as usize), digits)
-        };
-        format!("{}{}", sign, s)
+            out.push_str("0.");
+            zeros(out, -exp - 1);
+            out.push_str(digits);
+        }
     } else {
-        let m = if digits.len() > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits.clone() };
-        let esign = if exp < 0 { "-" } else { "+" };
-        format!("{}{}e{}{:02}", sign, m, esign, exp.abs())
+        out.push_str(&digits[..1]);
+        if nd > 1 {
+            out.push('.');
+            out.push_str(&digits[1..]);
+        }
+        out.push('e');
+        out.push(if exp < 0 { '-' } else { '+' });
+        let _ = write!(out, "{:02}", exp.abs());
     }
 }
 
@@ -254,6 +309,74 @@ pub fn py_float(s: &str) -> Option<f64> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // the allocating py_float_repr the in-place one replaced (rustify): the
+    // oracle the property test compares with
+    fn old_py_float_repr(f: f64) -> String {
+        if f.is_nan() {
+            return "nan".into();
+        }
+        if f.is_infinite() {
+            return if f > 0.0 { "inf".into() } else { "-inf".into() };
+        }
+        if f == 0.0 {
+            return if f.is_sign_negative() { "-0.0".into() } else { "0.0".into() };
+        }
+        let sci = format!("{:e}", f);
+        let (mantissa, exp) = sci.split_once('e').unwrap();
+        let exp: i32 = exp.parse().unwrap();
+        let neg = mantissa.starts_with('-');
+        let digits: String = mantissa.chars().filter(|c| c.is_ascii_digit()).collect();
+        let sign = if neg { "-" } else { "" };
+        if (-4..16).contains(&exp) {
+            let ndigits = digits.len() as i32;
+            let s = if exp >= 0 {
+                let int_len = exp + 1;
+                if ndigits <= int_len {
+                    format!("{}{}.0", digits, "0".repeat((int_len - ndigits) as usize))
+                } else {
+                    format!("{}.{}", &digits[..int_len as usize], &digits[int_len as usize..])
+                }
+            } else {
+                format!("0.{}{}", "0".repeat((-exp - 1) as usize), digits)
+            };
+            format!("{}{}", sign, s)
+        } else {
+            let m = if digits.len() > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits.clone() };
+            let esign = if exp < 0 { "-" } else { "+" };
+            format!("{}{}e{}{:02}", sign, m, esign, exp.abs())
+        }
+    }
+
+    /// a deterministic stream of f64 bit patterns (xorshift64*): every
+    /// exponent range, subnormals, NaN payloads
+    fn bit_patterns(n: usize) -> impl Iterator<Item = f64> {
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        (0..n).map(move |_| {
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            f64::from_bits(x.wrapping_mul(0x2545_F491_4F6C_DD1D))
+        })
+    }
+
+    #[test]
+    fn float_repr_matches_the_allocating_one() {
+        let special = [
+            0.0, -0.0, 1.0, -1.0, 0.1, 0.5, 1e-4, 9.999e-5, 1e15, 9.99e15, 1e16, 1e17, 123456789012345680.0,
+            f64::MIN_POSITIVE, f64::MAX, f64::MIN, f64::EPSILON, 5e-324, 1e300, 1e-300, 2.5, 100.0, 1e22, 0.001,
+            f64::NAN, f64::INFINITY, f64::NEG_INFINITY,
+        ];
+        for f in special.into_iter().chain(bit_patterns(1_000_000)) {
+            assert_eq!(py_float_repr(f), old_py_float_repr(f), "bits {:#x}", f.to_bits());
+        }
+        // values a printer reports: short decimals, temperatures, positions
+        for i in -200_000..200_000i64 {
+            let f = i as f64 / 1000.0;
+            assert_eq!(py_float_repr(f), old_py_float_repr(f));
+        }
+    }
+
 
     #[test]
     fn float_repr() {
