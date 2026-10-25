@@ -813,7 +813,7 @@ impl FileManager {
             if Path::new(&src_path).is_dir() {
                 action = "create_dir";
             } else {
-                let base = Path::new(&src_path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let base = crate::pycompat::posixpath::basename(&src_path).to_string();
                 action = if Path::new(&dest_path).is_file() || Path::new(&path_join(&dest_path, &base)).is_file() {
                     "modify_file"
                 } else {
@@ -1074,7 +1074,7 @@ impl FileManager {
         let mut dir_path = args.get("path").map(crate::pyfmt::py_str).unwrap_or_default().trim_start_matches('/').to_string();
         let (mut filename, mut dest_path);
         if Path::new(&root_path).is_file() {
-            filename = Path::new(&root_path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            filename = crate::pycompat::posixpath::basename(&root_path).to_string();
             dest_path = root_path.clone();
             dir_path = String::new();
         } else {

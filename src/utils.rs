@@ -342,8 +342,9 @@ pub fn url_quote(s: &str) -> String {
     crate::pycompat::urllib::quote(s, "/")
 }
 
+/// tornado's url_unescape(plus=False): urllib.parse.unquote(s)
 pub fn url_unescape(s: &str) -> String {
-    percent_encoding::percent_decode_str(s).decode_utf8_lossy().to_string()
+    crate::pycompat::urllib::unquote(s)
 }
 
 /// os.path.splitext()[1]

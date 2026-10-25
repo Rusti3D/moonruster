@@ -1147,7 +1147,7 @@ impl MoonrakerApp {
             resp.set_header("Expires", httpdate::fmt_http_date(std::time::SystemTime::now() + std::time::Duration::from_secs(cache_time)));
             resp.set_header("Cache-Control", format!("max-age={}", cache_time));
         }
-        let basename = absolute_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let basename = crate::pycompat::posixpath::basename(&absolute_path.to_string_lossy()).to_string();
         let ascii: String = basename.chars().map(|c| if c.is_ascii() { c } else { '?' }).collect::<String>().replace('"', "\\\"");
         let utf8 = utils::url_quote(&basename);
         resp.set_header("Content-Disposition", format!("attachment; filename=\"{}\"; filename*=UTF-8''{}", ascii, utf8));

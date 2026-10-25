@@ -209,7 +209,7 @@ impl MetadataStorage {
         let gc = self.gc_path.borrow().clone();
         for (fname, md) in records {
             let full = path_join(&gc, fname);
-            let fdir = Path::new(&full).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            let fdir = crate::pycompat::posixpath::dirname(&full).to_string();
             if let Some(thumbs) = md.get("thumbnails").and_then(|t| t.as_array()) {
                 for t in thumbs {
                     let rel = match t.get("relative_path").and_then(|p| p.as_str()) {
@@ -275,8 +275,8 @@ impl MetadataStorage {
         let gc = self.gc_path.borrow().clone();
         let pfull = path_join(&gc, prev);
         let nfull = path_join(&gc, new);
-        let prev_dir = Path::new(&pfull).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-        let new_dir = Path::new(&nfull).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let prev_dir = crate::pycompat::posixpath::dirname(&pfull).to_string();
+        let new_dir = crate::pycompat::posixpath::dirname(&nfull).to_string();
         if let Some(thumbs) = md.get("thumbnails").and_then(|t| t.as_array()) {
             for t in thumbs {
                 let rel = match t.get("relative_path").and_then(|p| p.as_str()) {
@@ -288,15 +288,13 @@ impl MetadataStorage {
                     continue;
                 }
                 let np = path_join(&new_dir, &rel);
-                let parent = Path::new(&np).parent().map(|p| p.to_path_buf());
-                if let Some(p) = parent {
-                    if !p.exists() {
-                        if let Err(e) = std::fs::create_dir(&p) {
-                            log::error!("Error moving thumb from {} to {}\n{}", tp, np, e);
-                            continue;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let parent = crate::pycompat::posixpath::dirname(&np);
+                if !Path::new(parent).exists() {
+                    if let Err(e) = std::fs::create_dir(parent) {
+                        log::error!("Error moving thumb from {} to {}\n{}", tp, np, e);
+                        continue;
                     }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
                 if let Err(e) = crate::components::file_manager::shutil_move(&tp, &np) {
                     log::error!("Error moving thumb from {} to {}\n{}", tp, np, e);

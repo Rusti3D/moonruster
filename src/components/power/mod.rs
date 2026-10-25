@@ -32,7 +32,6 @@ mod template;
 mod tplink;
 mod uhubctl;
 
-use http::*;
 use template::*;
 
 // ***** Device definitions *****
