@@ -292,6 +292,8 @@ pub fn forget_instance(handle: i64) {
 }
 
 /// Whether a component replaced `name` on the class or on the object
+// no Rust call site consults it yet (docs/PLUGINS.md, known differences)
+#[allow(dead_code)]
 pub fn is_patched(class_qualname: &str, handle: Option<i64>, name: &str) -> bool {
     PATCHED.with(|p| {
         let p = p.borrow();

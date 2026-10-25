@@ -501,6 +501,10 @@ shows its method's first statement.
 - A Python callback that fails inside a history tracker reset logs and leaves the tracker reset.
 - `HttpResponse.error` for a non-HTTP failure is an `Exception` carrying the message. Moonraker gives the
   original exception type.
+- A component that replaces a method of another component (monkeypatching, on the class or the instance) is
+  called by Python code only. Moonruster's own Rust components keep calling the Rust method. The layer records
+  each patch (`native.rs` `is_patched`), but no Rust call site consults it yet. No plugin in the corpus patches
+  another component's methods.
 - Template error messages are minijinja's, Moonruster's template engine, not Jinja2's. The exception type is
   Jinja2's.
 

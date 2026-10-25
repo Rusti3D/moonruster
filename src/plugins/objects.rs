@@ -51,6 +51,8 @@ fn type_error(msg: String) -> PyError {
 }
 
 /// Register the Moonraker class of a Rust type whose path does not name it
+// shared plugin layer: kaliru registers its classes; Moonruster's all have their own path
+#[allow(dead_code)]
 pub fn register_class<T: 'static>(module: &'static str, class: &'static str) {
     TABLE.with(|t| t.borrow_mut().classes.insert(TypeId::of::<T>(), (module, class)));
 }
