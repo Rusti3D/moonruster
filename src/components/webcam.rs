@@ -113,7 +113,7 @@ impl WebCam {
 
     fn get_local_ips() -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(m) = server().lookup_component::<crate::components::machine::Machine>("machine") {
+        if let Some(m) = server().get::<crate::components::machine::Machine>() {
             if let Some(net) = m.get_system_info().get("network").and_then(|v| v.as_object()) {
                 for iface in net.values() {
                     for a in iface["ip_addresses"].as_array().cloned().unwrap_or_default() {
@@ -170,7 +170,7 @@ impl WebCam {
         if ip.is_loopback() || !Self::get_local_ips().contains(&addr) {
             return Ok(url.to_string());
         }
-        let shell: Option<Rc<crate::components::shell_command::ShellCommandFactory>> = server().lookup_component("shell_command");
+        let shell = server().get::<crate::components::shell_command::ShellCommandFactory>();
         if let Some(sh) = shell {
             if let Ok(resp) = sh.exec("ss -ltn", 2.0).await {
                 for line in resp.split('\n').skip(1) {
@@ -311,7 +311,7 @@ impl Component for WebcamManager {
     }
     async fn component_init(self: Rc<Self>) -> Result<(), ServerError> {
         let srv = server();
-        if let Some(m) = srv.lookup_component::<crate::components::machine::Machine>("machine") {
+        if let Some(m) = srv.get::<crate::components::machine::Machine>() {
             if let Some(ip) = m.public_ip() {
                 Self::set_default_host_ip(&ip);
             }
@@ -532,7 +532,7 @@ impl WebcamManager {
         }
         let url = py_str(&result["snapshot_url"]);
         if url.starts_with("http") {
-            if let Some(client) = server().lookup_component::<crate::components::http_client::HttpClient>("http_client") {
+            if let Some(client) = server().get::<crate::components::http_client::HttpClient>() {
                 let ret = client
                     .get_opts(
                         &url,

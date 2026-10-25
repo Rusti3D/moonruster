@@ -614,7 +614,7 @@ impl AsyncPipExecutor {
     }
 
     fn shell() -> Rc<ShellCommandFactory> {
-        server().lookup_component("shell_command").expect("shell_command")
+        server().get::<crate::components::shell_command::ShellCommandFactory>().expect("shell_command")
     }
 
     pub async fn call_pip_with_response(

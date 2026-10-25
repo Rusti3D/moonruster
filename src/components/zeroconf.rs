@@ -141,7 +141,7 @@ impl Component for ZeroconfRegistrar {
         log::info!("Starting Zeroconf services");
         let srv = server();
         let app = srv.app();
-        let machine: Rc<Machine> = srv.lookup_component("machine").ok_or_else(|| ServerError::new("machine", 500))?;
+        let machine = srv.get::<Machine>().ok_or_else(|| ServerError::new("machine", 500))?;
         let app_args = srv.get_app_args();
         let instance_uuid = app_args.get("instance_uuid").map(crate::pyfmt::py_str).unwrap_or_default();
         let svc_info = machine.get_moonraker_service_info();

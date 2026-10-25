@@ -58,7 +58,7 @@ pub struct GcodeAnalysis {
 impl GcodeAnalysis {
     pub fn new(config: &ConfigHelper) -> Result<Rc<Self>, ConfigError> {
         let srv = server();
-        let fm: Rc<FileManager> = srv.lookup_component("file_manager").ok_or_else(|| ConfigHelper::error("file_manager"))?;
+        let fm = srv.get::<FileManager>().ok_or_else(|| ConfigHelper::error("file_manager"))?;
         let tool_folder = PathBuf::from(srv.data_path()).join("tools/klipper_estimator");
         if !tool_folder.exists() {
             std::fs::create_dir_all(&tool_folder).map_err(|e| ConfigHelper::error(e.to_string()))?;
@@ -95,7 +95,7 @@ impl GcodeAnalysis {
                 let res: Result<(), ServerError> = (|| {
                     srv.load_component(config, "update_manager").map_err(|e| ServerError::bad(e.0))?;
                     let um: Rc<crate::components::update_manager::UpdateManager> =
-                        srv.lookup_component("update_manager").ok_or_else(|| ServerError::bad("update_manager"))?;
+                        srv.get::<crate::components::update_manager::UpdateManager>().ok_or_else(|| ServerError::bad("update_manager"))?;
                     um.register_updater(
                         "klipper_estimator",
                         json!({
@@ -281,7 +281,7 @@ impl GcodeAnalysis {
     }
 
     fn shell() -> Rc<ShellCommandFactory> {
-        server().lookup_component("shell_command").expect("shell_command")
+        server().get::<crate::components::shell_command::ShellCommandFactory>().expect("shell_command")
     }
 
     async fn detect_estimator_version(&self) -> Result<(), ServerError> {
@@ -300,7 +300,7 @@ impl GcodeAnalysis {
             "all" | "0.0.0.0" | "localhost" | "127.0.0.1" => "127.0.0.1".to_string(),
             "::" => "::1".to_string(),
             _ => srv
-                .lookup_component::<crate::components::machine::Machine>("machine")
+                .get::<crate::components::machine::Machine>()
                 .and_then(|m| m.public_ip())
                 .unwrap_or_default(),
         };
@@ -339,7 +339,7 @@ impl GcodeAnalysis {
             _ => return Err(ServerError::bad("Klipper Estimator not available")),
         };
         let mut opts = format!("--config_moonraker_url {}", self.get_moonraker_url());
-        if let Some(auth) = server().lookup_component::<crate::components::authorization::Authorization>("authorization") {
+        if let Some(auth) = server().get::<crate::components::authorization::Authorization>() {
             if let Some(k) = auth.get_api_key() {
                 opts = format!("{} --config_moonraker_api_key {}", opts, k);
             }
@@ -491,7 +491,7 @@ impl Component for GcodeAnalysis {
                 let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                 log::info!("Downloading latest {}...", name);
                 let http: Rc<crate::components::http_client::HttpClient> =
-                    server().lookup_component("http_client").ok_or_else(|| ServerError::new("http_client", 500))?;
+                    server().get::<crate::components::http_client::HttpClient>().ok_or_else(|| ServerError::new("http_client", 500))?;
                 match http
                     .download_file(&format!("{}{}", ESTIMATOR_URL, name), "application/octet-stream", Some(path.clone()), -1, None, 180.0, 1, 1.0)
                     .await
@@ -521,7 +521,7 @@ impl Component for GcodeAnalysis {
                     if self.updater_registered {
                         log::info!("Refreshing Klipper Estimator Updater Instance...");
                         spawn(async {
-                            if let Some(um) = server().lookup_component::<crate::components::update_manager::UpdateManager>("update_manager") {
+                            if let Some(um) = server().get::<crate::components::update_manager::UpdateManager>() {
                                 let _ = um.refresh_updater("klipper_estimator", true).await;
                             }
                         });

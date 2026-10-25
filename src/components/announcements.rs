@@ -262,7 +262,7 @@ impl RssFeed {
         if let Some(e) = self.etag.borrow().clone() {
             headers.push(("If-None-Match".into(), e));
         }
-        let client: Rc<crate::components::http_client::HttpClient> = match server().lookup_component("http_client") {
+        let client = match server().get::<crate::components::http_client::HttpClient>() {
             Some(c) => c,
             None => return String::new(),
         };

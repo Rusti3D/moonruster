@@ -632,7 +632,7 @@ impl PanelDue {
         if matches!(sd_print_state, Some("printing") | Some("paused")) {
             if *self.current_file.borrow() != fname {
                 *self.current_file.borrow_mut() = fname.clone();
-                let fm: Option<Rc<crate::components::file_manager::FileManager>> = server().lookup_component("file_manager");
+                let fm = server().get::<crate::components::file_manager::FileManager>();
                 *self.file_metadata.borrow_mut() = fm.map(|f| f.get_file_metadata(&fname)).unwrap_or(json!({}));
             }
             let progress = f64_or(sd_status, "progress", 0.0);
@@ -731,7 +731,7 @@ impl PanelDue {
             } else if path.starts_with("/gcodes") {
                 path = path[1..].to_string();
             }
-            let fm: Rc<crate::components::file_manager::FileManager> = server().lookup_component("file_manager").ok_or("file_manager")?;
+            let fm = server().get::<crate::components::file_manager::FileManager>().ok_or("file_manager")?;
             let flist = fm.list_dir(&path, true).map_err(|e| e.message)?;
             if crate::pyfmt::py_truthy(&flist) {
                 response.insert("files".into(), flist);
@@ -755,7 +755,7 @@ impl PanelDue {
         if !path.starts_with("gcodes/") {
             path = format!("gcodes/{}", path);
         }
-        let fm: Rc<crate::components::file_manager::FileManager> = server().lookup_component("file_manager").ok_or("file_manager")?;
+        let fm = server().get::<crate::components::file_manager::FileManager>().ok_or("file_manager")?;
         fm.delete_file(&path).await.map_err(|e| e.message)?;
         Ok(())
     }
@@ -792,7 +792,7 @@ impl PanelDue {
         if !filename.starts_with("gcodes/") {
             filename = format!("gcodes/{}", filename);
         }
-        let fm: Rc<crate::components::file_manager::FileManager> = server().lookup_component("file_manager").ok_or("file_manager")?;
+        let fm = server().get::<crate::components::file_manager::FileManager>().ok_or("file_manager")?;
         let metadata = fm.get_file_metadata(&filename);
         if crate::pyfmt::py_truthy(&metadata) {
             response.insert("err".into(), json!(0));

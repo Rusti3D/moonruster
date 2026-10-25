@@ -80,7 +80,7 @@ impl Sensor {
         let name = config.get_or("name", &id).map_err(|e| e.0)?;
         let store_size = config.getint_or("sensor_store_size", 1200).map_err(|e| e.0)?;
         let history: Rc<History> =
-            srv.lookup_component("history").ok_or_else(|| "Component (history) not found".to_string())?;
+            srv.get::<crate::components::history::History>().ok_or_else(|| "Component (history) not found".to_string())?;
         let last_measurements: Measurements = Rc::new(RefCell::new(Map::new()));
         let mut param_info = Vec::new();
         let mut field_info: IndexMap<String, Vec<Rc<HistoryFieldData>>> = IndexMap::new();
@@ -149,7 +149,7 @@ impl Sensor {
         }
         // MQTTSensor
         srv.load_component(config, "mqtt").map_err(|e| e.0)?;
-        let mqtt: Rc<MqttClient> = srv.lookup_component("mqtt").ok_or_else(|| "Component (mqtt) not found".to_string())?;
+        let mqtt = srv.get::<MqttClient>().ok_or_else(|| "Component (mqtt) not found".to_string())?;
         let state_topic = config.get("state_topic").map_err(|e| e.0)?;
         let state_response = config.gettemplate("state_response_template", false).map_err(|e| e.0)?;
         let qos = config.getint_opt("qos", Bounds::range(0.0, 2.0)).map_err(|e| e.0)?.map(|q| q as u8);

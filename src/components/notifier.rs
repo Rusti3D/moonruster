@@ -115,7 +115,7 @@ impl NotifierInstance {
                     *self.attach.borrow_mut() = None;
                 }
                 Ok(rendered) => {
-                    let fm: Option<Rc<crate::components::file_manager::FileManager>> = srv.lookup_component("file_manager");
+                    let fm = srv.get::<crate::components::file_manager::FileManager>();
                     let url_re = regex::Regex::new(r"^https?://").unwrap();
                     for item in rendered.lines() {
                         let item = item.trim();

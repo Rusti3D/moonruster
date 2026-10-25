@@ -467,7 +467,7 @@ fn factory(config: &ConfigHelper, option: &str) -> Result<Rc<GpioFactory>, Confi
         ConfigHelper::error(format!("Section [{}], option '{}', GPIO Component not available", config.get_name(), option))
     };
     srv.load_component(config, "gpio").map_err(|_| err())?;
-    srv.lookup_component("gpio").ok_or_else(err)
+    srv.get::<crate::components::gpio::GpioFactory>().ok_or_else(err)
 }
 
 fn parse_err(config: &ConfigHelper, option: &str, msg: &str) -> ConfigError {

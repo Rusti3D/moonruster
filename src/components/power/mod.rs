@@ -262,7 +262,7 @@ impl PowerDevice {
         is_generic: bool,
     ) -> Result<HttpDev, ConfigError> {
         let client: Rc<HttpClient> =
-            server().lookup_component("http_client").ok_or_else(|| ConfigHelper::error("Component (http_client) not found"))?;
+            server().get::<crate::components::http_client::HttpClient>().ok_or_else(|| ConfigHelper::error("Component (http_client) not found"))?;
         let render = |t: JinjaTemplate| t.render(&json!({})).map_err(|e| ConfigHelper::error(e.message));
         let user = render(config.load_template("user", Some(default_user), false)?)?;
         let password = render(config.load_template("password", Some(default_password), false)?)?;
@@ -440,7 +440,7 @@ impl PowerDevice {
             "mqtt" => {
                 let srv = server();
                 srv.load_component(config, "mqtt")?;
-                let mqtt: Rc<MqttClient> = srv.lookup_component("mqtt").ok_or_else(|| ConfigHelper::error("mqtt not loaded"))?;
+                let mqtt = srv.get::<MqttClient>().ok_or_else(|| ConfigHelper::error("mqtt not loaded"))?;
                 let cmd_topic = config.get("command_topic")?;
                 let cmd_payload = config.gettemplate("command_payload", false)?;
                 let retain_cmd_state = config.getboolean_or("retain_command_state", false)?;
@@ -550,7 +550,7 @@ impl PowerDevice {
         if self.bound_services.borrow().is_empty() || (state != "on" && state != "off") {
             return;
         }
-        let machine: Rc<Machine> = match server().lookup_component("machine") {
+        let machine = match server().get::<Machine>() {
             Some(m) => m,
             None => return,
         };
@@ -603,7 +603,7 @@ impl PowerDevice {
             return;
         }
         log::info!("Powering off device '{}' due to klippy shutdown", self.name);
-        if let Some(p) = server().lookup_component::<PrinterPower>("power") {
+        if let Some(p) = server().get::<PrinterPower>() {
             p.set_device_power(&self.name, "off", false);
         }
     }
@@ -612,7 +612,7 @@ impl PowerDevice {
         if self.bound_services.borrow().is_empty() {
             return Ok(());
         }
-        let machine: Rc<Machine> = server().lookup_component("machine").ok_or_else(|| err("machine"))?;
+        let machine = server().get::<Machine>().ok_or_else(|| err("machine"))?;
         let sys_info = machine.get_system_info();
         let avail: Vec<String> = sys_info
             .get("available_services")
@@ -787,7 +787,7 @@ impl PowerDevice {
                 let name = self.name.clone();
                 let h = spawn(async move {
                     tokio::time::sleep(Duration::from_secs_f64(t)).await;
-                    if let Some(p) = server().lookup_component::<PrinterPower>("power") {
+                    if let Some(p) = server().get::<PrinterPower>() {
                         p.set_device_power(&name, "off", false);
                     }
                 });

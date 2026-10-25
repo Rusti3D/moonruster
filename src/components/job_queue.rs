@@ -262,7 +262,7 @@ impl JobQueue {
         }
         self.send_queue_event("jobs_added");
         if self.automatic && !self.pause_requested.get() {
-            if let Some(js) = server().lookup_component::<crate::components::job_state::JobState>("job_state") {
+            if let Some(js) = server().get::<crate::components::job_state::JobState>() {
                 let ev = js.get_last_job_event();
                 if ev.is_printing() || ev == JobEvent::Paused {
                     self.set_queue_state("ready");
@@ -321,7 +321,7 @@ impl JobQueue {
 
     fn check_job_file(&self, name: &str) -> Result<(), ServerError> {
         let fm: Rc<crate::components::file_manager::FileManager> =
-            server().lookup_component("file_manager").ok_or_else(|| ServerError::new("file_manager", 500))?;
+            server().get::<crate::components::file_manager::FileManager>().ok_or_else(|| ServerError::new("file_manager", 500))?;
         if !fm.check_file_exists("gcodes", name, None) {
             return Err(ServerError::bad(format!("G-Code File {} does not exist", name)));
         }

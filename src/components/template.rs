@@ -132,7 +132,7 @@ impl TemplateFactory {
     pub fn new(config: &ConfigHelper) -> Result<Rc<Self>, crate::confighelper::ConfigError> {
         let srv = server();
         srv.load_component(config, "secrets")?;
-        let secrets: Rc<crate::components::secrets::Secrets> = srv.lookup_component("secrets").expect("secrets");
+        let secrets = srv.get::<crate::components::secrets::Secrets>().expect("secrets");
         let sv = secrets.values();
         Ok(Rc::new(TemplateFactory {
             jenv: Rc::new(base_env(&sv, true)),
@@ -453,11 +453,11 @@ impl JinjaTemplate {
 /// Loads (if needed) and returns the template factory
 pub fn get_factory(config: &ConfigHelper) -> Result<Rc<TemplateFactory>, crate::confighelper::ConfigError> {
     let srv = server();
-    if let Some(t) = srv.lookup_component::<TemplateFactory>("template") {
+    if let Some(t) = srv.get::<TemplateFactory>() {
         return Ok(t);
     }
     srv.load_component(config, "template")?;
-    srv.lookup_component("template").ok_or_else(|| ConfigHelper::error("template not loaded"))
+    srv.get::<crate::components::template::TemplateFactory>().ok_or_else(|| ConfigHelper::error("template not loaded"))
 }
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<TemplateFactory>, crate::confighelper::ConfigError> {

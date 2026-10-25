@@ -36,7 +36,7 @@ impl PackageDeploy {
     }
 
     fn dbus() -> Option<Rc<DbusManager>> {
-        server().lookup_component("dbus_manager")
+        server().get::<crate::components::dbus_manager::DbusManager>()
     }
 
     async fn init_packagekit(&self) -> Result<(), ServerError> {
@@ -449,7 +449,7 @@ impl Deployer for PackageDeploy {
                 self.provider.set(ProviderKind::Apt);
             } else {
                 self.provider.set(ProviderKind::None);
-                let machine: Option<Rc<Machine>> = server().lookup_component("machine");
+                let machine = server().get::<Machine>();
                 let dist_id = machine
                     .map(|m| m.get_system_info())
                     .and_then(|i| i.get("distribution").and_then(|d| d.get("id")).map(crate::pyfmt::py_str))

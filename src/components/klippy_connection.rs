@@ -84,7 +84,7 @@ impl Component for KlippyConnection {
         true
     }
     async fn component_init(self: Rc<Self>) -> Result<(), ServerError> {
-        if let Some(machine) = server().lookup_component::<crate::components::machine::Machine>("machine") {
+        if let Some(machine) = server().get::<crate::components::machine::Machine>() {
             let si = self.service_info.borrow().clone();
             if si.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
                 machine.log_service_info(&si);
@@ -396,7 +396,7 @@ impl KlippyConnection {
 
     async fn get_service_info(&self, process_id: i64) {
         let srv = server();
-        let machine = match srv.lookup_component::<crate::components::machine::Machine>("machine") {
+        let machine = match srv.get::<crate::components::machine::Machine>() {
             Some(m) => m,
             None => return,
         };
@@ -687,7 +687,7 @@ impl KlippyConnection {
                         .map(String::from);
                     match vsd_path {
                         Some(p) => {
-                            if let Some(fm) = srv.lookup_component::<crate::components::file_manager::FileManager>("file_manager") {
+                            if let Some(fm) = srv.get::<crate::components::file_manager::FileManager>() {
                                 fm.validate_gcode_path(&p);
                             }
                         }
@@ -1018,7 +1018,7 @@ impl KlippyConnection {
         if !self.is_ready() {
             return false;
         }
-        match server().lookup_component::<crate::components::job_state::JobState>("job_state") {
+        match server().get::<crate::components::job_state::JobState>() {
             Some(js) => js.get_last_stats().get("state").and_then(|v| v.as_str()) == Some("printing"),
             None => false,
         }
@@ -1047,7 +1047,7 @@ impl KlippyConnection {
             return Err(ServerError::bad(format!("No file at {} exists, cannot perform rollover", logpath.display())));
         }
         let machine: Rc<crate::components::machine::Machine> =
-            server().lookup_component("machine").ok_or_else(|| ServerError::new("Machine not loaded", 500))?;
+            server().get::<crate::components::machine::Machine>().ok_or_else(|| ServerError::new("Machine not loaded", 500))?;
         let unit = self.unit_name();
         machine.do_service_action("stop", &unit).await?;
         let suffix = crate::utils::local_strftime("%Y-%m-%d_%H-%M-%S");

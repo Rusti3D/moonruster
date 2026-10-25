@@ -282,14 +282,14 @@ impl SimplyPrint {
             "api_restart" | "api_shutdown" => {
                 let action = if demand == "api_restart" { "restart" } else { "shutdown" };
                 spawn(async move {
-                    if let Some(m) = server().lookup_component::<crate::components::machine::Machine>("machine") {
+                    if let Some(m) = server().get::<crate::components::machine::Machine>() {
                         let _ = m.do_service_action(action, "moonraker").await;
                     }
                 });
             }
             "psu_on" | "psu_off" => {
                 if !self.power_id.is_empty() {
-                    if let Some(p) = server().lookup_component::<crate::components::power::PrinterPower>("power") {
+                    if let Some(p) = server().get::<crate::components::power::PrinterPower>() {
                         p.set_device_power(&self.power_id, if demand == "psu_on" { "on" } else { "off" }, false);
                     }
                 }
@@ -354,7 +354,7 @@ impl SimplyPrint {
         if eid.is_some() && self.sp_info.borrow().get("temp_short_setup_id").and_then(|v| v.as_str()) == Some(short_id) {
             return;
         }
-        let ann: Rc<crate::components::announcements::Announcements> = match server().lookup_component("announcements") {
+        let ann = match server().get::<crate::components::announcements::Announcements>() {
             Some(a) => a,
             None => return,
         };
@@ -382,7 +382,7 @@ impl SimplyPrint {
             Some(e) => e,
         };
         self.save_item("announcement_id", Value::Null);
-        if let Some(ann) = server().lookup_component::<crate::components::announcements::Announcements>("announcements") {
+        if let Some(ann) = server().get::<crate::components::announcements::Announcements>() {
             let _ = ann.remove_announcement(&eid).await;
         }
     }

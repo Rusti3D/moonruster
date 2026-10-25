@@ -46,7 +46,7 @@ impl ProtoLogger {
             return ProtoLogger { path: None };
         }
         let root = srv
-            .lookup_component::<crate::components::file_manager::FileManager>("file_manager")
+            .get::<crate::components::file_manager::FileManager>()
             .map(|f| f.get_directory("logs"))
             .unwrap_or_default();
         let parent = if root.is_empty() { std::env::temp_dir() } else { PathBuf::from(root) };

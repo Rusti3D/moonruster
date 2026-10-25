@@ -83,12 +83,12 @@ impl SpoolManager {
         )
         .map_err(|e| ConfigHelper::error(e.message))?;
         let history: Rc<History> =
-            srv.lookup_component("history").ok_or_else(|| ConfigHelper::error("Component (history) not found"))?;
+            srv.get::<crate::components::history::History>().ok_or_else(|| ConfigHelper::error("Component (history) not found"))?;
         history.register_auxiliary_field(spool_history.clone()).map_err(|e| ConfigHelper::error(e.message))?;
         let http: Rc<HttpClient> =
-            srv.lookup_component("http_client").ok_or_else(|| ConfigHelper::error("Component (http_client) not found"))?;
+            srv.get::<crate::components::http_client::HttpClient>().ok_or_else(|| ConfigHelper::error("Component (http_client) not found"))?;
         let ann: Rc<crate::components::announcements::Announcements> = srv
-            .lookup_component("announcements")
+            .get::<crate::components::announcements::Announcements>()
             .ok_or_else(|| ConfigHelper::error("Component (announcements) not found"))?;
         ann.register_feed("spoolman");
         let sm = Rc::new(SpoolManager {

@@ -51,7 +51,7 @@ impl Strip {
             let port = config.getint_or("port", 80)?;
             let protocol = config.get_or("protocol", "http")?;
             let timeout = config.getfloat_or("timeout", 2.0)?;
-            let client: Rc<HttpClient> = server().lookup_component("http_client").ok_or_else(|| ConfigHelper::error("http_client"))?;
+            let client = server().get::<HttpClient>().ok_or_else(|| ConfigHelper::error("http_client"))?;
             Transport::Http { url: format!("{}://{}:{}/json", protocol, addr, port), timeout, client }
         } else {
             Transport::Serial {

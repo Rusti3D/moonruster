@@ -38,7 +38,7 @@ impl PowerDevice {
             search_prefix = format!("New status for hub {}", location);
         }
         let shell: Rc<crate::components::shell_command::ShellCommandFactory> =
-            server().lookup_component("shell_command").ok_or("shell_command")?;
+            server().get::<crate::components::shell_command::ShellCommandFactory>().ok_or("shell_command")?;
         let resp = shell
             .exec_cmd(&cmd, crate::components::shell_command::ExecOpts { log_complete: false, ..Default::default() })
             .await

@@ -90,7 +90,7 @@ impl AppDeploy {
         self.path = resolve(&crate::utils::expand_user(&config.get("path")?));
         Self::verify_path(config, "path", &self.path, false, false)?;
         if reserve && !["moonraker", "klipper"].contains(&self.name()) && !self.path.join(".writeable").is_file() {
-            if let Some(fm) = server().lookup_component::<crate::components::file_manager::FileManager>("file_manager") {
+            if let Some(fm) = server().get::<crate::components::file_manager::FileManager>() {
                 fm.add_reserved_path(&format!("update_manager {}", self.name()), &self.path, true);
             }
         }
@@ -190,7 +190,7 @@ impl AppDeploy {
         let mut services = config.getlist_opt("managed_services", Some(svc_default), None)?.unwrap_or_default();
         let srv = server();
         if services.iter().any(|s| s == self.name()) {
-            let machine: Option<Rc<Machine>> = srv.lookup_component("machine");
+            let machine = srv.get::<Machine>();
             let asvc = PathBuf::from(srv.data_path()).join("moonraker.asvc");
             if !machine.map(|m| m.is_service_allowed(self.name())).unwrap_or(false) {
                 srv.add_warning(
@@ -286,7 +286,7 @@ impl AppDeploy {
             return Ok(());
         }
         let srv = server();
-        let machine: Rc<Machine> = srv.lookup_component("machine").ok_or_else(|| ServerError::new("machine", 500))?;
+        let machine = srv.get::<Machine>().ok_or_else(|| ServerError::new("machine", 500))?;
         let is_full = self.base.cmd_helper.is_full_update();
         for svc in &self.managed_services {
             if is_full && svc != self.name() {

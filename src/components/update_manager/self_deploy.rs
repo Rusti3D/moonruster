@@ -124,7 +124,7 @@ impl SelfDeploy {
             ch.http()
                 .download_file(&dl.0, &dl.1, Some(tmp.clone()), dl.2, Some(ch.on_download_progress()), DOWNLOAD_TIMEOUT, 3, 1.0)
                 .await?;
-            let machine: Rc<Machine> = server().lookup_component("machine").ok_or_else(|| ServerError::new("machine", 500))?;
+            let machine = server().get::<Machine>().ok_or_else(|| ServerError::new("machine", 500))?;
             machine.exec_sudo_command(&format!("install -m 755 {} {}", tmp.display(), exe.display()), 1, 30.0).await?;
             Ok(())
         }

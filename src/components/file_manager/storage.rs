@@ -407,7 +407,7 @@ impl MetadataStorage {
         let result: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
         let r2 = result.clone();
         let shell: Rc<crate::components::shell_command::ShellCommandFactory> =
-            server().lookup_component("shell_command").ok_or_else(|| ServerError::new("shell_command not loaded", 500))?;
+            server().get::<crate::components::shell_command::ShellCommandFactory>().ok_or_else(|| ServerError::new("shell_command not loaded", 500))?;
         let scmd = shell.build_shell_command(&cmd, Some(Rc::new(move |line: Vec<u8>| r2.borrow_mut().extend(line))), None, None, true, None)?;
         let ok = scmd.run(&shell, timeout, true, true, 1, None, None).await;
         let _ = std::fs::remove_file(&cfg_path);

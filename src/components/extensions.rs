@@ -241,7 +241,7 @@ async fn unix_client(stream: tokio::net::UnixStream) {
         reason
     );
     if conn.client_data().get("type").map(|t| t == "agent").unwrap_or(false) {
-        if let Some(ext) = srv.lookup_component::<ExtensionManager>("extensions") {
+        if let Some(ext) = srv.get::<ExtensionManager>() {
             ext.remove_agent(&conn);
         }
     }

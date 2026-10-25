@@ -120,7 +120,7 @@ pub struct Tracker {
 }
 
 fn tracking_enabled(exclude_paused: bool) -> bool {
-    server().lookup_component::<History>("history").map(|h| h.tracking_enabled(exclude_paused)).unwrap_or(false)
+    server().get::<History>().map(|h| h.tracking_enabled(exclude_paused)).unwrap_or(false)
 }
 
 impl Tracker {
@@ -727,11 +727,11 @@ impl History {
     }
 
     fn last_stats() -> Map<String, Value> {
-        server().lookup_component::<crate::components::job_state::JobState>("job_state").map(|j| j.get_last_stats()).unwrap_or_default()
+        server().get::<crate::components::job_state::JobState>().map(|j| j.get_last_stats()).unwrap_or_default()
     }
 
     fn fm() -> Rc<crate::components::file_manager::FileManager> {
-        server().lookup_component("file_manager").expect("file_manager")
+        server().get::<crate::components::file_manager::FileManager>().expect("file_manager")
     }
 
     fn parse_uid(job_id: &str) -> Result<i64, ServerError> {

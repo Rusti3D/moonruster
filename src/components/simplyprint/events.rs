@@ -4,7 +4,7 @@ use super::*;
 
 impl SimplyPrint {
     pub(super) async fn on_klippy_ready(self: Rc<Self>) {
-        let js: Option<Rc<crate::components::job_state::JobState>> = server().lookup_component("job_state");
+        let js = server().get::<crate::components::job_state::JobState>();
         let last_stats = js.map(|j| j.get_last_stats()).unwrap_or_default();
         match last_stats.get("state").and_then(|v| v.as_str()) {
             None => {
@@ -211,7 +211,7 @@ impl SimplyPrint {
         let filename = new_stats.get("filename").map(crate::pyfmt::py_str).unwrap_or_default();
         let mut job_info = Map::new();
         job_info.insert("filename".into(), json!(filename));
-        let fm: Option<Rc<crate::components::file_manager::FileManager>> = server().lookup_component("file_manager");
+        let fm = server().get::<crate::components::file_manager::FileManager>();
         let metadata = fm.map(|f| f.get_file_metadata(&filename)).unwrap_or(json!({}));
         if let Some(f) = metadata.get("filament_total").and_then(|v| v.as_f64()) {
             job_info.insert("filament".into(), json!(crate::pyfmt::py_round(f, 0) as i64));
@@ -303,7 +303,7 @@ impl SimplyPrint {
     pub(super) fn update_job_progress(&self) {
         let mut job_info = Map::new();
         let md = self.cache.borrow().metadata.clone();
-        let js: Option<Rc<crate::components::job_state::JobState>> = server().lookup_component("job_state");
+        let js = server().get::<crate::components::job_state::JobState>();
         let last_stats = js.map(|j| j.get_last_stats()).unwrap_or_default();
         if let Some(est) = md.get("estimated_time").and_then(|v| v.as_f64()) {
             let duration = last_stats.get("print_duration").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -470,7 +470,7 @@ impl SimplyPrint {
         data.insert("api".into(), json!("Moonraker"));
         data.insert("api_version".into(), srv.get_app_args().get("software_version").cloned().unwrap_or(Value::Null));
         data.insert("sp_version".into(), json!(COMPONENT_VERSION));
-        let machine: Rc<crate::components::machine::Machine> = match srv.lookup_component("machine") {
+        let machine = match srv.get::<crate::components::machine::Machine>() {
             Some(m) => m,
             None => return,
         };

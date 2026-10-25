@@ -677,7 +677,7 @@ impl Authorization {
                 return Err(ServerError::bad("Invalid Request to create new LDAP User"));
             }
             let ldap: Rc<crate::components::ldap::MoonrakerLdap> = server()
-                .lookup_component("ldap")
+                .get::<crate::components::ldap::MoonrakerLdap>()
                 .ok_or_else(|| ServerError::new("LDAP authentication not available", 401))?;
             ldap.authenticate_ldap_user(&username, &password).await?;
             need_create = !self.users.borrow().contains_key(&username);

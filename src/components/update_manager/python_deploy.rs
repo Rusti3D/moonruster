@@ -165,7 +165,7 @@ impl PythonDeploy {
                 )))
             }
         };
-        if let Some(fm) = server().lookup_component::<crate::components::file_manager::FileManager>("file_manager") {
+        if let Some(fm) = server().get::<crate::components::file_manager::FileManager>() {
             fm.add_reserved_path(&format!("update_manager {}", app.name()), &venv, true);
         }
         app.configure_managed_services(config)?;

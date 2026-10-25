@@ -83,7 +83,7 @@ impl InstallValidator {
             return false;
         }
         let srv = server();
-        let fm: Option<Rc<crate::components::file_manager::FileManager>> = srv.lookup_component("file_manager");
+        let fm = srv.get::<crate::components::file_manager::FileManager>();
         let mut name = "service";
         let res = match self.check_service_file().await {
             Ok(r1) => {
@@ -115,7 +115,7 @@ impl InstallValidator {
             }
         }
         if need_restart {
-            if let Some(m) = srv.lookup_component::<Machine>("machine") {
+            if let Some(m) = srv.get::<Machine>() {
                 m.restart_moonraker_service();
             }
             return true;
@@ -128,7 +128,7 @@ impl InstallValidator {
             return Ok(false);
         }
         let srv = server();
-        let machine: Rc<Machine> = srv.lookup_component("machine").ok_or_else(|| ValidationResult::Other("machine".into()))?;
+        let machine = srv.get::<Machine>().ok_or_else(|| ValidationResult::Other("machine".into()))?;
         if machine.is_inside_container() {
             return Err(ValidationResult::Validation(
                 "Moonraker instance running inside a container, cannot validate service file.".into(),
@@ -219,7 +219,7 @@ impl InstallValidator {
         let mut env_vars: IndexMap<String, String> = IndexMap::new();
         env_vars.insert("MOONRAKER_DATA_PATH".into(), data_path.to_string_lossy().to_string());
         let cfg_file = PathBuf::from(app_args.get("config_file").map(py_str).unwrap_or_default());
-        let fm: Option<Rc<crate::components::file_manager::FileManager>> = srv.lookup_component("file_manager");
+        let fm = srv.get::<crate::components::file_manager::FileManager>();
         let cfg_path = fm.as_ref().map(|f| f.get_directory("config")).unwrap_or_default();
         let log_path = fm.as_ref().map(|f| f.get_directory("logs")).unwrap_or_default();
         let same = |a: &Path, b: &str| -> bool {
@@ -443,7 +443,7 @@ impl InstallValidator {
         }
         self.sudo_requested.set(true);
         let srv = server();
-        let machine: Rc<Machine> = match srv.lookup_component("machine") {
+        let machine = match srv.get::<Machine>() {
             Some(m) => m,
             None => return,
         };
@@ -476,7 +476,7 @@ impl InstallValidator {
 
     pub(super) fn announce_sudo_request(&self) {
         let srv = server();
-        let machine: Rc<Machine> = match srv.lookup_component("machine") {
+        let machine = match srv.get::<Machine>() {
             Some(m) => m,
             None => return,
         };
@@ -494,7 +494,7 @@ impl InstallValidator {
         }
         let scheme = if srv.app().https_enabled() { "https" } else { "http" };
         let url = format!("{}://{}:{}/", scheme, address, host_info["port"]);
-        if let Some(an) = srv.lookup_component::<crate::components::announcements::Announcements>("announcements") {
+        if let Some(an) = srv.get::<crate::components::announcements::Announcements>() {
             let entry = an.add_internal_announcement(
                 "Sudo Password Required",
                 "Moonraker requires sudo access to finish updating. Please click on the attached link and follow the instructions.",
@@ -516,7 +516,7 @@ impl InstallValidator {
         if id.is_empty() {
             return;
         }
-        if let Some(an) = server().lookup_component::<crate::components::announcements::Announcements>("announcements") {
+        if let Some(an) = server().get::<crate::components::announcements::Announcements>() {
             let _ = an.remove_announcement(&id).await;
         }
         self.announcement_id.borrow_mut().clear();

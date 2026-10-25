@@ -554,7 +554,7 @@ impl MoonrakerApp {
         }
         let asset = crate::assets::read_asset(asset_name).ok_or_else(|| HttpError::new(404))?;
         let factory: Rc<crate::components::template::TemplateFactory> =
-            server().lookup_component("template").ok_or_else(HttpError::internal)?;
+            server().get::<crate::components::template::TemplateFactory>().ok_or_else(HttpError::internal)?;
         let t = Rc::new(factory.create_ui_template(&asset).map_err(|_| HttpError::internal())?);
         self.template_cache.borrow_mut().insert(asset_name.to_string(), t.clone());
         Ok(t)
@@ -779,7 +779,7 @@ impl MoonrakerApp {
 
     /// AuthorizedRequestHandler.prepare(): returns (cors_enabled, user)
     pub async fn prepare_auth(&self, req: &HttpRequest, auth_required: bool) -> (bool, Result<Option<UserInfo>, HttpError>) {
-        let auth: Option<Rc<crate::components::authorization::Authorization>> = server().lookup_component("authorization");
+        let auth = server().get::<crate::components::authorization::Authorization>();
         match auth {
             None => (false, Ok(None)),
             Some(auth) => {
@@ -963,7 +963,7 @@ impl MoonrakerApp {
                 }
             }
         };
-        let auth: Option<Rc<crate::components::authorization::Authorization>> = server().lookup_component("authorization");
+        let auth = server().get::<crate::components::authorization::Authorization>();
         let allowed = match auth {
             None => false,
             Some(a) => a.check_cors(Some(url.trim_end_matches('/'))).await,
@@ -985,7 +985,7 @@ impl MoonrakerApp {
         }
         let srv = server();
         let mut summary: Vec<String> = Vec::new();
-        let auth: Option<Rc<crate::components::authorization::Authorization>> = srv.lookup_component("authorization");
+        let auth = srv.get::<crate::components::authorization::Authorization>();
         let (authorized, cors_enabled) = match &auth {
             Some(a) => {
                 let authorized = a.authenticate_request(req, true).await.is_ok();
@@ -1015,12 +1015,12 @@ impl MoonrakerApp {
         } else {
             summary.push("Moonraker is not currently connected to Klipper.  Make sure that the klipper service has successfully started and that its unix is enabled.".into());
         }
-        let announcements = match srv.lookup_component::<crate::components::announcements::Announcements>("announcements") {
+        let announcements = match srv.get::<crate::components::announcements::Announcements>() {
             Some(a) => a.get_announcements(false).await,
             None => Value::Array(vec![]),
         };
         let (sudo_requested, sudo_msg, linux_user, local_ip, service_name) =
-            match srv.lookup_component::<crate::components::machine::Machine>("machine") {
+            match srv.get::<crate::components::machine::Machine>() {
                 Some(m) => {
                     let svc = m.get_moonraker_service_info();
                     (
@@ -1102,7 +1102,7 @@ impl MoonrakerApp {
         let path = trimmed.splitn(3, '/').last().unwrap_or("").to_string();
         let path = utils::url_unescape(&path);
         let fm: Rc<crate::components::file_manager::FileManager> =
-            server().lookup_component("file_manager").ok_or_else(HttpError::internal)?;
+            server().get::<crate::components::file_manager::FileManager>().ok_or_else(HttpError::internal)?;
         let filename = fm.delete_file(&path).await.map_err(|e| HttpError::std_from(&e))?;
         Ok(HttpResponse::json(200, &json!({"result": filename})))
     }
@@ -1126,7 +1126,7 @@ impl MoonrakerApp {
         if !absolute_path.is_file() {
             return Err(HttpError::new(403));
         }
-        let fm: Option<Rc<crate::components::file_manager::FileManager>> = server().lookup_component("file_manager");
+        let fm = server().get::<crate::components::file_manager::FileManager>();
         if let Some(fm) = fm {
             fm.check_reserved_path(&absolute_path.to_string_lossy(), false)
                 .map_err(|e| HttpError::std_from(&e))?;
@@ -1226,7 +1226,7 @@ impl MoonrakerApp {
         };
         let ctype = info.header("Content-Type").unwrap_or_default();
         log::info!("Upload Request Received from {}\nContent-Type: {}", info.remote_ip, ctype);
-        let fm: Rc<crate::components::file_manager::FileManager> = match server().lookup_component("file_manager") {
+        let fm = match server().get::<crate::components::file_manager::FileManager>() {
             Some(f) => f,
             None => return (error_response(&HttpError::internal(), cors_req), user),
         };

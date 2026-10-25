@@ -57,7 +57,7 @@ impl CommandHelper {
     fn new(config: &ConfigHelper) -> Result<Rc<Self>, ConfigError> {
         let srv = server();
         let http: Rc<HttpClient> =
-            srv.lookup_component("http_client").ok_or_else(|| ConfigHelper::error("Component (http_client) not found"))?;
+            srv.get::<crate::components::http_client::HttpClient>().ok_or_else(|| ConfigHelper::error("Component (http_client) not found"))?;
         config.getboolean_dep("enable_repo_debug", false, true)?;
         if srv.is_debug_enabled() {
             log::warn!("UPDATE MANAGER: REPO DEBUG ENABLED");
@@ -81,7 +81,7 @@ impl CommandHelper {
     }
 
     pub fn shell(&self) -> Rc<ShellCommandFactory> {
-        server().lookup_component("shell_command").expect("shell_command")
+        server().get::<crate::components::shell_command::ShellCommandFactory>().expect("shell_command")
     }
 
     pub fn http(&self) -> Rc<HttpClient> {
@@ -417,7 +417,7 @@ impl InstanceTracker {
 
     fn get_instance_id(&self) -> String {
         let srv = server();
-        let machine: Option<Rc<Machine>> = srv.lookup_component("machine");
+        let machine = srv.get::<Machine>();
         let cur_name: String = machine.map(|m| m.unit_name()).unwrap_or_default().split_whitespace().collect();
         let uuid = srv.get_app_args().get("instance_uuid").map(crate::pyfmt::py_str).unwrap_or_default();
         format!("{}:{}:{}", cur_name, uuid, std::process::id())
@@ -724,7 +724,7 @@ impl UpdateManager {
             }
         }
         let mut need_notify = false;
-        let machine: Option<Rc<Machine>> = srv.lookup_component("machine");
+        let machine = srv.get::<Machine>();
         if machine.map(|m| m.validation_enabled()).unwrap_or(false) {
             log::info!("update_manger: Install validation pending, bypassing initial refresh");
             self.initial_refresh_complete.set(true);
@@ -840,7 +840,7 @@ impl UpdateManager {
 
     fn is_busy(&self) -> bool {
         let srv = server();
-        let machine: Option<Rc<Machine>> = srv.lookup_component("machine");
+        let machine = srv.get::<Machine>();
         machine.map(|m| m.validation_enabled()).unwrap_or(false)
             || self.cmd_helper.is_update_busy()
             || srv.klippy().is_printing()

@@ -163,7 +163,7 @@ impl RemoteConnection {
     }
 
     pub fn authenticate(&self, token: Option<String>, api_key: Option<String>) -> Result<(), ServerError> {
-        let auth: Option<Rc<crate::components::authorization::Authorization>> = server().lookup_component("authorization");
+        let auth = server().get::<crate::components::authorization::Authorization>();
         let mut uinfo = None;
         if let Some(a) = auth {
             if let Some(t) = token {
@@ -546,7 +546,7 @@ async fn handle_identify(req: WebRequest) -> ApiResult {
     sc.set_client_data(cd);
     if client_type == "agent" {
         let ext: Rc<crate::components::extensions::ExtensionManager> =
-            server().lookup_component("extensions").ok_or_else(|| ServerError::new("Extensions not loaded", 500))?;
+            server().get::<crate::components::extensions::ExtensionManager>().ok_or_else(|| ServerError::new("Extensions not loaded", 500))?;
         if let Err(e) = ext.register_agent(&sc) {
             sc.set_client_type("");
             return Err(e);
@@ -601,7 +601,7 @@ pub async fn serve_websocket(
         // ServerError raised in prepare -> 500
         return (Err(error_response(&HttpError::internal(), None)), None);
     }
-    let auth: Option<Rc<crate::components::authorization::Authorization>> = srv.lookup_component("authorization");
+    let auth = srv.get::<crate::components::authorization::Authorization>();
     let mut user = None;
     let mut need_auth = false;
     let mut cors_allowed = false;
@@ -788,7 +788,7 @@ async fn run_websocket(conn: Rc<RemoteConnection>, ws: WsStream, rx: mpsc::Unbou
         pong_elapsed
     );
     if conn.client_data().get("type").map(|t| t == "agent").unwrap_or(false) {
-        if let Some(ext) = srv.lookup_component::<crate::components::extensions::ExtensionManager>("extensions") {
+        if let Some(ext) = srv.get::<crate::components::extensions::ExtensionManager>() {
             ext.remove_agent(&conn);
         }
     }

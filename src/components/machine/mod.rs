@@ -87,7 +87,7 @@ impl Component for Machine {
             self.system_info.borrow_mut().insert("virtualization".into(), virt);
         }
         self.parse_network_interfaces(0, false).await;
-        if let Some(ps) = server().lookup_component::<crate::components::proc_stats::ProcStats>("proc_stats") {
+        if let Some(ps) = server().get::<crate::components::proc_stats::ProcStats>() {
             let m = Rc::downgrade(&self);
             ps.register_stat_callback(Rc::new(move |seq| {
                 let m = m.clone();
@@ -156,7 +156,7 @@ impl Machine {
         });
         log::info!("Using System Provider: {}", provider_type);
         let validator = InstallValidator::new(config)?;
-        let shell: Rc<ShellCommandFactory> = srv.lookup_component("shell_command").unwrap();
+        let shell = srv.get::<ShellCommandFactory>().unwrap();
         let addr_cmd = shell.build_shell_command("ip -json -det address", None, None, None, false, None).map_err(|e| ConfigHelper::error(e.message))?;
         let iwgetbin = if Path::new("/sbin/iwgetid").exists() { "/sbin/iwgetid" } else { "iwgetid" };
         let iwgetid_cmd = shell.build_shell_command(iwgetbin, None, None, None, false, None).map_err(|e| ConfigHelper::error(e.message))?;
@@ -235,7 +235,7 @@ impl Machine {
     fn init_allowed_services(&self) {
         let srv = server();
         let fpath = PathBuf::from(srv.data_path()).join("moonraker.asvc");
-        if let Some(fm) = srv.lookup_component::<crate::components::file_manager::FileManager>("file_manager") {
+        if let Some(fm) = srv.get::<crate::components::file_manager::FileManager>() {
             fm.add_reserved_path("allowed_services", &fpath, false);
         }
         let default_svcs = crate::assets::read_asset("default_allowed_services").unwrap_or_default();
@@ -589,7 +589,7 @@ impl Machine {
             Some(p) => (format!("sudo -S {}", command), Some(p.clone())),
             None => (format!("sudo {}", command), None),
         };
-        let shell: Rc<ShellCommandFactory> = server().lookup_component("shell_command").ok_or_else(|| ServerError::new("shell", 500))?;
+        let shell = server().get::<ShellCommandFactory>().ok_or_else(|| ServerError::new("shell", 500))?;
         shell
             .exec_cmd(&full_cmd, ExecOpts { proc_input: input.as_deref(), log_complete: false, attempts: tries, timeout, ..Default::default() })
             .await
@@ -652,7 +652,7 @@ impl Machine {
     }
 
     async fn ip_network(&self) -> Option<(Map<String, Value>, Map<String, Value>)> {
-        let shell: Rc<ShellCommandFactory> = server().lookup_component("shell_command")?;
+        let shell = server().get::<ShellCommandFactory>()?;
         let resp = match self.addr_cmd.run_with_response(&shell, 2.0, 1, false, 1, None, None).await {
             Ok(r) => r,
             Err(e) => {
@@ -790,7 +790,7 @@ impl Machine {
     }
 
     async fn get_wifi_interfaces(&self) -> Map<String, Value> {
-        let shell: Rc<ShellCommandFactory> = match server().lookup_component("shell_command") {
+        let shell = match server().get::<ShellCommandFactory>() {
             Some(s) => s,
             None => return Map::new(),
         };
@@ -854,7 +854,7 @@ impl Machine {
             headers.push(("If-Modified-Since".into(), py_str(l)));
         }
         log::info!("Fetching latest usb.ids file...");
-        let client: Rc<crate::components::http_client::HttpClient> = match srv.lookup_component("http_client") {
+        let client = match srv.get::<crate::components::http_client::HttpClient>() {
             Some(c) => c,
             None => return,
         };

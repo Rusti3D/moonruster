@@ -556,7 +556,7 @@ impl Deployer for NetDeploy {
     async fn initialize(&self) -> Map<String, Value> {
         let storage = self.app.initialize();
         let srv = server();
-        let fm: Option<Rc<crate::components::file_manager::FileManager>> = srv.lookup_component("file_manager");
+        let fm = srv.get::<crate::components::file_manager::FileManager>();
         let path_str = self.app.path.display().to_string();
         let writable = fm.as_ref().map(|f| !f.is_reserved_path(&path_str, true)).unwrap_or(true);
         self.st.borrow_mut().path_writable = writable;

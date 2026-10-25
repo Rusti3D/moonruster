@@ -4,7 +4,7 @@ use super::*;
 
 impl SimplyPrint {
     pub(super) async fn initialize_url(&self) {
-        let wcm: Option<Rc<crate::components::webcam::WebcamManager>> = server().lookup_component("webcam");
+        let wcm = server().get::<crate::components::webcam::WebcamManager>();
         let cams = match wcm {
             Some(w) => w.get_webcams(),
             None => return,
@@ -27,7 +27,7 @@ impl SimplyPrint {
     }
 
     pub(super) fn http() -> Rc<HttpClient> {
-        server().lookup_component("http_client").expect("http_client")
+        server().get::<crate::components::http_client::HttpClient>().expect("http_client")
     }
 
     pub(super) async fn test_connection(&self) {

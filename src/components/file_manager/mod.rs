@@ -157,7 +157,7 @@ impl FileManager {
             }
         });
         srv.load_component(config, "secrets")?;
-        let secrets: Rc<crate::components::secrets::Secrets> = srv.lookup_component("secrets").unwrap();
+        let secrets = srv.get::<crate::components::secrets::Secrets>().unwrap();
         fm.add_reserved_path("secrets", &secrets.get_secrets_file(), false);
         config.get_opt_dep("config_path", true)?;
         let cfg_writable = config.getboolean_or("enable_config_write_access", true)?;
@@ -573,7 +573,7 @@ impl FileManager {
         }
         let srv = server();
         let kconn = srv.klippy();
-        let stats = srv.lookup_component::<crate::components::job_state::JobState>("job_state").map(|j| j.get_last_stats()).unwrap_or_default();
+        let stats = srv.get::<crate::components::job_state::JobState>().map(|j| j.get_last_stats()).unwrap_or_default();
         let loaded = stats.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let state = stats.get("state").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let gc_path = self.get_directory("gcodes");
@@ -965,7 +965,7 @@ impl FileManager {
                 }
             }
             if self.queue_gcodes && !started {
-                if let Some(jq) = server().lookup_component::<crate::components::job_queue::JobQueue>("job_queue") {
+                if let Some(jq) = server().get::<crate::components::job_queue::JobQueue>() {
                     jq.queue_job(vec![info.filename.clone()], false, false, user.clone()).await?;
                     queued = true;
                 }

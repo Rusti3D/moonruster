@@ -44,6 +44,55 @@ use crate::server::{LifecycleDyn, Server};
 use std::any::Any;
 use std::rc::Rc;
 
+// Each built-in component's registered name, for server().get::<T>()
+macro_rules! named {
+    ($($name:literal => $ty:ty,)*) => {
+        $(impl crate::server::Named for $ty {
+            const NAME: &'static str = $name;
+        })*
+    };
+}
+
+named! {
+    "analysis" => analysis::GcodeAnalysis,
+    "announcements" => announcements::Announcements,
+    "application" => application::MoonrakerApp,
+    "authorization" => authorization::Authorization,
+    "button" => button::ButtonManager,
+    "data_store" => data_store::DataStore,
+    "database" => database::MoonrakerDatabase,
+    "dbus_manager" => dbus_manager::DbusManager,
+    "extensions" => extensions::ExtensionManager,
+    "file_manager" => file_manager::FileManager,
+    "gpio" => gpio::GpioFactory,
+    "history" => history::History,
+    "http_client" => http_client::HttpClient,
+    "job_queue" => job_queue::JobQueue,
+    "job_state" => job_state::JobState,
+    "klippy_apis" => klippy_apis::KlippyApi,
+    "klippy_connection" => klippy_connection::KlippyConnection,
+    "ldap" => ldap::MoonrakerLdap,
+    "machine" => machine::Machine,
+    "mqtt" => mqtt::MqttClient,
+    "notifier" => notifier::Notifier,
+    "octoprint_compat" => octoprint_compat::OctoPrintCompat,
+    "paneldue" => paneldue::PanelDue,
+    "power" => power::PrinterPower,
+    "proc_stats" => proc_stats::ProcStats,
+    "secrets" => secrets::Secrets,
+    "sensor" => sensor::Sensors,
+    "shell_command" => shell_command::ShellCommandFactory,
+    "simplyprint" => simplyprint::SimplyPrint,
+    "spoolman" => spoolman::SpoolManager,
+    "td1" => td1::Td1,
+    "template" => template::TemplateFactory,
+    "update_manager" => update_manager::UpdateManager,
+    "webcam" => webcam::WebcamManager,
+    "websockets" => websockets::WebsocketManager,
+    "wled" => wled::Wled,
+    "zeroconf" => zeroconf::ZeroconfRegistrar,
+}
+
 pub type Loaded = (Rc<dyn Any>, Rc<dyn LifecycleDyn>);
 
 fn wrap<T: crate::server::Component + 'static>(c: Rc<T>) -> Loaded {

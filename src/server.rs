@@ -311,7 +311,7 @@ impl Server {
             }
         }
         futures::future::join_all(optional).await;
-        if let Some(fm) = self.lookup_component::<crate::components::file_manager::FileManager>("file_manager") {
+        if let Some(fm) = self.get::<crate::components::file_manager::FileManager>() {
             fm.start_file_observer();
         }
         if self.warnings.borrow().is_empty() {
@@ -319,7 +319,7 @@ impl Server {
             self.config().create_backup(&cfg_file);
         }
         let mut restarting = false;
-        if let Some(machine) = self.lookup_component::<crate::components::machine::Machine>("machine") {
+        if let Some(machine) = self.get::<crate::components::machine::Machine>() {
             restarting = machine.validate_installation().await;
         }
         if !restarting && start_server {
@@ -329,7 +329,7 @@ impl Server {
     }
 
     pub async fn start_server(self: &Rc<Self>, connect_to_klippy: bool) {
-        if let Some(ext) = self.lookup_component::<crate::components::extensions::ExtensionManager>("extensions") {
+        if let Some(ext) = self.get::<crate::components::extensions::ExtensionManager>() {
             ext.start_unix_server().await;
         }
         log::info!(
@@ -503,6 +503,11 @@ impl Server {
         any.downcast::<T>().ok()
     }
 
+    /// A built-in component, by its type (its name: Named)
+    pub fn get<T: Named + 'static>(&self) -> Option<Rc<T>> {
+        self.lookup_component(T::NAME)
+    }
+
     /// A component of any type (Python components: plugins)
     pub fn component_any(&self, name: &str) -> Option<Rc<dyn Any>> {
         self.components.borrow().get(name).cloned()
@@ -552,23 +557,23 @@ impl Server {
     // ***** Shortcuts to core components *****
 
     pub fn app(&self) -> Rc<crate::components::application::MoonrakerApp> {
-        self.lookup_component("application").expect("application not loaded")
+        self.get::<crate::components::application::MoonrakerApp>().expect("application not loaded")
     }
 
     pub fn klippy(&self) -> Rc<crate::components::klippy_connection::KlippyConnection> {
-        self.lookup_component("klippy_connection").expect("klippy_connection not loaded")
+        self.get::<crate::components::klippy_connection::KlippyConnection>().expect("klippy_connection not loaded")
     }
 
     pub fn wsm(&self) -> Rc<crate::components::websockets::WebsocketManager> {
-        self.lookup_component("websockets").expect("websockets not loaded")
+        self.get::<crate::components::websockets::WebsocketManager>().expect("websockets not loaded")
     }
 
     pub fn klippy_apis(&self) -> Rc<crate::components::klippy_apis::KlippyApi> {
-        self.lookup_component("klippy_apis").expect("klippy_apis not loaded")
+        self.get::<crate::components::klippy_apis::KlippyApi>().expect("klippy_apis not loaded")
     }
 
     pub fn database(&self) -> Rc<crate::components::database::MoonrakerDatabase> {
-        self.lookup_component("database").expect("database not loaded")
+        self.get::<crate::components::database::MoonrakerDatabase>().expect("database not loaded")
     }
 
     // ***** Endpoints and events *****
@@ -718,7 +723,7 @@ impl Server {
 
     async fn handle_info_request(&self, req: WebRequest) -> ApiResult {
         let raw = req.get_boolean_or("raw", false)?;
-        let reg_dirs = match self.lookup_component::<crate::components::file_manager::FileManager>("file_manager") {
+        let reg_dirs = match self.get::<crate::components::file_manager::FileManager>() {
             Some(fm) => fm.get_registered_dirs(),
             None => Vec::new(),
         };
@@ -764,4 +769,9 @@ impl Server {
             "files": files,
         }))
     }
+}
+
+/// The name a built-in component is registered under (components/mod.rs)
+pub trait Named {
+    const NAME: &'static str;
 }

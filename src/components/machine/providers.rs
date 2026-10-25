@@ -25,15 +25,15 @@ pub struct Provider {
 
 impl Provider {
     pub(super) fn shell(&self) -> Rc<ShellCommandFactory> {
-        server().lookup_component("shell_command").expect("shell_command")
+        server().get::<crate::components::shell_command::ShellCommandFactory>().expect("shell_command")
     }
 
     pub(super) fn dbus(&self) -> Option<Rc<DbusManager>> {
-        server().lookup_component("dbus_manager")
+        server().get::<crate::components::dbus_manager::DbusManager>()
     }
 
     pub(super) async fn exec_sudo(&self, cmd: &str) -> Result<String, ServerError> {
-        let machine: Rc<Machine> = server().lookup_component("machine").ok_or_else(|| ServerError::new("machine", 500))?;
+        let machine = server().get::<Machine>().ok_or_else(|| ServerError::new("machine", 500))?;
         machine.exec_sudo_command(cmd, 1, 2.0).await
     }
 
@@ -76,7 +76,7 @@ impl Provider {
     }
 
     pub(super) fn register_status_cb(self: &Rc<Self>) {
-        if let Some(ps) = server().lookup_component::<crate::components::proc_stats::ProcStats>("proc_stats") {
+        if let Some(ps) = server().get::<crate::components::proc_stats::ProcStats>() {
             let p = Rc::downgrade(self);
             ps.register_stat_callback(Rc::new(move |seq| {
                 let p = p.clone();
@@ -150,7 +150,7 @@ impl Provider {
             Some(d) => d,
             None => return,
         };
-        let machine: Rc<Machine> = match server().lookup_component("machine") {
+        let machine = match server().get::<Machine>() {
             Some(m) => m,
             None => return,
         };
@@ -238,7 +238,7 @@ impl Provider {
     }
 
     pub(super) async fn detect_active_services_cli(&self) {
-        let machine: Rc<Machine> = match server().lookup_component("machine") {
+        let machine = match server().get::<Machine>() {
             Some(m) => m,
             None => return,
         };
@@ -305,7 +305,7 @@ impl Provider {
     }
 
     pub(super) async fn detect_active_services_spv(&self) {
-        let machine: Rc<Machine> = match server().lookup_component("machine") {
+        let machine = match server().get::<Machine>() {
             Some(m) => m,
             None => return,
         };

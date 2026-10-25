@@ -5,7 +5,7 @@ use super::*;
 impl SimplyPrint {
     pub(super) async fn download_sp_file(self: Rc<Self>, url: &str, start: bool) {
         let srv = server();
-        let fm: Rc<crate::components::file_manager::FileManager> = match srv.lookup_component("file_manager") {
+        let fm = match srv.get::<crate::components::file_manager::FileManager>() {
             Some(f) => f,
             None => return,
         };

@@ -299,7 +299,7 @@ impl OctoPrintCompat {
             .split_once('/')
             .ok_or_else(|| ServerError::exc("not enough values to unpack (expected 2, got 1)"))?;
         let srv = server();
-        let fm: Rc<crate::components::file_manager::FileManager> = srv.lookup_component("file_manager").ok_or_else(|| ServerError::new("fm", 500))?;
+        let fm = srv.get::<crate::components::file_manager::FileManager>().ok_or_else(|| ServerError::new("fm", 500))?;
         if command != "select" {
             return Err(ServerError::bad(format!("Unsupported Command: {}", command)));
         }
@@ -329,7 +329,7 @@ impl OctoPrintCompat {
         }
         if !started {
             if fm.upload_queue_enabled() {
-                if let Some(jq) = srv.lookup_component::<crate::components::job_queue::JobQueue>("job_queue") {
+                if let Some(jq) = srv.get::<crate::components::job_queue::JobQueue>() {
                     jq.queue_job(vec![filename.to_string()], false, false, user).await?;
                     log::debug!("Job '{}' queued via OctoPrint API", filename);
                 }
