@@ -120,8 +120,11 @@ fn raise(err: PyError) -> *mut PyObject {
     std::ptr::null_mut()
 }
 
+/// A call's arguments: positional, then keywords by name
+type CallArgs = (Vec<PyRef>, Vec<(String, PyRef)>);
+
 /// The arguments of a FASTCALL|KEYWORDS call: positional, then keywords
-unsafe fn collect(args: *const *mut PyObject, nargs: Py_ssize_t, kwnames: *mut PyObject) -> PyResult<(Vec<PyRef>, Vec<(String, PyRef)>)> {
+unsafe fn collect(args: *const *mut PyObject, nargs: Py_ssize_t, kwnames: *mut PyObject) -> PyResult<CallArgs> {
     let n = nargs as usize;
     let pos: Vec<PyRef> = (0..n).map(|i| PyRef::borrowed(*args.add(i))).collect();
     let mut kw = vec![];

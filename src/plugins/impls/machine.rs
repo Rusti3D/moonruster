@@ -147,6 +147,6 @@ pub fn register(r: &mut Registry) {
     r.method(mc!("query_can_uuids"), |a| {
         let iface = arg(a, 0, "interface")?.as_string()?;
         let m = this(a)?;
-        rust_future(async move { m.query_can_uuids(&iface).await.and_then(|v| Ok(v)).map_err(err).and_then(|v| to_py(&v)) })
+        rust_future(async move { m.query_can_uuids(&iface).await.map_err(err).and_then(|v| to_py(&v)) })
     });
 }

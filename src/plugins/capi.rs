@@ -209,11 +209,11 @@ pub fn load(path: &str) -> Result<(), String> {
                 None
             } else {
                 Some(InitConfigApi {
-                    create: std::mem::transmute::<*mut c_void, _>(c),
-                    set_str: std::mem::transmute::<*mut c_void, _>(s),
-                    set_int: std::mem::transmute::<*mut c_void, _>(n),
-                    initialize: std::mem::transmute::<*mut c_void, _>(i),
-                    free: std::mem::transmute::<*mut c_void, _>(f),
+                    create: std::mem::transmute::<*mut c_void, unsafe extern "C" fn() -> *mut c_void>(c),
+                    set_str: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> c_int>(s),
+                    set_int: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void, *const c_char, i64) -> c_int>(n),
+                    initialize: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void) -> c_int>(i),
+                    free: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void)>(f),
                 })
             }
         };

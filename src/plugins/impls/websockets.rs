@@ -146,7 +146,7 @@ pub fn register(r: &mut Registry) {
         let p = params(a, 1)?;
         let c = this(a)?;
         rust_future(async move {
-            c.call_method_with_response(&method, p).await.and_then(|v| Ok(v)).map_err(|e| server_error(&e.message, e.status_code)).and_then(|v| to_py(&v))
+            c.call_method_with_response(&method, p).await.map_err(|e| server_error(&e.message, e.status_code)).and_then(|v| to_py(&v))
         })
     });
     r.method(conn!("close_socket"), |a| {
