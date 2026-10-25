@@ -59,6 +59,9 @@ pub enum HandlerKind {
     Upload { location_prefix: String, max_upload_size: u64 },
     WebSocket,
     BridgeSocket,
+    // web_client / webcam_redirect (COSMOS patch to moonraker)
+    WebClientRoot { path: String },
+    WebcamRedirect { upstream: String },
 }
 
 struct Rule {
@@ -133,6 +136,7 @@ pub struct MoonrakerApp {
     cert_path: PathBuf,
     key_path: PathBuf,
     route_prefix: String,
+    web_client_path: Option<String>,
     template_cache: RefCell<HashMap<String, Rc<crate::components::template::JinjaTemplate>>>,
     listeners: crate::server::TaskSet,
     pub verbose: bool,
@@ -165,6 +169,24 @@ impl MoonrakerApp {
             home_pattern = format!("{}/?", route_prefix);
         }
         let max_ws_conns = config.getint_or("max_websocket_connections", MAX_WS_CONNS_DEFAULT)?;
+        // Optional static web client: a full path, or a name under /var/www.
+        // COSMOS only: upstream Moonraker has neither option, and reading one
+        // would list it in /server/config
+        let cosmos = utils::is_cosmos();
+        let mut web_client_path = None;
+        if let Some(mut wcp) = if cosmos { config.get_opt("web_client")? } else { None } {
+            if !wcp.starts_with('/') && !wcp.starts_with('~') {
+                wcp = format!("/var/www/{}", wcp);
+            }
+            let wcp = utils::expand_user(&wcp).to_string_lossy().to_string();
+            if Path::new(&wcp).is_dir() {
+                log::info!("Static web client enabled, serving from: {}", wcp);
+                web_client_path = Some(wcp);
+            } else {
+                log::warn!("web_client '{}' is not a valid directory, static file serving disabled", wcp);
+            }
+        }
+        let webcam_redirect = if cosmos { config.get_opt("webcam_redirect")? } else { None };
         let app = Rc::new(MoonrakerApp {
             json_rpc: json_rpc.clone(),
             api_cache: RefCell::new(HashMap::new()),
@@ -176,12 +198,19 @@ impl MoonrakerApp {
             cert_path,
             key_path,
             route_prefix: route_prefix.clone(),
+            web_client_path: web_client_path.clone(),
             template_cache: RefCell::new(HashMap::new()),
             listeners: Default::default(),
             verbose: srv.is_verbose_enabled(),
             http_running: Cell::new(false),
         });
-        app.add_handler(&home_pattern, HandlerKind::Welcome);
+        match web_client_path {
+            Some(path) => app.add_handler(&home_pattern, HandlerKind::WebClientRoot { path }),
+            None => app.add_handler(&home_pattern, HandlerKind::Welcome),
+        }
+        if let Some(upstream) = webcam_redirect {
+            app.add_handler("/webcam/?(.*)", HandlerKind::WebcamRedirect { upstream: upstream.trim_end_matches('/').to_string() });
+        }
         app.add_handler(&format!("{}/server/redirect", route_prefix), HandlerKind::Redirect);
         app.add_handler(&format!("{}/server/jsonrpc", route_prefix), HandlerKind::Rpc);
         srv.register_component("jsonrpc", json_rpc).map_err(crate::confighelper::ConfigError::from)?;

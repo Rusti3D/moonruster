@@ -30,6 +30,13 @@ const SYSTEMD_MGR: &str = "org.freedesktop.systemd1.Manager";
 const LOGIN_BUS: &str = "org.freedesktop.login1";
 const LOGIN_PATH: &str = "/org/freedesktop/login1";
 const LOGIN_MGR: &str = "org.freedesktop.login1.Manager";
+// sysvinit provider (COSMOS patch to moonraker)
+const SYSV_INIT_PATH: &str = "/etc/init.d";
+const SYSV_PID_PATH: &str = "/var/run";
+const SYSV_ACTIONS: [&str; 3] = ["start", "stop", "restart"];
+const SYSV_ACTION_TIMEOUT: f64 = 60.0;
+const SYSV_STATUS_TIMEOUT: f64 = 5.0;
+const SYSV_STATUS_SEQUENCE: u64 = 5;
 
 pub type SudoCallback = Rc<dyn Fn() -> LocalBoxFuture<'static, Result<(String, bool), ServerError>>>;
 
@@ -142,6 +149,8 @@ impl Machine {
             "systemd_cli" => ProviderKind::SystemdCli,
             "systemd_dbus" => ProviderKind::SystemdDbus,
             "supervisord_cli" => ProviderKind::SupervisordCli,
+            // COSMOS only: upstream Moonraker rejects it (Invalid Provider)
+            "sysvinit" if crate::utils::is_cosmos() => ProviderKind::Sysvinit,
             other => return Err(ConfigHelper::error(format!("Invalid Provider: {}", other))),
         };
         let shutdown_action = config.getchoice("shutdown_action", &["halt", "poweroff"], Some("poweroff"), true)?;
@@ -152,6 +161,8 @@ impl Machine {
             shutdown_action,
             available_services: RefCell::new(IndexMap::new()),
             svc_cmd: RefCell::new(None),
+            status_cmds: RefCell::new(IndexMap::new()),
+            status_pidfiles: RefCell::new(IndexMap::new()),
             spv_conf,
             dbus_ready: Cell::new(false),
             login_mgr: Cell::new(false),
@@ -347,6 +358,11 @@ impl Machine {
 
     pub async fn extract_service_info(&self, name: &str, pid: i64) -> Value {
         self.provider.extract_service_info(name, pid, None, false).await
+    }
+
+    // used by the COSMOS patches (swu_deploy)
+    pub fn get_system_provider(&self) -> Rc<Provider> {
+        self.provider.clone()
     }
 
     async fn handle_machine_request(self: Rc<Self>, req: WebRequest) -> ApiResult {

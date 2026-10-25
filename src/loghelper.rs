@@ -21,6 +21,17 @@ struct LogState {
     structured: bool,
     app_args: Map<String, Value>,
     rollover_info: IndexMap<String, String>,
+    // size based rotation instead of daily (COSMOS patch to moonraker)
+    max_bytes: Option<u64>,
+}
+
+const LOG_BACKUPS: usize = 2;
+
+/// MOONRUSTER_LOG_MAX_BYTES: rotate at this size like COSMOS's moonraker,
+/// set by scripts/install-cosmos.sh
+pub fn log_max_bytes() -> Option<u64> {
+    static MAX: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| std::env::var("MOONRUSTER_LOG_MAX_BYTES").ok().and_then(|v| v.parse().ok()).filter(|&b| b > 0))
 }
 
 static STATE: Mutex<Option<LogState>> = Mutex::new(None);
@@ -111,6 +122,20 @@ impl LogState {
     }
 
     fn do_rollover(&mut self) {
+        if self.max_bytes.is_some() {
+            if let Some(fs) = self.file.as_mut() {
+                // python RotatingFileHandler: log -> log.1 -> log.2
+                fs.file = None;
+                let numbered = |i: usize| PathBuf::from(format!("{}.{}", fs.path.display(), i));
+                for i in (1..LOG_BACKUPS).rev() {
+                    let _ = std::fs::rename(numbered(i), numbered(i + 1));
+                }
+                let _ = std::fs::rename(&fs.path, numbered(1));
+                fs.file = OpenOptions::new().create(true).append(true).open(&fs.path).ok();
+            }
+            self.write_header();
+            return;
+        }
         if let Some(fs) = self.file.as_mut() {
             fs.file = None;
             let suffix = fs.day.format("%Y-%m-%d").to_string();
@@ -139,7 +164,7 @@ impl LogState {
                     })
                     .unwrap_or_default();
                 backups.sort();
-                while backups.len() > 2 {
+                while backups.len() > LOG_BACKUPS {
                     let _ = std::fs::remove_file(backups.remove(0));
                 }
             }
@@ -198,8 +223,9 @@ impl log::Log for MoonLogger {
 }
 
 // update_manager's own Python files; its other Rust files are update_manager.py's
-const UPDATE_MANAGER_FILES: [&str; 7] =
-    ["app_deploy", "base_deploy", "common", "git_deploy", "net_deploy", "python_deploy", "system_deploy"];
+// (swu_deploy: COSMOS's update_manager/swu_deploy.py)
+const UPDATE_MANAGER_FILES: [&str; 8] =
+    ["app_deploy", "base_deploy", "common", "git_deploy", "net_deploy", "python_deploy", "swu_deploy", "system_deploy"];
 
 /// The Moonraker module of a Rust module (its path below the crate root,
 /// without "mod"): a component's directory is its one Python file
@@ -241,7 +267,16 @@ pub fn emit(level: log::Level, file: &str, func: &str, line: u32, msg: &str) {
     };
     if let Some(state) = guard.as_mut() {
         let today = chrono::Local::now().date_naive();
-        let need_rollover = state.file.as_ref().map(|f| f.day != today).unwrap_or(false);
+        let need_rollover = match state.max_bytes {
+            Some(max) => state
+                .file
+                .as_ref()
+                .and_then(|f| f.file.as_ref())
+                .and_then(|f| f.metadata().ok())
+                .map(|m| m.len() >= max)
+                .unwrap_or(false),
+            None => state.file.as_ref().map(|f| f.day != today).unwrap_or(false),
+        };
         if need_rollover {
             state.do_rollover();
         }
@@ -291,7 +326,7 @@ pub fn init(app_args: &Map<String, Value>) -> Option<String> {
             }
         }
     }
-    let mut state = LogState { file: file_state, structured, app_args: app_args.clone(), rollover_info: IndexMap::new() };
+    let mut state = LogState { file: file_state, structured, app_args: app_args.clone(), rollover_info: IndexMap::new(), max_bytes: log_max_bytes() };
     if state.file.is_some() {
         state.write_header();
     }
