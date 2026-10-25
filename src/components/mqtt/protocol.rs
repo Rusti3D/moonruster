@@ -1,7 +1,5 @@
 // Reason codes, packet encoding, TLS setup
 
-use super::*;
-
 pub(super) fn connack_string(rc: u8) -> String {
     match rc {
         0 => "Connection Accepted.",

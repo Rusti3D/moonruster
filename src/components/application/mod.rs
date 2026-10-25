@@ -44,7 +44,6 @@ mod handlers;
 mod request;
 mod response;
 
-pub use handlers::*;
 pub use request::*;
 pub use response::*;
 
