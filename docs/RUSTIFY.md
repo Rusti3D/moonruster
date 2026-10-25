@@ -132,6 +132,26 @@ CC1 A/B (`tools/cc1_plugins_measure.sh`) is run at each milestone.
 - **Components in their own modules by concern.** Split the 2k-line files along Moonraker's own seams, for example
   machine into providers, sysinfo, sudo and validation.
 
+*Phase 1 status (2026-10-25)*
+- **Leaf modules:**
+  - `src/pycompat`: pyfmt, configparser, shlex, inspect, mimetypes, posixpath, pathlib, urllib, re, shutil;
+  - `src/metadata`: the extractor and its object cancellation.
+
+  Each Python behaviour is checked by unit tests against CPython's own results.
+- **Split by concern**, moved code unchanged:
+  - machine, power, simplyprint, application;
+  - update_manager (base_deploy and app_deploy, as in Moonraker), git_deploy's GitRepo;
+  - mqtt, database, the file observer;
+  - confighelper's sources, file_manager's sync lock, authorization's crypto.
+
+  klippy_connection and file_manager are one large impl each, with no seam inside; Phase 3's state split
+  divides them.
+- **Parity fixes the CPython ports exposed:**
+  - `Path::file_name` / `Path::parent` against `os.path.basename` / `dirname`: a trailing `/` or `.`;
+  - `Path::extension` / `file_stem` against pathlib's `suffix` / `stem`: a name ending in `.`.
+
+  They also go to main.
+
 **2. Typed core APIs**
 - **a. Components.**
   - Typed handles for the built-in components (`server.file_manager()`, ...) instead of a string lookup plus a
@@ -177,6 +197,20 @@ Each item ships with a benchmark and a CC1 A/B.
 **5. Clean-ups that fall out**
 - The plugin layer's dead parts (`is_patched`, `register_class`) are resolved with kaliru. `is_patched` is a parity gap
   (a component's monkeypatch is not honoured by Rust's own calls), tracked on main.
+
+*Progress on 2–5 (2026-10-25)*
+- **2a:**
+  - `server().get::<T>()` finds a built-in component by type; its name comes from one table (`Named`, in
+    components/mod.rs).
+  - All 123 string lookups of built-ins use it. `lookup_component(name)` stays for Python components.
+- **2b (part):** `send_event` returns `EventSent`. It is awaitable (`IntoFuture`) and droppable, and it is not a
+  `Future`: the 45 fire-and-forget callers no longer need `let _ =`.
+- **2f (part):** `ServerError` boxes its rare parts, AgentError data and a Python traceback. A test holds it at
+  48 bytes or less for every `Result`.
+- **4 (part):** a notification is encoded once and shared by every client's queue (`Utf8Bytes`, reference counted),
+  instead of one copy per client. Status updates stay per client: each has its own subscription.
+- **5:** `is_patched` is documented as a known difference on main, and both dead parts are allowed as dead code,
+  agreed with kaliru.
 
 Out of scope:
 - behaviour changes;
