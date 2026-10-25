@@ -1192,7 +1192,7 @@ mod status_view_tests {
         let status = json!({
             "toolhead": {"position": [1.5, 2.0, 0.0, 0.0], "homed_axes": "xyz", "print_time": 12.25},
             "extruder": {"temperature": 210.4, "target": 0},
-            "print_stats": {"state": "printing", "message": "\u00e9"},
+            "print_stats": {"state": "printing", "message": "\u{e9}"},
             "webhooks": "not an object",
             "fan": {}
         });
