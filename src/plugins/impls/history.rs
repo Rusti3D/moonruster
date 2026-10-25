@@ -24,10 +24,6 @@ macro_rules! field {
     };
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 fn flag(a: &Args, i: usize, n: &str) -> PyResult<bool> {
     match a.get(i, n) {
         Some(v) => v.is_true(),

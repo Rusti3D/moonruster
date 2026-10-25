@@ -106,6 +106,7 @@ impl GcodeAnalysis {
                             "path": tool_folder.display().to_string(),
                         }),
                     )
+                    .map_err(ServerError::from)
                 })();
                 match res {
                     Err(e) => log::error!("Klipper Estimator update registration failed\n{}", e.message),
@@ -502,7 +503,7 @@ impl Component for GcodeAnalysis {
                         log::info!("Refreshing Klipper Estimator Updater Instance...");
                         spawn(async {
                             if let Some(um) = server().lookup_component::<crate::components::update_manager::UpdateManager>("update_manager") {
-                                um.refresh_updater("klipper_estimator", true).await;
+                                let _ = um.refresh_updater("klipper_estimator", true).await;
                             }
                         });
                     }

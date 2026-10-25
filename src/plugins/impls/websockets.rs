@@ -16,10 +16,6 @@ macro_rules! conn {
     };
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 /// a connection's Python object (the same one events pass)
 fn conn_object(c: Rc<RemoteConnection>) -> PyResult<PyRef> {
     let t: Rc<dyn crate::common::ApiTransport> = c;

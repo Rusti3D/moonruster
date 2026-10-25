@@ -26,10 +26,6 @@ macro_rules! provider {
 /// database behind it
 pub struct DbProvider;
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 fn this(a: &Args) -> PyResult<Rc<MoonrakerDatabase>> {
     a.this::<MoonrakerDatabase>()
 }

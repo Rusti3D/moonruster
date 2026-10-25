@@ -14,10 +14,6 @@ macro_rules! name {
     };
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 /// A component as Python sees it: a Python component's own object, a
 /// built-in one as an object of the class Moonraker's load_component returns
 pub fn component_object(name: &str, comp: Rc<dyn Any>) -> PyResult<PyRef> {

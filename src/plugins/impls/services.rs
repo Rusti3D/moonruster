@@ -1,22 +1,11 @@
 // Small components' API for Python components: job_state, secrets,
-// job_queue, power
+// job_queue, power, proc_stats, spoolman, octoprint_compat, wled
 use super::*;
 use crate::components::job_queue::JobQueue;
 use crate::components::job_state::JobState;
 use crate::components::power::PrinterPower;
 use crate::components::secrets::Secrets;
 use crate::plugins::futures::rust_future;
-
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
-fn flag(a: &Args, i: usize, n: &str, default: bool) -> PyResult<bool> {
-    match a.get(i, n) {
-        Some(v) => v.is_true(),
-        None => Ok(default),
-    }
-}
 
 /// a str or a list of str (Moonraker's Union[str, List[str]])
 fn str_or_list(v: &PyRef) -> PyResult<Vec<String>> {
@@ -49,6 +38,48 @@ pub fn register(r: &mut Registry) {
         });
         a.this::<crate::components::proc_stats::ProcStats>()?.register_stat_callback(callback);
         Ok(none())
+    });
+    r.method("moonraker.components.proc_stats.ProcStats.log_last_stats", |a| {
+        let count = opt(a, 0, "count").map(|v| v.as_i64()).unwrap_or(Ok(1))?;
+        a.this::<crate::components::proc_stats::ProcStats>()?.log_last_stats(count.max(0) as usize);
+        Ok(none())
+    });
+    // spoolman
+    // report_extrusion(eventtime) -> the next report time
+    r.method("moonraker.components.spoolman.SpoolManager.report_extrusion", |a| {
+        let eventtime = arg(a, 0, "eventtime")?.as_f64()?;
+        let s = a.this::<crate::components::spoolman::SpoolManager>()?;
+        rust_future(async move {
+            let rate = s.sync_rate_seconds() as f64;
+            if !s.connected() {
+                return Ok(py_float(eventtime + rate));
+            }
+            s.report_extrusion().await;
+            Ok(py_float(crate::utils::monotonic() + rate))
+        })
+    });
+    // octoprint_compat
+    r.method("moonraker.components.octoprint_compat.OctoPrintCompat.printer_state", |a| {
+        Ok(py_str(&a.this::<crate::components::octoprint_compat::OctoPrintCompat>()?.printer_state()))
+    });
+    r.method("moonraker.components.octoprint_compat.OctoPrintCompat.printer_temps", |a| {
+        to_py(&a.this::<crate::components::octoprint_compat::OctoPrintCompat>()?.printer_temps())
+    });
+    // wled: the arguments by name, as the remote methods get them
+    r.method("moonraker.components.wled.WLED.wled_on", |a| {
+        let (strip, preset) = (arg(a, 0, "strip")?.as_string()?, arg(a, 1, "preset")?.as_i64()?);
+        let w = a.this::<crate::components::wled::Wled>()?;
+        rust_future(async move { w.wled_on(&strip, preset).await.map(|_| none()).map_err(|e| server_error(&e.message, e.status_code)) })
+    });
+    r.method("moonraker.components.wled.WLED.set_wled_state", |a| {
+        let args = named_args(a, &["strip", "state", "preset", "brightness", "intensity", "speed"])?;
+        let w = a.this::<crate::components::wled::Wled>()?;
+        rust_future(async move { w.set_wled_state(args).await.map(|_| none()).map_err(|e| server_error(&e.message, e.status_code)) })
+    });
+    r.method("moonraker.components.wled.WLED.set_wled", |a| {
+        let args = named_args(a, &["strip", "red", "green", "blue", "white", "index", "transmit"])?;
+        let w = a.this::<crate::components::wled::Wled>()?;
+        rust_future(async move { w.set_wled(args).await.map(|_| none()).map_err(|e| server_error(&e.message, e.status_code)) })
     });
     // spoolman
     r.method("moonraker.components.spoolman.SpoolManager.set_active_spool", |a| {
@@ -95,8 +126,8 @@ pub fn register(r: &mut Registry) {
     // job_queue
     r.method("moonraker.components.job_queue.JobQueue.queue_job", |a| {
         let files = str_or_list(arg(a, 0, "filenames")?)?;
-        let check = flag(a, 1, "check_exists", true)?;
-        let reset = flag(a, 2, "reset", false)?;
+        let check = bool_or(a, 1, "check_exists", true)?;
+        let reset = bool_or(a, 2, "reset", false)?;
         let user = match a.get(3, "user") {
             Some(u) if !u.is_none() => Some(super::application::user_info_from_py(u)?),
             _ => None,
@@ -108,7 +139,7 @@ pub fn register(r: &mut Registry) {
     });
     r.method("moonraker.components.job_queue.JobQueue.delete_job", |a| {
         let ids = str_or_list(arg(a, 0, "job_ids")?)?;
-        let all = flag(a, 1, "all", false)?;
+        let all = bool_or(a, 1, "all", false)?;
         let q = a.this::<JobQueue>()?;
         rust_future(async move {
             q.delete_job(ids, all).await;
@@ -135,7 +166,7 @@ pub fn register(r: &mut Registry) {
     r.method("moonraker.components.power.PrinterPower.set_device_power", |a| {
         let device = arg(a, 0, "device")?.as_string()?;
         let state = arg(a, 1, "state")?;
-        let force = flag(a, 2, "force", false)?;
+        let force = bool_or(a, 2, "force", false)?;
         let request = if state.is_instance(&lookup("builtins", "bool")?)? {
             if state.is_true()? { "on" } else { "off" }.to_string()
         } else if state.is_instance(&lookup("builtins", "str")?)? {

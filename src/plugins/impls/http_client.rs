@@ -25,22 +25,6 @@ pub struct PyResponse {
     encoding: RefCell<String>,
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
-fn opt<'a>(a: &'a Args, i: usize, n: &str) -> Option<&'a PyRef> {
-    a.get(i, n).filter(|v| !v.is_none())
-}
-
-fn f64_or(a: &Args, i: usize, n: &str, d: f64) -> PyResult<f64> {
-    opt(a, i, n).map(|v| v.as_f64()).unwrap_or(Ok(d))
-}
-
-fn bool_or(a: &Args, i: usize, n: &str, d: bool) -> PyResult<bool> {
-    opt(a, i, n).map(|v| v.is_true()).unwrap_or(Ok(d))
-}
-
 fn bytes(b: &[u8]) -> PyResult<PyRef> {
     py_bytes(b)
 }
@@ -56,7 +40,69 @@ fn error_object(e: &HttpErrorKind) -> PyResult<PyRef> {
     }
 }
 
+fn response_object(resp: HttpResponse) -> PyResult<PyRef> {
+    objects::wrap_class(
+        Rc::new(PyResponse { resp, encoding: RefCell::new("utf-8".into()) }),
+        "moonraker.components.http_client",
+        "HttpResponse",
+    )
+}
+
 pub fn register(r: &mut Registry) {
+    r.method(client!("register_cached_url"), |a| {
+        let url = arg(a, 0, "url")?.as_string()?;
+        let s = |i, n| -> PyResult<Option<String>> {
+            match opt(a, i, n) {
+                Some(v) => Ok(Some(v.as_string()?)),
+                None => Ok(None),
+            }
+        };
+        let (etag, lm) = (s(1, "etag")?, s(2, "last_modified")?);
+        a.this::<HttpClient>()?.register_cached_url(&url, etag, lm).map_err(|e| server_error(&e.message, e.status_code))?;
+        Ok(none())
+    });
+    r.method(client!("github_api_stats"), |a| to_py(&a.this::<HttpClient>()?.github_api_stats()));
+    r.method(client!("github_api_request"), |a| {
+        let resource = arg(a, 0, "resource")?.as_string()?;
+        let attempts = opt(a, 1, "attempts").map(|v| v.as_i64()).unwrap_or(Ok(1))?.max(1) as usize;
+        let pause = f64_or(a, 2, "retry_pause_time", 0.1)?;
+        let c = a.this::<HttpClient>()?;
+        rust_future(async move {
+            let resp = c.github_api_request(&resource, attempts, pause).await.map_err(|e| server_error(&e.message, e.status_code))?;
+            response_object(resp)
+        })
+    });
+    // download_file(url, content_type, destination_path, download_size,
+    // progress_callback(percent, size, recd), connect_timeout,
+    // request_timeout, attempts, retry_pause_time) -> pathlib.Path
+    r.method(client!("download_file"), |a| {
+        let url = arg(a, 0, "url")?.as_string()?;
+        let ctype = arg(a, 1, "content_type")?.as_string()?;
+        let dest = match opt(a, 2, "destination_path") {
+            Some(p) => Some(std::path::PathBuf::from(p.str()?)),
+            None => None,
+        };
+        let size = opt(a, 3, "download_size").map(|v| v.as_i64()).unwrap_or(Ok(-1))?;
+        let progress: Option<crate::components::http_client::ProgressCallback> = opt(a, 4, "progress_callback").map(|cb| {
+            let cb = cb.clone();
+            Rc::new(move |pct: i64, size: i64, recd: i64| {
+                if let Err(e) = cb.call(&[&py_int(pct), &py_int(size), &py_int(recd)]) {
+                    log::error!("download progress callback failed\n{}", e.traceback);
+                }
+            }) as crate::components::http_client::ProgressCallback
+        });
+        let request_timeout = f64_or(a, 6, "request_timeout", 180.0)?;
+        let attempts = opt(a, 7, "attempts").map(|v| v.as_i64()).unwrap_or(Ok(1))?.max(1) as usize;
+        let pause = f64_or(a, 8, "retry_pause_time", 1.0)?;
+        let c = a.this::<HttpClient>()?;
+        rust_future(async move {
+            let p = c
+                .download_file(&url, &ctype, dest, size, progress, request_timeout, attempts, pause)
+                .await
+                .map_err(|e| server_error(&e.message, e.status_code))?;
+            lookup("pathlib", "Path")?.call(&[&py_str(&p.to_string_lossy())])
+        })
+    });
     r.method(client!("request"), |a| {
         let method = arg(a, 0, "method")?.as_string()?.to_uppercase();
         let url = arg(a, 1, "url")?.as_string()?;
@@ -110,11 +156,7 @@ pub fn register(r: &mut Registry) {
         }
         rust_future(async move {
             let resp = client.request(&method, &url, body, &headers, opts).await;
-            objects::wrap_class(
-                Rc::new(PyResponse { resp, encoding: RefCell::new("utf-8".into()) }),
-                "moonraker.components.http_client",
-                "HttpResponse",
-            )
+            response_object(resp)
         })
     });
 

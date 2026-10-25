@@ -403,7 +403,11 @@ impl SpoolManager {
         });
     }
 
-    async fn report_extrusion(&self) {
+    pub fn sync_rate_seconds(&self) -> i64 {
+        self.sync_rate_seconds
+    }
+
+    pub async fn report_extrusion(&self) {
         if !self.ws_connected.get() {
             return;
         }

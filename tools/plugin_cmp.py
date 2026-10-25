@@ -67,6 +67,17 @@ instance_name: mr_test_cmp
 
 [mr_test_services]
 
+[mr_test_api]
+
+[octoprint_compat]
+
+[wled mr_strip]
+address: 127.0.0.1:1
+chain_count: 2
+
+[update_manager]
+enable_auto_refresh: False
+
 [mr_test_config]
 a_list:
   one
@@ -199,6 +210,7 @@ REQUESTS = [
     ("POST", "/server/mr_test/shell", None),
     ("POST", "/server/mr_test/services", None),
     ("POST", "/server/mr_test/mqtt", None),
+    ("POST", "/server/mr_test/api", None),
 ]
 
 

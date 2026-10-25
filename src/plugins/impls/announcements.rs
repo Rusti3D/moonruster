@@ -9,10 +9,6 @@ macro_rules! ann {
     };
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 pub fn register(r: &mut Registry) {
     r.method(ann!("add_internal_announcement"), |a| {
         let s = |i, n| -> PyResult<String> { arg(a, i, n)?.as_string() };

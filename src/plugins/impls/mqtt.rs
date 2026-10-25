@@ -12,10 +12,6 @@ macro_rules! mq {
     };
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 /// qos argument: `qos or self.qos`, and Moonraker's range check
 fn qos(a: &Args, i: usize, c: &MqttClient) -> PyResult<u8> {
     let q = match a.get(i, "qos") {

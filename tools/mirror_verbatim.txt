@@ -67,3 +67,9 @@ moonraker.confighelper.ConfigHelper.load_template
 moonraker.confighelper.ConfigHelper.getpath
 # MQTTClient.publish_topic_with_response: Moonraker's own code over subscribe_topic / publish_topic / unsubscribe
 moonraker.components.mqtt.MQTTClient.publish_topic_with_response
+# HttpClient.get_file / wrap_request and HttpRequestWrapper: Moonraker's own code over get / request
+moonraker.components.http_client.HttpClient.get_file
+moonraker.components.http_client.HttpClient.wrap_request
+moonraker.components.http_client.HttpRequestWrapper
+# KlippyAPI.subscribe_from_transport: Moonraker's own code over _send_klippy_request
+moonraker.components.klippy_apis.KlippyAPI.subscribe_from_transport

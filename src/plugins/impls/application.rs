@@ -85,6 +85,25 @@ pub fn py_web_request(req: &WebRequest) -> PyResult<PyRef> {
     common.getattr("WebRequest")?.call(&[&py_str(&req.endpoint), &args, &rt, &transport, &ip, &user])
 }
 
+/// A Python WebRequest as Moonruster's request (KlippyConnection.request)
+pub fn web_request_from_py(wr: &PyRef) -> PyResult<WebRequest> {
+    let endpoint = wr.call_method("get_endpoint", &[])?.as_string()?;
+    let Value::Object(args) = from_py(&wr.call_method("get_args", &[])?)? else {
+        return Err(py_error("TypeError", "WebRequest args must be a dict".into()));
+    };
+    let rt = wr.call_method("get_request_type", &[])?.getattr("value")?.as_i64()?;
+    let transport = super::transport::transport_from_py(&wr.call_method("get_subscribable", &[])?)?;
+    let ip = match wr.call_method("get_ip_address", &[])? {
+        ip if ip.is_none() => None,
+        ip => ip.str()?.parse().ok(),
+    };
+    let user = match wr.call_method("get_current_user", &[])? {
+        u if u.is_none() => None,
+        u => Some(user_info_from_py(&u)?),
+    };
+    Ok(WebRequest::new(&endpoint, args, crate::common::RequestType(rt as u32), transport, ip, user))
+}
+
 /// A Python exception from an API callback as Moonruster's ServerError:
 /// Moonraker's ServerError / AgentError keep their status and data, a
 /// TypeError is JSON-RPC's "Invalid params", anything else is an uncaught
@@ -140,10 +159,6 @@ async fn call_endpoint(cb: PyRef, req: WebRequest) -> Result<Value, ServerError>
         Ok(v) => from_py(&v).map_err(|e| to_server_error(&e)),
         Err(e) => Err(to_server_error(&e)),
     }
-}
-
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
 }
 
 pub fn register(r: &mut Registry) {

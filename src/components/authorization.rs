@@ -7,7 +7,7 @@ use crate::confighelper::{Bounds, ConfigHelper};
 use crate::server::{server, spawn, Component};
 use async_trait::async_trait;
 use base64::Engine;
-use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use indexmap::IndexMap;
 use regex::Regex;
 use serde_json::{json, Value};
@@ -33,13 +33,110 @@ pub fn base64url_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 
-pub fn base64url_decode(data: &str) -> Result<Vec<u8>, String> {
-    let mut d = data.to_string();
-    let pad = d.len() % 4;
-    if pad != 0 {
-        d.push_str(&"=".repeat(4 - pad));
+/// An error of decode_jwt, as Moonraker's code raises it
+pub enum JwtError {
+    /// self.server.error(...)
+    Server(ServerError),
+    /// a Python exception: its class ("module.Name") and argument
+    Exc(&'static str, String),
+    /// jsonw.loads(data) failed (the plugin layer raises Python's own error)
+    Json(Vec<u8>, String),
+    /// a dict lookup of an unhashable value: `in` ("contains") or .get()
+    Unhashable(Value, &'static str),
+    /// unpacking this many token parts into two names
+    Unpack(usize),
+}
+
+impl From<ServerError> for JwtError {
+    fn from(e: ServerError) -> Self {
+        JwtError::Server(e)
     }
-    base64::engine::general_purpose::URL_SAFE.decode(d.as_bytes()).map_err(|e| e.to_string())
+}
+
+impl From<JwtError> for ServerError {
+    fn from(e: JwtError) -> Self {
+        match e {
+            JwtError::Server(e) => e,
+            JwtError::Exc("builtins.KeyError", key) => ServerError::exc(format!("'{}'", key)),
+            JwtError::Exc(_, msg) | JwtError::Json(_, msg) => ServerError::exc(msg),
+            JwtError::Unhashable(v, _) => ServerError::exc(format!("unhashable type: '{}'", crate::pyfmt::py_type_name(&v))),
+            JwtError::Unpack(n) if n < 2 => ServerError::exc(format!("not enough values to unpack (expected 2, got {})", n)),
+            JwtError::Unpack(_) => ServerError::exc("too many values to unpack (expected 2)"),
+        }
+    }
+}
+
+/// Moonraker's base64url_decode: padded, then base64.urlsafe_b64decode
+/// (binascii.a2b_base64, non-strict: characters outside the alphabet are
+/// skipped and decoding stops at the padding)
+pub fn base64url_decode(data: &str) -> Result<Vec<u8>, JwtError> {
+    if !data.is_ascii() {
+        return Err(JwtError::Exc("builtins.ValueError", "string argument should contain only ASCII characters".into()));
+    }
+    let pad = data.len() % 4;
+    let padded = data.bytes().chain(std::iter::repeat_n(b'=', if pad != 0 { 4 - pad } else { 0 }));
+    let mut out = Vec::with_capacity(data.len() * 3 / 4);
+    let (mut quad_pos, mut pads, mut left) = (0u8, 0u8, 0u8);
+    for c in padded {
+        if c == b'=' {
+            if quad_pos >= 2 {
+                pads += 1;
+                if quad_pos + pads >= 4 {
+                    return Ok(out);
+                }
+            }
+            continue;
+        }
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => continue,
+        };
+        pads = 0;
+        match quad_pos {
+            0 => left = v,
+            1 => {
+                out.push((left << 2) | (v >> 4));
+                left = v & 0x0f;
+            }
+            2 => {
+                out.push((left << 4) | (v >> 2));
+                left = v & 0x03;
+            }
+            _ => out.push((left << 6) | v),
+        }
+        quad_pos = (quad_pos + 1) % 4;
+    }
+    match quad_pos {
+        0 => Ok(out),
+        1 => Err(JwtError::Exc(
+            "binascii.Error",
+            format!("Invalid base64-encoded string: number of data characters ({}) cannot be 1 more than a multiple of 4", out.len() / 3 * 4 + 1),
+        )),
+        _ => Err(JwtError::Exc("binascii.Error", "Incorrect padding".into())),
+    }
+}
+
+/// jsonw.loads of decoded JWT data
+fn jwt_json(data: Vec<u8>) -> Result<Value, JwtError> {
+    serde_json::from_slice(&data).map_err(|e| {
+        let msg = e.to_string();
+        JwtError::Json(data, msg)
+    })
+}
+
+/// payload[key] of a decoded JWT payload
+fn jwt_item<'a>(payload: &'a Value, key: &str) -> Result<&'a Value, JwtError> {
+    let name = crate::pyfmt::py_type_name(payload);
+    match payload {
+        Value::Object(m) => m.get(key).ok_or_else(|| JwtError::Exc("builtins.KeyError", key.to_string())),
+        Value::Array(_) => Err(JwtError::Exc("builtins.TypeError", "list indices must be integers or slices, not str".into())),
+        Value::String(_) => Err(JwtError::Exc("builtins.TypeError", "string indices must be integers, not 'str'".into())),
+        _ => Err(JwtError::Exc("builtins.TypeError", format!("'{}' object is not subscriptable", name))),
+    }
 }
 
 fn pbkdf2_hex(password: &str, salt: &[u8]) -> String {
@@ -704,44 +801,75 @@ impl Authorization {
     }
 
     pub fn decode_jwt(&self, token: &str, token_type: &str, check_exp: bool) -> Result<UserInfo, ServerError> {
-        let generic = |m: &str| ServerError::exc(m.to_string());
-        let (message, sig) = token.rsplit_once('.').ok_or_else(|| generic("not enough values to unpack (expected 2, got 1)"))?;
+        self.decode_jwt_exc(token, token_type, check_exp).map_err(ServerError::from)
+    }
+
+    /// decode_jwt with the Python exception each step raises
+    pub fn decode_jwt_exc(&self, token: &str, token_type: &str, check_exp: bool) -> Result<UserInfo, JwtError> {
+        let (message, sig) = token.rsplit_once('.').ok_or(JwtError::Unpack(1))?;
         let parts: Vec<&str> = message.split('.').collect();
         if parts.len() != 2 {
-            return Err(generic("too many values to unpack (expected 2)"));
+            return Err(JwtError::Unpack(parts.len()));
         }
-        let header: Value = serde_json::from_slice(&base64url_decode(parts[0]).map_err(|e| generic(&e))?).map_err(|e| generic(&e.to_string()))?;
-        let sig_bytes = base64url_decode(sig).map_err(|e| generic(&e))?;
+        let header = jwt_json(base64url_decode(parts[0])?)?;
+        let sig_bytes = base64url_decode(sig)?;
+        let Value::Object(header) = header else {
+            return Err(JwtError::Exc("builtins.AttributeError", format!("'{}' object has no attribute 'get'", crate::pyfmt::py_type_name(&header))));
+        };
         if header.get("typ").and_then(|v| v.as_str()) != Some("JWT") || header.get("alg").and_then(|v| v.as_str()) != Some("EdDSA") {
-            return Err(ServerError::bad("Invalid JWT header"));
+            return Err(ServerError::bad("Invalid JWT header").into());
         }
-        let jwk_id = header.get("kid").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let jwk = self.public_jwks.borrow().get(&jwk_id).cloned().ok_or_else(|| ServerError::bad("Invalid key ID"))?;
+        let jwk = match header.get("kid") {
+            Some(k @ (Value::Array(_) | Value::Object(_))) => return Err(JwtError::Unhashable(k.clone(), "contains")),
+            Some(Value::String(k)) => self.public_jwks.borrow().get(k).cloned(),
+            _ => None,
+        };
+        let jwk = jwk.ok_or_else(|| ServerError::bad("Invalid key ID"))?;
         let public_key = Self::public_key_from_jwk(&jwk)?;
-        let signature = ed25519_dalek::Signature::from_slice(&sig_bytes).map_err(|e| generic(&e.to_string()))?;
-        public_key.verify(message.as_bytes(), &signature).map_err(|_| generic("Signature was forged or corrupt"))?;
-        let payload: Value = serde_json::from_slice(&base64url_decode(parts[1]).map_err(|e| generic(&e))?).map_err(|e| generic(&e.to_string()))?;
-        let ptype = payload.get("token_type").ok_or_else(|| generic("'token_type'"))?;
+        // libnacl's crypto_sign_open(sig_bytes + message)
+        let signature = ed25519_dalek::Signature::from_slice(&sig_bytes);
+        if signature.and_then(|s| public_key.verify_strict(message.as_bytes(), &s)).is_err() {
+            return Err(JwtError::Exc("builtins.ValueError", "Failed to validate message".into()));
+        }
+        let payload = jwt_json(base64url_decode(parts[1])?)?;
+        let ptype = jwt_item(&payload, "token_type")?;
         if ptype.as_str() != Some(token_type) {
             return Err(ServerError::new(
                 format!("JWT Token type mismatch: Expected {}, Recd: {}", token_type, crate::pyfmt::py_str(ptype)),
                 401,
-            ));
+            )
+            .into());
         }
-        if payload.get("iss").and_then(|v| v.as_str()) != Some(self.issuer.as_str()) {
-            return Err(ServerError::new("Invalid JWT Issuer", 401));
+        if jwt_item(&payload, "iss")?.as_str() != Some(self.issuer.as_str()) {
+            return Err(ServerError::new("Invalid JWT Issuer", 401).into());
         }
-        if payload.get("aud").and_then(|v| v.as_str()) != Some("Moonraker") {
-            return Err(ServerError::new("Invalid JWT Audience", 401));
+        if jwt_item(&payload, "aud")?.as_str() != Some("Moonraker") {
+            return Err(ServerError::new("Invalid JWT Audience", 401).into());
         }
         if check_exp {
-            let exp = payload.get("exp").and_then(|v| v.as_f64()).ok_or_else(|| generic("'exp'"))?;
+            let exp = jwt_item(&payload, "exp")?;
+            let exp = match exp {
+                Value::Number(n) => n.as_f64().unwrap_or(0.0),
+                Value::Bool(b) => *b as i64 as f64,
+                other => {
+                    return Err(JwtError::Exc(
+                        "builtins.TypeError",
+                        format!("'<' not supported between instances of '{}' and 'int'", crate::pyfmt::py_type_name(other)),
+                    ))
+                }
+            };
             if exp < crate::utils::time_now().trunc() {
-                return Err(ServerError::new("JWT Expired", 401));
+                return Err(ServerError::new("JWT Expired", 401).into());
             }
         }
-        let uname = payload.get("username").and_then(|v| v.as_str()).unwrap_or("");
-        self.users.borrow().get(uname).cloned().ok_or_else(|| ServerError::new("Unknown user", 401))
+        // payload.get('username', "") (the payload is a dict here)
+        let user = match payload.get("username") {
+            None => self.users.borrow().get("").cloned(),
+            Some(k @ (Value::Array(_) | Value::Object(_))) => return Err(JwtError::Unhashable(k.clone(), "get")),
+            Some(Value::String(k)) => self.users.borrow().get(k).cloned(),
+            Some(_) => None,
+        };
+        user.ok_or_else(|| ServerError::new("Unknown user", 401).into())
     }
 
     pub fn validate_jwt(&self, token: &str) -> Result<UserInfo, ServerError> {
@@ -792,7 +920,7 @@ impl Authorization {
             return Err(ServerError::bad("Invalid Curve"));
         }
         let x = jwk.get("x").and_then(|v| v.as_str()).ok_or_else(|| ServerError::bad("No 'x' argument in jwk"))?;
-        let key = base64url_decode(x).map_err(ServerError::exc)?;
+        let key = base64url_decode(x)?;
         let arr: [u8; 32] = key.as_slice().try_into().map_err(|_| ServerError::exc("Invalid public key"))?;
         VerifyingKey::from_bytes(&arr).map_err(|e| ServerError::exc(e.to_string()))
     }
@@ -1022,6 +1150,10 @@ impl Authorization {
         }
         log::debug!("No CORS match for origin: {}\nPatterns: {:?}", origin, self.cors_patterns);
         false
+    }
+
+    pub fn is_api_key_enabled(&self) -> bool {
+        self.enable_api_key
     }
 
     pub fn cors_enabled(&self) -> bool {

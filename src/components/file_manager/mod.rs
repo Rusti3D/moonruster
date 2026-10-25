@@ -656,6 +656,10 @@ impl FileManager {
         false
     }
 
+    pub fn get_fixed_path_args(&self) -> Map<String, Value> {
+        self.fixed_path_args.borrow().clone()
+    }
+
     pub fn upload_queue_enabled(&self) -> bool {
         self.queue_gcodes
     }

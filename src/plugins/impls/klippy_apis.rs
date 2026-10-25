@@ -18,10 +18,6 @@ macro_rules! api {
     };
 }
 
-fn arg<'a>(a: &'a Args, i: usize, n: &str) -> PyResult<&'a PyRef> {
-    a.get(i, n).ok_or_else(|| py_error("TypeError", format!("missing argument '{}'", n)))
-}
-
 /// An optional `default` argument (Sentinel.MISSING: none)
 fn default_arg(a: &Args, i: usize) -> PyResult<Option<PyRef>> {
     match a.get(i, "default") {
@@ -66,12 +62,13 @@ pub fn register(r: &mut Registry) {
         let method = arg(a, 0, "method")?.as_string()?;
         let params = from_py(arg(a, 1, "params")?)?;
         let default = default_arg(a, 2)?;
-        if a.get(3, "transport").is_some_and(|t| !t.is_none()) {
-            return Err(py_error("NotImplementedError", "moonruster: _send_klippy_request with a transport".into()));
-        }
+        let transport = match a.get(3, "transport") {
+            Some(t) => super::transport::transport_from_py(t)?,
+            None => None,
+        };
         let api = a.this::<KlippyApi>()?;
         rust_future(async move {
-            match api.send_klippy_request(&method, params, None).await {
+            match api.send_klippy_request(&method, params, transport).await {
                 Ok(v) => to_py(&v),
                 Err(_) if default.is_some() => Ok(default.unwrap()),
                 Err(e) => Err(to_err(e)),
@@ -105,6 +102,13 @@ pub fn register(r: &mut Registry) {
                 Err(e) => Err(to_err(e)),
             }
         })
+    });
+    r.method(api!("send_status"), |a| {
+        let Value::Object(status) = from_py(arg(a, 0, "status")?)? else {
+            return Err(py_error("TypeError", "status must be a dict".into()));
+        };
+        a.this::<KlippyApi>()?.send_status(&status, arg(a, 1, "eventtime")?.as_f64()?);
+        Ok(none())
     });
     r.attr(api!("version"), |o| to_py(&objects::unwrap_as::<KlippyApi>(o)?.version), None);
     r.attr(api!("klippy"), |_| objects::wrap(server().klippy()), None);

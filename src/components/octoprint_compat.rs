@@ -138,7 +138,7 @@ impl OctoPrintCompat {
         }
     }
 
-    fn printer_state(&self) -> String {
+    pub fn printer_state(&self) -> String {
         let ks = server().klippy().state();
         if !ks.startup_complete() {
             return "Offline".into();
@@ -156,7 +156,7 @@ impl OctoPrintCompat {
         .into()
     }
 
-    fn printer_temps(&self) -> Value {
+    pub fn printer_temps(&self) -> Value {
         let mut temps = Map::new();
         for (heater, data) in self.heaters.borrow().iter() {
             let mut name = "bed".to_string();

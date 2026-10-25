@@ -12,6 +12,26 @@ fn context(a: &Args) -> PyResult<Value> {
 }
 
 pub fn register(r: &mut Registry) {
+    // add_environment_global(name, value): a value, or a callable the
+    // templates call (Python's own function, on the event loop)
+    r.method("moonraker.components.template.TemplateFactory.add_environment_global", |a| {
+        let name = a.get(0, "name").ok_or_else(|| py_error("TypeError", "missing argument 'name'".into()))?.as_string()?;
+        let value = a.get(1, "value").ok_or_else(|| py_error("TypeError", "missing argument 'value'".into()))?.clone();
+        let global = if value.is_callable() {
+            TemplateFactory::global_function(Rc::new(move |args: Vec<Value>, kwargs: serde_json::Map<String, Value>| {
+                let r: PyResult<Value> = (|| {
+                    let pargs: Vec<PyRef> = args.iter().map(to_py).collect::<PyResult<_>>()?;
+                    let kw = to_py(&Value::Object(kwargs))?;
+                    from_py(&value.call_kw(&pargs.iter().collect::<Vec<_>>(), &kw)?)
+                })();
+                r.map_err(|e| crate::common::ServerError::new(e.message, 500))
+            }))
+        } else {
+            crate::components::template::TemplateGlobal::Data(from_py(&value)?)
+        };
+        a.this::<TemplateFactory>()?.add_environment_global(&name, global).map_err(|e| server_error(&e.message, e.status_code))?;
+        Ok(none())
+    });
     r.method("moonraker.components.template.TemplateFactory.create_ui_template", |a| {
         let source = a.get(0, "source").ok_or_else(|| py_error("TypeError", "missing argument 'source'".into()))?.as_string()?;
         let t = a.this::<TemplateFactory>()?.create_ui_template(&source).map_err(|e| server_error(&e.message, e.status_code))?;

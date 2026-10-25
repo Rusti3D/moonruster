@@ -94,7 +94,7 @@ impl KlippyApi {
         api
     }
 
-    fn host_transport(&self) -> Rc<dyn ApiTransport> {
+    pub fn host_transport(&self) -> Rc<dyn ApiTransport> {
         Rc::new(HostTransport(self.me.borrow().clone()))
     }
 

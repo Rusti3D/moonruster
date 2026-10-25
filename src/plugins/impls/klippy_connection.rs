@@ -36,6 +36,22 @@ pub fn register(r: &mut Registry) {
     r.method(kc!("unit_name"), |a| Ok(py_str(&this(a)?.unit_name())));
     r.method(kc!("path"), |a| path(&this(a)?.path()));
     r.method(kc!("executable"), |a| path(&this(a)?.executable()));
+    // request(web_request): a component's own WebRequest to Klippy
+    r.method(kc!("request"), |a| {
+        let req = super::application::web_request_from_py(arg(a, 0, "web_request")?)?;
+        let kc = this(a)?;
+        rust_future(async move { to_py(&kc.request(req).await.map_err(|e| server_error(&e.message, e.status_code))?) })
+    });
+    r.method(kc!("remove_subscription"), |a| {
+        if let Some(t) = super::transport::transport_from_py(arg(a, 0, "conn")?)? {
+            this(a)?.remove_subscription(t.transport_id());
+        }
+        Ok(none())
+    });
+    r.method(kc!("rollover_log"), |a| {
+        let kc = this(a)?;
+        rust_future(async move { kc.rollover_log().await.map(|_| none()).map_err(|e| server_error(&e.message, e.status_code)) })
+    });
     r.method(kc!("is_connected"), |a| Ok(py_bool(this(a)?.is_connected())));
     r.method(kc!("is_ready"), |a| Ok(py_bool(this(a)?.is_ready())));
     r.method(kc!("is_printing"), |a| Ok(py_bool(this(a)?.is_printing())));

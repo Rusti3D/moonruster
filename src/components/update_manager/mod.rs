@@ -380,6 +380,26 @@ pub enum DeployKind {
     System,
 }
 
+/// UpdateManager.register_updater's errors, as Moonraker raises them
+pub enum RegisterError {
+    /// self.server.error(...)
+    Server(ServerError),
+    /// the updater's configuration (ConfigError)
+    Config(ConfigError),
+    /// AppType.from_string's ValueError for an unknown type
+    UnknownType(String),
+}
+
+impl From<RegisterError> for ServerError {
+    fn from(e: RegisterError) -> Self {
+        match e {
+            RegisterError::Server(e) => e,
+            RegisterError::Config(e) => ServerError::bad(e.0),
+            RegisterError::UnknownType(m) => ServerError::exc(m),
+        }
+    }
+}
+
 #[async_trait(?Send)]
 pub trait Deployer {
     fn base(&self) -> &BaseDeploy;
@@ -1287,34 +1307,39 @@ impl UpdateManager {
         Ok(um)
     }
 
-    pub fn register_updater(&self, name: &str, config: Value) -> Result<(), ServerError> {
+    pub fn register_updater(&self, name: &str, config: Value) -> Result<(), RegisterError> {
         if self.get_updater(name).is_some() {
-            return Err(ServerError::bad(format!("Updater {} already registered", name)));
+            return Err(RegisterError::Server(ServerError::bad(format!("Updater {} already registered", name))));
         }
         let mut m = Map::new();
         m.insert(name.to_string(), config);
-        let cfg = self
-            .app_config
-            .read_supplemental_dict(&Value::Object(m))
-            .map_err(|e| ServerError::bad(e.0))?
-            .getsection(name);
-        let utype = cfg.get("type").map_err(|e| ServerError::bad(e.0))?;
+        let cfg = self.app_config.read_supplemental_dict(&Value::Object(m)).map_err(RegisterError::Config)?.getsection(name);
+        let utype = cfg.get("type").map_err(RegisterError::Config)?;
+        if AppType::from_string(&utype).is_none() {
+            return Err(RegisterError::UnknownType(format!("No enum member named {}", utype)));
+        }
         let d = get_deploy(&utype, &cfg, &self.cmd_helper)
-            .map_err(|e| ServerError::bad(e.0))?
-            .ok_or_else(|| ServerError::bad(format!("Invalid type '{}'", utype)))?;
+            .map_err(RegisterError::Config)?
+            .ok_or_else(|| RegisterError::Server(ServerError::bad(format!("Invalid type '{}'", utype))))?;
         self.cmd_helper.updaters.borrow_mut().insert(name.to_string(), d);
         Ok(())
     }
 
-    pub async fn refresh_updater(&self, name: &str, force: bool) {
+    pub async fn refresh_updater(&self, name: &str, force: bool) -> Result<(), ServerError> {
         let updater = match self.get_updater(name) {
-            None => return,
+            None => return Ok(()),
             Some(u) => u,
         };
         let _g = self.cmd_request_lock.lock().await;
         if updater.base().needs_refresh(false) || force {
-            let _ = updater.refresh().await;
+            updater.refresh().await?;
         }
+        Ok(())
+    }
+
+    /// UpdateManager.get_updaters
+    pub fn get_updaters(&self) -> Vec<(String, Rc<dyn Deployer>)> {
+        self.updaters()
     }
 
     fn updaters(&self) -> Vec<(String, Rc<dyn Deployer>)> {
