@@ -340,7 +340,7 @@ impl JobQueue {
         let payload = json!({"action": action, "updated_queue": updated, "queue_state": self.queue_state.borrow().clone()});
         spawn(async move {
             crate::utils::sleep_ordered(std::time::Duration::from_millis(50)).await;
-            let _ = server().send_event("job_queue:job_queue_changed", vec![payload]);
+            server().send_event("job_queue:job_queue_changed", vec![payload]);
         });
     }
 

@@ -124,24 +124,24 @@ impl KlippyApi {
         log::info!("Requesting Job Start, filename = {}", filename);
         let ret = self.run_gcode(&script).await?;
         let uval = user.as_ref().map(|u| u.as_dict()).unwrap_or(Value::Null);
-        let _ = server().send_event_object("klippy_apis:job_start_complete", vec![uval], EventObject::User(user));
+        server().send_event_object("klippy_apis:job_start_complete", vec![uval], EventObject::User(user));
         Ok(ret)
     }
 
     pub async fn pause_print(&self) -> ApiResult {
-        let _ = server().send_event("klippy_apis:pause_requested", vec![]);
+        server().send_event("klippy_apis:pause_requested", vec![]);
         log::info!("Requesting job pause...");
         self.send_klippy_request("pause_resume/pause", json!({}), None).await
     }
 
     pub async fn resume_print(&self) -> ApiResult {
-        let _ = server().send_event("klippy_apis:resume_requested", vec![]);
+        server().send_event("klippy_apis:resume_requested", vec![]);
         log::info!("Requesting job resume...");
         self.send_klippy_request("pause_resume/resume", json!({}), None).await
     }
 
     pub async fn cancel_print(&self) -> ApiResult {
-        let _ = server().send_event("klippy_apis:cancel_requested", vec![]);
+        server().send_event("klippy_apis:cancel_requested", vec![]);
         log::info!("Requesting job cancel...");
         self.send_klippy_request("pause_resume/cancel", json!({}), None).await
     }
@@ -273,7 +273,7 @@ impl KlippyApi {
                 }
             });
         }
-        let _ = server().send_event("server:status_update", vec![Value::Object(status.clone())]);
+        server().send_event("server:status_update", vec![Value::Object(status.clone())]);
     }
 }
 

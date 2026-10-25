@@ -450,14 +450,14 @@ impl WebsocketManager {
     pub fn add_client(&self, sc: Rc<RemoteConnection>) {
         let uid = sc.uid();
         self.clients.borrow_mut().insert(uid, sc.clone());
-        let _ = server().send_event_object("websockets:client_added", vec![json!(uid)], EventObject::Transport(sc));
+        server().send_event_object("websockets:client_added", vec![json!(uid)], EventObject::Transport(sc));
         log::debug!("New Websocket Added: {}", uid);
     }
 
     pub fn remove_client(&self, sc: &RemoteConnection) {
         let old = self.clients.borrow_mut().shift_remove(&sc.uid());
         if let Some(old) = old {
-            let _ = server().send_event_object("websockets:client_removed", vec![json!(sc.uid())], EventObject::Transport(old));
+            server().send_event_object("websockets:client_removed", vec![json!(sc.uid())], EventObject::Transport(old));
             log::debug!("Websocket Removed: {}", sc.uid());
         }
         self.check_closed_event();
@@ -560,7 +560,7 @@ async fn handle_identify(req: WebRequest) -> ApiResult {
         client_type
     );
     let uid = sc.uid();
-    let _ = server().send_event_object("websockets:client_identified", vec![json!(uid)], EventObject::Transport(sc));
+    server().send_event_object("websockets:client_identified", vec![json!(uid)], EventObject::Transport(sc));
     Ok(json!({"connection_id": uid}))
 }
 

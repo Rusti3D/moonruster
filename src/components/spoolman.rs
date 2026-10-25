@@ -381,7 +381,7 @@ impl SpoolManager {
         self.spool_id.set(spool_id);
         let _ = server().database().insert_item_sync(DB_NAMESPACE, &json!(ACTIVE_SPOOL_KEY), json!(spool_id));
         self.highest_epos.set(self.last_epos.get());
-        let _ = server().send_event("spoolman:active_spool_set", vec![json!({"spool_id": spool_id})]);
+        server().send_event("spoolman:active_spool_set", vec![json!({"spool_id": spool_id})]);
         log::info!("Setting active spool to: {}", spool_id.map(|i| i.to_string()).unwrap_or("None".into()));
     }
 
@@ -521,7 +521,7 @@ impl SpoolManager {
     }
 
     fn send_status_notification(&self) {
-        let _ = server().send_event("spoolman:spoolman_status_changed", vec![json!({"spoolman_connected": self.ws_connected.get()})]);
+        server().send_event("spoolman:spoolman_status_changed", vec![json!({"spoolman_connected": self.ws_connected.get()})]);
     }
 }
 

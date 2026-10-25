@@ -233,7 +233,7 @@ impl Provider {
         if notify {
             let mut m = Map::new();
             m.insert(name.to_string(), svc.clone());
-            let _ = server().send_event("machine:service_state_changed", vec![Value::Object(m)]);
+            server().send_event("machine:service_state_changed", vec![Value::Object(m)]);
         }
     }
 
@@ -370,7 +370,7 @@ impl Provider {
             if notify {
                 let mut m = Map::new();
                 m.insert(svc.to_string(), new_state);
-                let _ = server().send_event("machine:service_state_changed", vec![Value::Object(m)]);
+                server().send_event("machine:service_state_changed", vec![Value::Object(m)]);
             }
         }
     }

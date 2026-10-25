@@ -321,7 +321,7 @@ impl Observer {
                 fm.cancel_notification(&key);
             }
             crate::utils::sleep_ordered(std::time::Duration::from_millis(5)).await;
-            let _ = server().send_event("file_manager:filelist_changed", vec![result]);
+            server().send_event("file_manager:filelist_changed", vec![result]);
         });
     }
 }

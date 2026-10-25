@@ -508,7 +508,7 @@ impl InstallValidator {
             "!! ATTENTION: Moonraker requires sudo access to complete the update.  Go to the following URL and provide your linux password: {}",
             url
         );
-        let _ = srv.send_event("server:gcode_response", vec![json!(msg)]);
+        srv.send_event("server:gcode_response", vec![json!(msg)]);
     }
 
     pub async fn remove_announcement(&self) {

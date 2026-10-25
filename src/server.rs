@@ -98,6 +98,31 @@ pub fn spawn<F: std::future::Future<Output = ()> + 'static>(fut: F) -> tokio::ta
     tokio::task::spawn_local(fut)
 }
 
+/// An event's handlers, scheduled by send_event: awaiting it waits for
+/// them, dropping it leaves them running (not a Future, so it need not be
+/// used)
+pub struct EventSent(Option<tokio::task::JoinHandle<()>>);
+
+impl std::future::IntoFuture for EventSent {
+    type Output = ();
+    type IntoFuture = EventWait;
+    fn into_future(self) -> EventWait {
+        EventWait(self.0)
+    }
+}
+
+pub struct EventWait(Option<tokio::task::JoinHandle<()>>);
+
+impl std::future::Future for EventWait {
+    type Output = ();
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+        match self.0.as_mut() {
+            Some(h) => std::future::Future::poll(std::pin::Pin::new(h), cx).map(|_| ()),
+            None => std::task::Poll::Ready(()),
+        }
+    }
+}
+
 pub struct Server {
     pub app_args: RefCell<Map<String, Value>>,
     pub config: RefCell<Option<ConfigHelper>>,
@@ -629,28 +654,23 @@ impl Server {
         self.register_event_handler(event, Rc::new(move |args| Some(Box::pin(f(args)) as LocalBoxFuture<'static, ()>)));
     }
 
-    /// Schedules the event and returns a future that resolves when all
-    /// handlers complete.  The future may be dropped without awaiting.
-    pub fn send_event(&self, event: &str, args: Vec<Value>) -> impl std::future::Future<Output = ()> {
+    /// Schedules the event's handlers. Await the result to wait for them,
+    /// or drop it: they run either way.
+    pub fn send_event(&self, event: &str, args: Vec<Value>) -> EventSent {
         self.send_event_args(event, EventArgs { values: args, object: None, #[cfg(feature = "plugins")] py: None })
     }
 
     /// send_event of an event whose first argument is an object in Moonraker
-    pub fn send_event_object(&self, event: &str, args: Vec<Value>, object: EventObject) -> impl std::future::Future<Output = ()> {
+    pub fn send_event_object(&self, event: &str, args: Vec<Value>, object: EventObject) -> EventSent {
         self.send_event_args(event, EventArgs { values: args, object: Some(object), #[cfg(feature = "plugins")] py: None })
     }
 
-    fn send_event_args(&self, event: &str, args: EventArgs) -> impl std::future::Future<Output = ()> {
+    fn send_event_args(&self, event: &str, args: EventArgs) -> EventSent {
         // nothing to schedule for an event without handlers
-        let handle = self.events.borrow().contains_key(event).then(|| {
+        EventSent(self.events.borrow().contains_key(event).then(|| {
             let event = event.to_string();
             spawn(async move { server().process_event(&event, &args).await })
-        });
-        async move {
-            if let Some(h) = handle {
-                let _ = h.await;
-            }
-        }
+        }))
     }
 
     /// Server._process_event: call the event's handlers now; the future

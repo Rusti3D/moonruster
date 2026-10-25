@@ -552,7 +552,7 @@ impl Authorization {
     fn delayed_event(event: &'static str, username: String) {
         spawn(async move {
             crate::utils::sleep_ordered(std::time::Duration::from_millis(5)).await;
-            let _ = server().send_event(event, vec![json!({"username": username})]);
+            server().send_event(event, vec![json!({"username": username})]);
         });
     }
 

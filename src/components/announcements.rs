@@ -31,7 +31,7 @@ fn utcnow_naive_ts() -> f64 {
 fn delayed_event(delay: f64, event: &'static str, arg: Value) {
     spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs_f64(delay)).await;
-        let _ = server().send_event(event, vec![arg]);
+        server().send_event(event, vec![arg]);
     });
 }
 
@@ -163,7 +163,7 @@ impl EntryManager {
         entry["dismiss_wake"] = Value::Null;
         let eid = entry["entry_id"].clone();
         let _ = self.db.insert(key, entry);
-        let _ = server().send_event("announcements:dismiss_wake", vec![json!({"entry_id": eid})]);
+        server().send_event("announcements:dismiss_wake", vec![json!({"entry_id": eid})]);
     }
 
     fn prune_by_prefix(&self, prefix: &str, valid_ids: &[String]) -> bool {
@@ -511,7 +511,7 @@ impl Announcements {
         }
         if changed {
             let entries = self.entry_mgr.list_entries(true);
-            let _ = server().send_event("announcements:entries_updated", vec![json!({"entries": entries})]);
+            server().send_event("announcements:entries_updated", vec![json!({"entries": entries})]);
         }
     }
 
@@ -621,7 +621,7 @@ impl Announcements {
         let em = self.entry_mgr.clone();
         spawn(async move {
             let entries = em.list_entries(true);
-            let _ = server().send_event("announcements:entries_updated", vec![json!({"entries": entries})]);
+            server().send_event("announcements:entries_updated", vec![json!({"entries": entries})]);
         });
         entry
     }
@@ -630,7 +630,7 @@ impl Announcements {
         let ret = self.entry_mgr.remove_entry(entry_id)?;
         if !ret.is_null() {
             let entries = self.entry_mgr.list_entries(true);
-            let _ = server().send_event("announcements:entries_updated", vec![json!({"entries": entries})]);
+            server().send_event("announcements:entries_updated", vec![json!({"entries": entries})]);
         }
         Ok(())
     }

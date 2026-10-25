@@ -334,7 +334,7 @@ impl Sensors {
             }
         }
         if !changed.is_empty() {
-            let _ = server().send_event(SENSOR_EVENT_NAME, vec![Value::Object(changed)]);
+            server().send_event(SENSOR_EVENT_NAME, vec![Value::Object(changed)]);
         }
     }
 

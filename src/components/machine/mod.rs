@@ -425,7 +425,7 @@ impl Machine {
                 let m = self.clone();
                 spawn(async move {
                     crate::utils::sleep_ordered(std::time::Duration::from_millis(50)).await;
-                    let _ = server().send_event(
+                    server().send_event(
                         "machine:sudo_alert",
                         vec![json!({"sudo_requested": m.sudo_requested(), "request_messages": m.sudo_request_messages()})],
                     );
@@ -567,7 +567,7 @@ impl Machine {
 
     pub fn register_sudo_request(&self, cb: SudoCallback, message: &str) {
         self.sudo_requests.borrow_mut().push((cb, message.to_string()));
-        let _ = server().send_event(
+        server().send_event(
             "machine:sudo_alert",
             vec![json!({"sudo_requested": true, "request_messages": self.sudo_request_messages()})],
         );
@@ -643,7 +643,7 @@ impl Machine {
         if network_v != prev {
             self.find_public_ip();
             if notify {
-                let _ = server().send_event("machine:net_state_changed", vec![network_v.clone()]);
+                server().send_event("machine:net_state_changed", vec![network_v.clone()]);
             }
         }
         let mut si = self.system_info.borrow_mut();
@@ -781,7 +781,7 @@ impl Machine {
         }
         if src_ip != *self.public_ip.borrow() {
             *self.public_ip.borrow_mut() = src_ip.clone();
-            let _ = server().send_event("machine:public_ip_changed", vec![json!(src_ip)]);
+            server().send_event("machine:public_ip_changed", vec![json!(src_ip)]);
         }
         if src_ip.is_empty() {
             log::info!("Failed to detect local IP address");

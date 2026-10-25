@@ -248,7 +248,7 @@ impl ProcStats {
             }
         }
         let srv = server();
-        let _ = srv.send_event(
+        srv.send_event(
             "proc_stats:proc_stat_update",
             vec![json!({
                 "moonraker_stats": result,
@@ -266,7 +266,7 @@ impl ProcStats {
                 srv.add_log_rollover_item("throttled", &format!("CPU Throttled Flags: {}", crate::pyfmt::py_repr(&ts["flags"])), true);
             }
             if cur != self.last_throttled.get() {
-                let _ = srv.send_event("proc_stats:cpu_throttled", vec![ts.clone()]);
+                srv.send_event("proc_stats:cpu_throttled", vec![ts.clone()]);
             }
             self.last_throttled.set(cur);
             self.total_throttled.set(self.total_throttled.get() | cur);

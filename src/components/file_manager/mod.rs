@@ -1195,7 +1195,7 @@ impl FileManager {
             if let Some(fm) = fm.upgrade() {
                 fm.scheduled_notifications.borrow_mut().remove(&k);
             }
-            let _ = server().send_event("file_manager:filelist_changed", vec![n]);
+            server().send_event("file_manager:filelist_changed", vec![n]);
         });
         if !immediate {
             self.scheduled_notifications.borrow_mut().insert(key, handle);

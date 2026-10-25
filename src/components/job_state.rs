@@ -100,7 +100,7 @@ impl JobState {
         if let Some(info) = ps.get("info").and_then(|v| v.as_object()) {
             if let Some(cur_layer) = info.get("current_layer").filter(|v| !v.is_null()) {
                 let total = info.get("total_layer").cloned().unwrap_or(json!(0));
-                let _ = server().send_event("job_state:layer_changed", vec![cur_layer.clone(), total]);
+                server().send_event("job_state:layer_changed", vec![cur_layer.clone(), total]);
             }
         }
         let mut lps = self.last_print_stats.borrow_mut();
@@ -124,7 +124,7 @@ impl JobState {
             log::info!("Job Started: {}", new_ps.get("filename").map(crate::pyfmt::py_str).unwrap_or_default());
         }
         let srv = server();
-        let _ = srv.send_event(&format!("job_state:{}", state), vec![Value::Object(prev_ps.clone()), Value::Object(new_ps.clone())]);
+        srv.send_event(&format!("job_state:{}", state), vec![Value::Object(prev_ps.clone()), Value::Object(new_ps.clone())]);
         let ev = match JobEvent::from_string(state) {
             Ok(e) => e,
             Err(e) => {
@@ -133,7 +133,7 @@ impl JobState {
             }
         };
         self.last_event.set(ev);
-        let _ = srv.send_event_object(
+        srv.send_event_object(
             "job_state:state_changed",
             vec![json!(ev.as_str()), Value::Object(prev_ps.clone()), Value::Object(new_ps.clone())],
             EventObject::JobEvent(ev.as_str().to_string()),

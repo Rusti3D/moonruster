@@ -1025,7 +1025,7 @@ impl History {
         };
         let fields = job.fields.borrow().clone();
         let job = self.prep_requested_job(fields, &format!("{:06X}", id));
-        let _ = server().send_event("history:history_changed", vec![json!({"action": action, "job": job})]);
+        server().send_event("history:history_changed", vec![json!({"action": action, "job": job})]);
     }
 
     fn prep_requested_job(&self, mut job: Map<String, Value>, job_id: &str) -> Value {

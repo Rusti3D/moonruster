@@ -187,7 +187,7 @@ impl CommandHelper {
     }
 
     pub fn notify_update_refreshed(&self) {
-        let _ = server().send_event("update_manager:update_refreshed", vec![self.status_info()]);
+        server().send_event("update_manager:update_refreshed", vec![self.status_info()]);
     }
 
     pub fn notify_update_refreshed_delayed(self: &Rc<Self>) {
@@ -213,7 +213,7 @@ impl CommandHelper {
             "proc_id": self.cur_update_id.get(),
             "complete": done,
         });
-        let _ = server().send_event("update_manager:update_response", vec![notification]);
+        server().send_event("update_manager:update_response", vec![notification]);
     }
 
     pub async fn install_packages(&self, packages: &[String], timeout: f64, notify: bool) -> Result<(), ServerError> {

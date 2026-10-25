@@ -510,7 +510,7 @@ impl PowerDevice {
     }
 
     fn notify_power_changed(&self) {
-        let _ = server().send_event("power:power_changed", vec![self.get_device_info()]);
+        server().send_event("power:power_changed", vec![self.get_device_info()]);
     }
 
     fn schedule_firmware_restart(&self, state: KlippyState) {

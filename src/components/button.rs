@@ -80,7 +80,7 @@ impl GpioButton {
         self.notification_sent.set(true);
         let mut data = self.get_status();
         data["aux"] = result;
-        let _ = server().send_event("button:button_event", vec![data]);
+        server().send_event("button:button_event", vec![data]);
     }
 
     async fn on_gpio_event(self: Rc<Self>, eventtime: f64, elapsed_time: f64, pressed: i32) {

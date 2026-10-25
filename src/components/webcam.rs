@@ -508,7 +508,7 @@ impl WebcamManager {
             let _ = server().database().delete_item_sync("webcams", &json!(cam.uid()));
         }
         if rt != RequestType::GET {
-            let _ = server().send_event("webcam:webcams_changed", vec![json!({"webcams": self.list_webcams()})]);
+            server().send_event("webcam:webcams_changed", vec![json!({"webcams": self.list_webcams()})]);
         }
         Ok(json!({"webcam": data}))
     }

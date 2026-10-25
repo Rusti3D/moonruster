@@ -139,7 +139,7 @@ impl KlippyConnection {
             remote_method(move |p| {
                 if k.upgrade().is_some() {
                     let resp = p.get("response").cloned().unwrap_or(Value::Null);
-                    let _ = server().send_event("server:gcode_response", vec![resp]);
+                    server().send_event("server:gcode_response", vec![resp]);
                 }
             }),
         );
@@ -622,7 +622,7 @@ impl KlippyConnection {
             if self.state.get() != KlippyState::READY {
                 log::info!("\n{}", self.state_message());
                 if self.state.get() == KlippyState::SHUTDOWN && startup_state != KlippyState::SHUTDOWN {
-                    let _ = srv.send_event("server:klippy_shutdown", vec![]);
+                    srv.send_event("server:klippy_shutdown", vec![]);
                 }
             } else {
                 self.verify_klippy_requirements().await;
@@ -637,7 +637,7 @@ impl KlippyConnection {
                     log::info!("Klippy ready");
                     srv.send_event("server:klippy_ready", vec![]).await;
                     if self.state.get() == KlippyState::SHUTDOWN {
-                        let _ = srv.send_event("server:klippy_shutdown", vec![]);
+                        srv.send_event("server:klippy_shutdown", vec![]);
                     }
                 } else {
                     log::info!("Klippy state transition from ready during init, new state: {}", self.state.get());
@@ -790,7 +790,7 @@ impl KlippyConnection {
                 self.set_state_message(new_state, &state_message);
                 if new_state == KlippyState::SHUTDOWN && !self.klippy_initializing.get() && self.state.get() != KlippyState::SHUTDOWN {
                     log::info!("Klippy has shutdown");
-                    let _ = server().send_event("server:klippy_shutdown", vec![]);
+                    server().send_event("server:klippy_shutdown", vec![]);
                 }
                 self.state.set(new_state);
             }
@@ -825,7 +825,7 @@ impl KlippyConnection {
         if rpc_method == "gcode/script" {
             let script = web_request.get_str_or("script", "");
             if !script.is_empty() {
-                let _ = server().send_event("klippy_connection:gcode_received", vec![json!(script)]);
+                server().send_event("klippy_connection:gcode_received", vec![json!(script)]);
             }
         }
         self.request_standard(&rpc_method, Value::Object(web_request.args), None).await
