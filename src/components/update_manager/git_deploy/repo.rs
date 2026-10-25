@@ -1,274 +1,67 @@
-// Git Deployment implementation (port of update_manager/git_deploy.py)
+// GitRepo: the git commands and the repo state behind GitDeploy
 
-use super::common::*;
 use super::*;
-use crate::components::shell_command::{ExecOpts, ShellCommandError};
 
-const GIT_ASYNC_TIMEOUT: f64 = 300.0;
-const GIT_MAX_LOG_CNT: i64 = 100;
-const GIT_LOG_FMT: &str = "\"sha:%H%x1Dauthor:%an%x1Ddate:%ct%x1Dsubject:%s%x1Dmessage:%b%x1E\"";
-const GIT_REF_FMT: &str =
-    "'%(if)%(*objecttype)%(then)%(*objecttype) %(*objectname)%(else)%(objecttype) %(objectname)%(end) %(refname)'";
-const SRC_EXTS: [&str; 3] = [".py", ".c", ".cpp"];
-
-pub struct GitDeploy {
-    app: AppDeploy,
-    primary_branch: String,
-    repo: Rc<GitRepo>,
-}
-
-impl GitDeploy {
-    pub fn new(config: &ConfigHelper, cmd_helper: &Rc<CommandHelper>) -> Result<Self, ConfigError> {
-        let mut app = AppDeploy::new(config, cmd_helper, "Git Repo")?;
-        app.configure_path(config, true)?;
-        app.configure_virtualenv(config)?;
-        app.configure_dependencies(config, false)?;
-        app.configure_managed_services(config)?;
-        let origin = config.get("origin")?;
-        let moved_origin = config.get_opt("moved_origin")?;
-        let primary_branch = config.get_or("primary_branch", "master")?;
-        let mut pinned_commit = config.get_opt("pinned_commit")?;
-        if let Some(p) = &pinned_commit {
-            let p = p.to_lowercase();
-            if p.len() < 8 {
-                return Err(ConfigHelper::error(format!(
-                    "[{}]: Value for option 'commit' must be a minimum of 8 characters.",
-                    config.get_name()
-                )));
-            }
-            pinned_commit = Some(p);
-        }
-        let repo = Rc::new(GitRepo::new(
-            cmd_helper,
-            &app.path,
-            app.name(),
-            &origin,
-            moved_origin,
-            &primary_branch,
-            app.channel,
-            pinned_commit,
-        ));
-        Ok(GitDeploy { app, primary_branch, repo })
-    }
-
-    async fn update_repo_state(&self, need_fetch: bool, raise_exc: bool) -> Result<(), ServerError> {
-        self.app.is_valid.set(false);
-        let res = self.repo.refresh_repo_state(need_fetch).await;
-        if res.is_ok() {
-            self.app.is_valid.set(self.repo.is_valid());
-        }
-        self.app.base.log_info(&format!("Channel: {}", self.app.channel.name()));
-        if !self.app.is_valid.get() {
-            self.app.base.log_info("Repo validation check failed, updates disabled");
-        } else {
-            self.app.base.log_info("Validity check for git repo passed");
-        }
-        save_state(self);
-        match res {
-            Err(e) if raise_exc => Err(e),
-            _ => Ok(()),
-        }
-    }
-
-    async fn pull_repo(&self) -> Result<(), ServerError> {
-        self.app.base.notify_status("Updating Repo...", false);
-        let rb_state = self.repo.capture_state_for_rollback();
-        let res: Result<(), ServerError> = async {
-            self.repo.fetch().await?;
-            if self.repo.is_detached() {
-                self.repo.checkout(None).await?;
-            } else if self.repo.check_diverged().await? {
-                self.app.base.notify_status("Repo has diverged, attempting git reset", false);
-                self.repo.reset(None).await?;
-            } else {
-                self.repo.pull().await?;
-            }
-            Ok(())
-        }
-        .await;
-        match res {
-            Err(e) => {
-                if self.repo.st.borrow().repo_corrupt {
-                    self.app.is_valid.set(false);
-                    save_state(self);
-                    self.app.base.cmd_helper.notify_update_refreshed_delayed();
-                }
-                Err(self.app.base.log_exc(&e.message, true))
-            }
-            Ok(()) => {
-                self.repo.set_rollback_state(Some(rb_state));
-                Ok(())
-            }
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl Deployer for GitDeploy {
-    fn base(&self) -> &BaseDeploy {
-        &self.app.base
-    }
-    fn kind(&self) -> DeployKind {
-        DeployKind::Git
-    }
-    fn app(&self) -> Option<&AppDeploy> {
-        Some(&self.app)
-    }
-
-    async fn initialize(&self) -> Map<String, Value> {
-        let storage = self.app.initialize();
-        self.repo.restore_state(&storage);
-        self.app.is_valid.set(self.repo.is_valid());
-        if !self.app.base.needs_refresh(false) {
-            self.repo.log_repo_info();
-        }
-        storage
-    }
-
-    async fn refresh(&self) -> Result<(), ServerError> {
-        self.update_repo_state(true, false).await
-    }
-
-    async fn update(&self) -> Result<bool, ServerError> {
-        self.repo.wait_for_refresh().await;
-        if !self.app.is_valid.get() {
-            return Err(self.app.base.log_exc("Update aborted, repo not valid", false));
-        }
-        if self.repo.is_dirty() {
-            return Err(self.app.base.log_exc("Update aborted, repo has been modified", false));
-        }
-        if self.repo.is_current() {
-            return Ok(false);
-        }
-        self.app.base.cmd_helper.notify_update_response(&format!("Updating Application {}...", self.app.name()), false);
-        let dep_info = self.app.collect_dependency_info();
-        self.pull_repo().await?;
-        self.app.update_dependencies(&dep_info, false).await;
-        self.update_repo_state(false, true).await?;
-        self.app.restart_service().await?;
-        self.app.base.notify_status("Update Finished...", true);
-        Ok(true)
-    }
-
-    async fn recover(&self, hard: bool, force_dep_update: bool) -> Result<(), ServerError> {
-        self.app.base.notify_status("Attempting Repo Recovery...", false);
-        let dep_info = self.app.collect_dependency_info();
-        if hard {
-            self.repo.clone_repo().await?;
-            self.update_repo_state(true, true).await?;
-        } else {
-            self.app.base.notify_status("Resetting Git Repo...", false);
-            let reset_ref = self.repo.get_recovery_ref(None).await?;
-            if self.repo.is_dirty() {
-                let _ = self.repo.checkout(Some("-- .")).await;
-            }
-            self.repo.checkout(Some(&self.primary_branch)).await?;
-            self.repo.reset(Some(&reset_ref)).await?;
-            self.update_repo_state(true, true).await?;
-        }
-        self.repo.set_rollback_state(None);
-        if self.repo.is_dirty() || !self.app.is_valid.get() {
-            return Err(ServerError::new("Recovery attempt failed, repo state not pristine", 500));
-        }
-        self.app.update_dependencies(&dep_info, force_dep_update).await;
-        self.app.restart_service().await?;
-        self.app.base.notify_status("Reinstall Complete", true);
-        Ok(())
-    }
-
-    async fn rollback(&self) -> Result<bool, ServerError> {
-        let dep_info = self.app.collect_dependency_info();
-        let ret = self.repo.rollback().await?;
-        let msg = if ret {
-            self.app.update_dependencies(&dep_info, false).await;
-            self.update_repo_state(false, true).await?;
-            self.app.restart_service().await?;
-            "Rollback Complete"
-        } else {
-            "Rollback not performed"
-        };
-        self.app.base.notify_status(msg, true);
-        Ok(ret)
-    }
-
-    fn get_update_status(&self) -> Value {
-        let mut status = self.app.get_update_status();
-        for (k, v) in self.repo.get_repo_status(self.app.report_anomalies) {
-            status.insert(k, v);
-        }
-        status.insert("name".into(), json!(self.app.name()));
-        Value::Object(status)
-    }
-
-    fn get_persistent_data(&self) -> Map<String, Value> {
-        let mut storage = self.app.get_persistent_data();
-        for (k, v) in self.repo.get_persistent_data() {
-            storage.insert(k, v);
-        }
-        storage
-    }
-}
-
-struct RepoState {
-    valid_git_repo: bool,
-    git_owner: String,
-    git_repo_name: String,
-    git_remote: String,
-    git_branch: String,
-    current_version: Version,
-    upstream_version: Version,
-    current_commit: String,
-    upstream_commit: String,
-    upstream_url: String,
-    recovery_url: String,
-    branches: Vec<String>,
-    head_detached: bool,
-    git_messages: Vec<String>,
-    commits_behind: Vec<Value>,
-    commits_behind_count: i64,
-    diverged: bool,
-    repo_corrupt: bool,
-    modified_files: Vec<String>,
-    untracked_files: Vec<String>,
-    rollback_commit: String,
-    rollback_branch: String,
-    rollback_version: Version,
-    pinned_commit_valid: bool,
-    is_shallow: bool,
-    git_folder_path: PathBuf,
-    repo_warnings: Vec<String>,
-    repo_anomalies: Vec<String>,
+pub(super) struct RepoState {
+    pub(super) valid_git_repo: bool,
+    pub(super) git_owner: String,
+    pub(super) git_repo_name: String,
+    pub(super) git_remote: String,
+    pub(super) git_branch: String,
+    pub(super) current_version: Version,
+    pub(super) upstream_version: Version,
+    pub(super) current_commit: String,
+    pub(super) upstream_commit: String,
+    pub(super) upstream_url: String,
+    pub(super) recovery_url: String,
+    pub(super) branches: Vec<String>,
+    pub(super) head_detached: bool,
+    pub(super) git_messages: Vec<String>,
+    pub(super) commits_behind: Vec<Value>,
+    pub(super) commits_behind_count: i64,
+    pub(super) diverged: bool,
+    pub(super) repo_corrupt: bool,
+    pub(super) modified_files: Vec<String>,
+    pub(super) untracked_files: Vec<String>,
+    pub(super) rollback_commit: String,
+    pub(super) rollback_branch: String,
+    pub(super) rollback_version: Version,
+    pub(super) pinned_commit_valid: bool,
+    pub(super) is_shallow: bool,
+    pub(super) git_folder_path: PathBuf,
+    pub(super) repo_warnings: Vec<String>,
+    pub(super) repo_anomalies: Vec<String>,
 }
 
 pub struct RollbackState {
-    commit: String,
-    branch: String,
-    version: Version,
+    pub(super) commit: String,
+    pub(super) branch: String,
+    pub(super) version: Version,
 }
 
 pub struct GitRepo {
-    cmd_helper: Rc<CommandHelper>,
-    alias: String,
-    src_path: PathBuf,
-    backup_path: PathBuf,
-    origin_url: String,
-    moved_origin_url: Option<String>,
-    primary_branch: String,
-    channel: Channel,
-    pinned_commit: Option<String>,
-    refresh_lock: tokio::sync::Mutex<()>,
-    git_operation_lock: tokio::sync::Mutex<()>,
-    fetch_input_recd: Rc<Cell<bool>>,
-    st: Rc<RefCell<RepoState>>,
+    pub(super) cmd_helper: Rc<CommandHelper>,
+    pub(super) alias: String,
+    pub(super) src_path: PathBuf,
+    pub(super) backup_path: PathBuf,
+    pub(super) origin_url: String,
+    pub(super) moved_origin_url: Option<String>,
+    pub(super) primary_branch: String,
+    pub(super) channel: Channel,
+    pub(super) pinned_commit: Option<String>,
+    pub(super) refresh_lock: tokio::sync::Mutex<()>,
+    pub(super) git_operation_lock: tokio::sync::Mutex<()>,
+    pub(super) fetch_input_recd: Rc<Cell<bool>>,
+    pub(super) st: Rc<RefCell<RepoState>>,
 }
 
-fn ok_str(r: Result<String, ShellCommandError>) -> Result<String, ServerError> {
+pub(super) fn ok_str(r: Result<String, ShellCommandError>) -> Result<String, ServerError> {
     r.map_err(ServerError::from)
 }
 
 impl GitRepo {
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    pub(super) fn new(
         cmd_helper: &Rc<CommandHelper>,
         src_path: &Path,
         alias: &str,
@@ -330,7 +123,7 @@ impl GitRepo {
         }
     }
 
-    fn restore_state(&self, storage: &Map<String, Value>) {
+    pub(super) fn restore_state(&self, storage: &Map<String, Value>) {
         let s = |k: &str, d: &str| storage.get(k).and_then(|v| v.as_str()).unwrap_or(d).to_string();
         let b = |k: &str, d: bool| storage.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
         let l = |k: &str| -> Vec<String> {
@@ -380,7 +173,7 @@ impl GitRepo {
         self.check_warnings();
     }
 
-    fn get_persistent_data(&self) -> Map<String, Value> {
+    pub(super) fn get_persistent_data(&self) -> Map<String, Value> {
         let st = self.st.borrow();
         let v = json!({
             "repo_valid": st.valid_git_repo,
@@ -411,7 +204,7 @@ impl GitRepo {
         v.as_object().cloned().unwrap()
     }
 
-    async fn refresh_repo_state(&self, mut need_fetch: bool) -> Result<(), ServerError> {
+    pub(super) async fn refresh_repo_state(&self, mut need_fetch: bool) -> Result<(), ServerError> {
         let in_progress = self.refresh_lock.try_lock().is_err();
         let _g = self.refresh_lock.lock().await;
         if in_progress {
@@ -512,7 +305,7 @@ impl GitRepo {
         }
     }
 
-    async fn check_repo_status(&self) -> bool {
+    pub(super) async fn check_repo_status(&self) -> bool {
         let _g = self.git_operation_lock.lock().await;
         self.st.borrow_mut().valid_git_repo = false;
         if !self.detect_git_dir() {
@@ -565,7 +358,7 @@ impl GitRepo {
         true
     }
 
-    fn detect_git_dir(&self) -> bool {
+    pub(super) fn detect_git_dir(&self) -> bool {
         let gfp = self.st.borrow().git_folder_path.clone();
         if gfp.is_file() {
             let data = std::fs::read_to_string(&gfp).unwrap_or_default();
@@ -595,7 +388,7 @@ impl GitRepo {
         false
     }
 
-    async fn find_current_branch(&self) -> Result<(), ServerError> {
+    pub(super) async fn find_current_branch(&self) -> Result<(), ServerError> {
         let blist = self.list_branches().await?;
         let mut current_branch = "?".to_string();
         let mut branches = Vec::new();
@@ -658,7 +451,7 @@ impl GitRepo {
         Ok(())
     }
 
-    async fn check_moved_origin(&self) -> Result<bool, ServerError> {
+    pub(super) async fn check_moved_origin(&self) -> Result<bool, ServerError> {
         let upstream_url = self.st.borrow().upstream_url.clone();
         let mut detected = upstream_url.to_lowercase().trim().to_string();
         if !detected.ends_with(".git") {
@@ -706,7 +499,7 @@ impl GitRepo {
         Ok(moved)
     }
 
-    async fn get_upstream_version(&self) -> Result<Version, ServerError> {
+    pub(super) async fn get_upstream_version(&self) -> Result<Version, ServerError> {
         self.st.borrow_mut().commits_behind_count = 0;
         let upstream_ver_str;
         let (remote, branch, current_commit) = {
@@ -759,7 +552,7 @@ impl GitRepo {
         Ok(Version::git(&upstream_ver_str))
     }
 
-    async fn set_versions(&self, mut current: Version, mut upstream: Version) -> Result<(), ServerError> {
+    pub(super) async fn set_versions(&self, mut current: Version, mut upstream: Version) -> Result<(), ServerError> {
         if !current.is_valid_version() {
             let mut log_msg = format!("Git repo {}: Failed to detect current version, got '{}'. ", self.alias, current);
             let tag = upstream.infer_last_tag();
@@ -805,13 +598,13 @@ impl GitRepo {
         Ok(())
     }
 
-    async fn wait_for_refresh(&self) {
+    pub(super) async fn wait_for_refresh(&self) {
         if self.refresh_lock.try_lock().is_err() {
             let _g = self.refresh_lock.lock().await;
         }
     }
 
-    async fn is_ancestor(&self, ancestor: &str, descendent: &str, attempts: usize) -> Result<bool, ServerError> {
+    pub(super) async fn is_ancestor(&self, ancestor: &str, descendent: &str, attempts: usize) -> Result<bool, ServerError> {
         self.verify_repo(false)?;
         let cmd = format!("merge-base --is-ancestor {} {}", ancestor, descendent);
         let _g = self.git_operation_lock.lock().await;
@@ -832,7 +625,7 @@ impl GitRepo {
         Ok(true)
     }
 
-    async fn check_diverged(&self) -> Result<bool, ServerError> {
+    pub(super) async fn check_diverged(&self) -> Result<bool, ServerError> {
         self.verify_repo(true)?;
         let (detached, remote, branch) = {
             let st = self.st.borrow();
@@ -844,7 +637,7 @@ impl GitRepo {
         Ok(!self.is_ancestor("HEAD", &format!("{}/{}", remote, branch), 3).await?)
     }
 
-    fn log_repo_info(&self) {
+    pub(super) fn log_repo_info(&self) {
         let mut warnings = self.generate_warn_msg();
         if !warnings.is_empty() {
             warnings = format!("\nRepo Warnings:\n{}", warnings);
@@ -877,7 +670,7 @@ impl GitRepo {
         );
     }
 
-    fn check_warnings(&self) {
+    pub(super) fn check_warnings(&self) {
         let debug = server().is_debug_enabled();
         {
             let mut st = self.st.borrow_mut();
@@ -941,7 +734,7 @@ impl GitRepo {
         self.generate_warn_msg();
     }
 
-    fn generate_warn_msg(&self) -> String {
+    pub(super) fn generate_warn_msg(&self) -> String {
         let st = self.st.borrow();
         let mut ro_msg = format!("Git Repo {}: No warnings detected", self.alias);
         let mut warn_msg = String::new();
@@ -954,7 +747,7 @@ impl GitRepo {
         warn_msg
     }
 
-    fn verify_repo(&self, check_remote: bool) -> Result<(), ServerError> {
+    pub(super) fn verify_repo(&self, check_remote: bool) -> Result<(), ServerError> {
         let st = self.st.borrow();
         if !st.valid_git_repo {
             return Err(ServerError::bad(format!("Git Repo {}: repo not initialized", self.alias)));
@@ -965,7 +758,7 @@ impl GitRepo {
         Ok(())
     }
 
-    async fn reset(&self, r: Option<&str>) -> Result<(), ServerError> {
+    pub(super) async fn reset(&self, r: Option<&str>) -> Result<(), ServerError> {
         let _g = self.git_operation_lock.lock().await;
         let r = match r {
             Some(r) => r.to_string(),
@@ -986,14 +779,14 @@ impl GitRepo {
         Ok(())
     }
 
-    async fn fetch(&self) -> Result<(), ServerError> {
+    pub(super) async fn fetch(&self) -> Result<(), ServerError> {
         self.verify_repo(true)?;
         let _g = self.git_operation_lock.lock().await;
         let remote = self.st.borrow().git_remote.clone();
         self.run_git_cmd_async(&format!("fetch {} --prune --progress", remote), 5, true, true).await
     }
 
-    async fn pull(&self) -> Result<(), ServerError> {
+    pub(super) async fn pull(&self) -> Result<(), ServerError> {
         self.verify_repo(false)?;
         if self.st.borrow().head_detached {
             return Err(ServerError::bad(format!("Git Repo {}: Cannot perform pull on a detached HEAD", self.alias)));
@@ -1010,45 +803,45 @@ impl GitRepo {
         self.run_git_cmd_async(&cmd, 5, true, true).await
     }
 
-    async fn list_branches(&self) -> Result<Vec<String>, ServerError> {
+    pub(super) async fn list_branches(&self) -> Result<Vec<String>, ServerError> {
         self.verify_repo(false)?;
         let _g = self.git_operation_lock.lock().await;
         let resp = ok_str(self.run_git_cmd("branch --list --no-color", 20.0, 5, None, None, true).await)?;
         Ok(resp.trim().split('\n').map(String::from).collect())
     }
 
-    async fn check_commit_exists(&self, commit: &str) -> Result<bool, ServerError> {
+    pub(super) async fn check_commit_exists(&self, commit: &str) -> Result<bool, ServerError> {
         self.verify_repo(false)?;
         let _g = self.git_operation_lock.lock().await;
         Ok(self.run_git_cmd(&format!("cat-file -e {}^{{commit}}", commit), 20.0, 1, None, None, true).await.is_ok())
     }
 
-    async fn remote(&self, command: &str, validate: bool) -> Result<String, ServerError> {
+    pub(super) async fn remote(&self, command: &str, validate: bool) -> Result<String, ServerError> {
         self.verify_repo(validate)?;
         let _g = self.git_operation_lock.lock().await;
         Ok(ok_str(self.run_git_cmd(&format!("remote {}", command), 20.0, 5, None, None, true).await)?.trim().to_string())
     }
 
-    async fn simple(&self, cmd: &str, args: &str) -> Result<String, ServerError> {
+    pub(super) async fn simple(&self, cmd: &str, args: &str) -> Result<String, ServerError> {
         self.verify_repo(false)?;
         let _g = self.git_operation_lock.lock().await;
         let full = format!("{} {}", cmd, args);
         Ok(ok_str(self.run_git_cmd(full.trim(), 20.0, 5, None, None, true).await)?.trim().to_string())
     }
 
-    async fn describe(&self, args: &str) -> Result<String, ServerError> {
+    pub(super) async fn describe(&self, args: &str) -> Result<String, ServerError> {
         self.simple("describe", args).await
     }
 
-    async fn rev_parse(&self, args: &str) -> Result<String, ServerError> {
+    pub(super) async fn rev_parse(&self, args: &str) -> Result<String, ServerError> {
         self.simple("rev-parse", args).await
     }
 
-    async fn rev_list(&self, args: &str) -> Result<String, ServerError> {
+    pub(super) async fn rev_list(&self, args: &str) -> Result<String, ServerError> {
         self.simple("rev-list", args).await
     }
 
-    async fn config_get(&self, key: &str, pattern: &str, get_all: bool, local_only: bool) -> Result<Option<String>, ServerError> {
+    pub(super) async fn config_get(&self, key: &str, pattern: &str, get_all: bool, local_only: bool) -> Result<Option<String>, ServerError> {
         let local = if local_only { "--local " } else { "" };
         let cmd = if get_all { format!("{}--get-all", local) } else { format!("{}--get", local) };
         let args = if pattern.is_empty() { format!("{} {}", cmd, key) } else { format!("{} {} '{}'", cmd, key, pattern) };
@@ -1059,7 +852,7 @@ impl GitRepo {
         }
     }
 
-    async fn config_cmd(&self, args: &str) -> Result<String, ShellCommandError> {
+    pub(super) async fn config_cmd(&self, args: &str) -> Result<String, ShellCommandError> {
         if let Err(e) = self.verify_repo(false) {
             return Err(ShellCommandError { message: e.message, return_code: None, stdout: vec![], stderr: vec![], status_code: 400 });
         }
@@ -1079,7 +872,7 @@ impl GitRepo {
         Err(ShellCommandError { message: "Failed to run git-config".into(), return_code: None, stdout: vec![], stderr: vec![], status_code: 400 })
     }
 
-    async fn checkout(&self, branch: Option<&str>) -> Result<(), ServerError> {
+    pub(super) async fn checkout(&self, branch: Option<&str>) -> Result<(), ServerError> {
         self.verify_repo(false)?;
         let mut reset_commit = None;
         {
@@ -1102,13 +895,13 @@ impl GitRepo {
         Ok(())
     }
 
-    fn is_submodule_or_worktree(&self) -> bool {
+    pub(super) fn is_submodule_or_worktree(&self) -> bool {
         let gfp = self.st.borrow().git_folder_path.clone();
         self.src_path.join(".git").is_file()
             && gfp.parent().and_then(|p| p.file_name()).map(|n| n == "modules" || n == "worktrees").unwrap_or(false)
     }
 
-    fn get_repo_type(&self) -> &'static str {
+    pub(super) fn get_repo_type(&self) -> &'static str {
         let gfp = self.st.borrow().git_folder_path.clone();
         match gfp.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).as_deref() {
             Some("modules") => "submodule",
@@ -1117,7 +910,7 @@ impl GitRepo {
         }
     }
 
-    async fn clone_repo(&self) -> Result<(), ServerError> {
+    pub(super) async fn clone_repo(&self) -> Result<(), ServerError> {
         if self.is_submodule_or_worktree() {
             return Err(ServerError::bad(format!(
                 "Cannot clone git repo {}, it is a {} of another git repo.",
@@ -1167,7 +960,7 @@ impl GitRepo {
         Ok(())
     }
 
-    async fn rollback(&self) -> Result<bool, ServerError> {
+    pub(super) async fn rollback(&self) -> Result<bool, ServerError> {
         let (rc, rb, branch, cc) = {
             let st = self.st.borrow();
             (st.rollback_commit.clone(), st.rollback_branch.clone(), st.git_branch.clone(), st.current_commit.clone())
@@ -1184,7 +977,7 @@ impl GitRepo {
         Ok(true)
     }
 
-    fn capture_state_for_rollback(&self) -> RollbackState {
+    pub(super) fn capture_state_for_rollback(&self) -> RollbackState {
         let st = self.st.borrow();
         let mut branch = st.git_branch.clone();
         if st.head_detached {
@@ -1194,7 +987,7 @@ impl GitRepo {
         RollbackState { commit: st.current_commit.clone(), branch, version: st.current_version.clone() }
     }
 
-    fn set_rollback_state(&self, rb: Option<RollbackState>) {
+    pub(super) fn set_rollback_state(&self, rb: Option<RollbackState>) {
         let rb = rb.unwrap_or_else(|| self.capture_state_for_rollback());
         let mut st = self.st.borrow_mut();
         st.rollback_commit = rb.commit;
@@ -1202,7 +995,7 @@ impl GitRepo {
         st.rollback_version = rb.version;
     }
 
-    async fn get_commits_behind(&self) -> Result<Vec<Map<String, Value>>, ServerError> {
+    pub(super) async fn get_commits_behind(&self) -> Result<Vec<Map<String, Value>>, ServerError> {
         self.verify_repo(false)?;
         if self.is_current() {
             return Ok(vec![]);
@@ -1239,7 +1032,7 @@ impl GitRepo {
         Ok(out)
     }
 
-    async fn get_tagged_commits(&self, count: i64) -> Result<IndexMap<String, String>, ServerError> {
+    pub(super) async fn get_tagged_commits(&self, count: i64) -> Result<IndexMap<String, String>, ServerError> {
         self.verify_repo(true)?;
         let tip = {
             let st = self.st.borrow();
@@ -1270,7 +1063,7 @@ impl GitRepo {
         Ok(tagged)
     }
 
-    fn get_repo_status(&self, rpt_anomalies: bool) -> Map<String, Value> {
+    pub(super) fn get_repo_status(&self, rpt_anomalies: bool) -> Map<String, Value> {
         let st = self.st.borrow();
         let no_untrk = st.untracked_files.is_empty();
         let anomalies: Vec<String> = if rpt_anomalies { st.repo_anomalies.clone() } else { vec![] };
@@ -1304,20 +1097,20 @@ impl GitRepo {
         .unwrap()
     }
 
-    fn is_detached(&self) -> bool {
+    pub(super) fn is_detached(&self) -> bool {
         self.st.borrow().head_detached
     }
 
-    fn is_dirty(&self) -> bool {
+    pub(super) fn is_dirty(&self) -> bool {
         self.st.borrow().current_version.dirty()
     }
 
-    fn is_current(&self) -> bool {
+    pub(super) fn is_current(&self) -> bool {
         let st = self.st.borrow();
         st.current_commit == st.upstream_commit
     }
 
-    fn is_valid(&self) -> bool {
+    pub(super) fn is_valid(&self) -> bool {
         let st = self.st.borrow();
         let detached_err = if server().is_debug_enabled() { false } else { st.head_detached };
         ![&st.git_branch, &st.git_remote, &st.upstream_commit].iter().any(|s| s.as_str() == "?")
@@ -1325,7 +1118,7 @@ impl GitRepo {
             && !(st.diverged || st.current_version.dirty() || detached_err)
     }
 
-    async fn get_recovery_ref(&self, upstream_ref: Option<&str>) -> Result<String, ServerError> {
+    pub(super) async fn get_recovery_ref(&self, upstream_ref: Option<&str>) -> Result<String, ServerError> {
         let upstream_ref = match upstream_ref {
             Some(r) => r.to_string(),
             None => {
@@ -1357,7 +1150,7 @@ impl GitRepo {
         Ok(upstream_ref)
     }
 
-    fn check_lock_file_exists(&self, remove: bool) -> bool {
+    pub(super) fn check_lock_file_exists(&self, remove: bool) -> bool {
         let lock_path = self.st.borrow().git_folder_path.join("index.lock");
         if lock_path.is_file() {
             if remove {
@@ -1369,7 +1162,7 @@ impl GitRepo {
         false
     }
 
-    async fn wait_for_lock_release(&self, mut timeout: i64) {
+    pub(super) async fn wait_for_lock_release(&self, mut timeout: i64) {
         while timeout > 0 {
             if self.check_lock_file_exists(false) {
                 if timeout % 10 == 0 {
@@ -1384,7 +1177,7 @@ impl GitRepo {
         self.check_lock_file_exists(true);
     }
 
-    async fn repair_loose_objects(&self, notify: bool) -> bool {
+    pub(super) async fn repair_loose_objects(&self, notify: bool) -> bool {
         if notify {
             self.cmd_helper.notify_update_response("Attempting to repair loose objects...", false);
         }
@@ -1416,7 +1209,7 @@ impl GitRepo {
         true
     }
 
-    async fn run_git_cmd_async(&self, cmd: &str, mut attempts: usize, need_git_path: bool, mut fix_loose: bool) -> Result<(), ServerError> {
+    pub(super) async fn run_git_cmd_async(&self, cmd: &str, mut attempts: usize, need_git_path: bool, mut fix_loose: bool) -> Result<(), ServerError> {
         self.wait_for_lock_release(60).await;
         let mut env: HashMap<String, String> = std::env::vars().collect();
         env.insert("GIT_HTTP_LOW_SPEED_LIMIT".into(), "1000".into());
@@ -1492,7 +1285,7 @@ impl GitRepo {
         Err(ServerError::bad(format!("Git Command '{}' failed", cmd)))
     }
 
-    async fn run_git_cmd(
+    pub(super) async fn run_git_cmd(
         &self,
         git_args: &str,
         timeout: f64,

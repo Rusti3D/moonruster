@@ -147,33 +147,33 @@ impl From<RegisterError> for ServerError {
 
 #[async_trait(?Send)]
 pub trait Deployer {
-    pub(super) fn base(&self) -> &BaseDeploy;
-    pub(super) fn kind(&self) -> DeployKind;
-    pub(super) fn app(&self) -> Option<&AppDeploy> {
+    fn base(&self) -> &BaseDeploy;
+    fn kind(&self) -> DeployKind;
+    fn app(&self) -> Option<&AppDeploy> {
         None
     }
-    pub(super) async fn initialize(&self) -> Map<String, Value> {
+    async fn initialize(&self) -> Map<String, Value> {
         self.base().initialize()
     }
-    pub(super) async fn refresh(&self) -> Result<(), ServerError> {
+    async fn refresh(&self) -> Result<(), ServerError> {
         Ok(())
     }
-    pub(super) async fn update(&self) -> Result<bool, ServerError> {
+    async fn update(&self) -> Result<bool, ServerError> {
         Ok(false)
     }
-    pub(super) async fn rollback(&self) -> Result<bool, ServerError> {
+    async fn rollback(&self) -> Result<bool, ServerError> {
         Err(ServerError::bad(format!("Rollback not available for {}", self.base().name)))
     }
-    pub(super) async fn recover(&self, _hard: bool, _force_dep_update: bool) -> Result<(), ServerError> {
+    async fn recover(&self, _hard: bool, _force_dep_update: bool) -> Result<(), ServerError> {
         Err(ServerError::exc("NotImplementedError"))
     }
-    pub(super) fn get_update_status(&self) -> Value {
+    fn get_update_status(&self) -> Value {
         json!({})
     }
-    pub(super) fn get_persistent_data(&self) -> Map<String, Value> {
+    fn get_persistent_data(&self) -> Map<String, Value> {
         self.base().persistent_data()
     }
-    pub(super) async fn close(&self) {}
+    async fn close(&self) {}
 }
 
 pub struct PlainDeploy {
