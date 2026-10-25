@@ -14,6 +14,48 @@ use std::rc::Rc;
 use tokio::io::AsyncWriteExt;
 
 const MAX_BODY_SIZE: usize = 512 * 1024 * 1024;
+
+/// tornado's GzipDecompressor: a gzip response body (decompress_response,
+/// tornado's default, asks for one), decompressed as it arrives
+struct Gunzip(flate2::write::GzDecoder<Vec<u8>>);
+
+impl Gunzip {
+    /// A decompressor when the response is gzip encoded: tornado renames the
+    /// header to X-Consumed-Content-Encoding, Content-Length stays
+    fn for_headers(headers: &mut IndexMap<String, String>) -> Option<Gunzip> {
+        if !headers.get("Content-Encoding").is_some_and(|e| e.eq_ignore_ascii_case("gzip")) {
+            return None;
+        }
+        let enc = headers.shift_remove("Content-Encoding").unwrap_or_default();
+        headers.insert("X-Consumed-Content-Encoding".into(), enc);
+        Some(Gunzip::new())
+    }
+
+    fn new() -> Gunzip {
+        Gunzip(flate2::write::GzDecoder::new(Vec::new()))
+    }
+
+    /// The data decompressed from a chunk. Bytes after the gzip member are
+    /// ignored, as zlib's unused_data.
+    fn feed(&mut self, mut chunk: &[u8]) -> std::io::Result<Vec<u8>> {
+        while !chunk.is_empty() {
+            let n = std::io::Write::write(&mut self.0, chunk)?;
+            if n == 0 {
+                break;
+            }
+            chunk = &chunk[n..];
+        }
+        std::io::Write::flush(&mut self.0)?;
+        Ok(std::mem::take(self.0.get_mut()))
+    }
+}
+
+/// HTTPRequest's decompress_response (on by default): Accept-Encoding gzip,
+/// whatever the caller gave
+fn accept_gzip(headers: &mut Vec<(String, String)>) {
+    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Accept-Encoding"));
+    headers.push(("Accept-Encoding".into(), "gzip".into()));
+}
 const GITHUB_PREFIX: &str = "https://api.github.com/";
 
 #[derive(Clone, Debug)]
@@ -198,6 +240,7 @@ impl HttpClient {
             all_headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
             all_headers.push((k, v));
         }
+        accept_gzip(&mut all_headers);
         let timeout = 1.0 + opts.connect_timeout + opts.request_timeout;
         let mut err: Option<HttpErrorKind> = None;
         let mut result: Option<HttpResponse> = None;
@@ -217,30 +260,35 @@ impl HttpClient {
                 rb = rb.basic_auth(u, Some(p));
             }
             let fut = async {
-                let resp = rb.send().await?;
+                let resp = rb.send().await.map_err(|e| (e.is_timeout(), e.to_string()))?;
                 let code = resp.status().as_u16();
                 let final_url = resp.url().to_string();
                 let mut hdrs = IndexMap::new();
                 for (k, v) in resp.headers() {
                     hdrs.insert(title_case(k.as_str()), String::from_utf8_lossy(v.as_bytes()).to_string());
                 }
+                let mut gunzip = Gunzip::for_headers(&mut hdrs);
                 let mut content = Vec::new();
                 let mut stream = resp.bytes_stream();
                 while let Some(chunk) = stream.next().await {
-                    let chunk = chunk?;
-                    if content.len() + chunk.len() > MAX_BODY_SIZE {
+                    let chunk = chunk.map_err(|e| (e.is_timeout(), e.to_string()))?;
+                    let data = match gunzip.as_mut() {
+                        Some(g) => g.feed(&chunk).map_err(|e| (false, e.to_string()))?,
+                        None => chunk.to_vec(),
+                    };
+                    if content.len() + data.len() > MAX_BODY_SIZE {
                         break;
                     }
-                    content.extend_from_slice(&chunk);
+                    content.extend_from_slice(&data);
                 }
-                Ok::<_, reqwest::Error>((code, final_url, hdrs, content))
+                Ok::<_, (bool, String)>((code, final_url, hdrs, content))
             };
             match tokio::time::timeout(std::time::Duration::from_secs_f64(timeout), fut).await {
                 Err(_) => {
                     err = Some(HttpErrorKind::Other("TimeoutError()".into()));
                 }
-                Ok(Err(e)) => {
-                    if e.is_timeout() {
+                Ok(Err((is_timeout, message))) => {
+                    if is_timeout {
                         err = Some(HttpErrorKind::Http { code: 599, message: "Timeout during request".into() });
                         if opts.attempts - i == 1 {
                             result = Some(HttpResponse {
@@ -255,7 +303,7 @@ impl HttpClient {
                         }
                         continue;
                     }
-                    err = Some(HttpErrorKind::Other(e.to_string()));
+                    err = Some(HttpErrorKind::Other(message));
                 }
                 Ok(Ok((code, final_url, hdrs, content))) => {
                     let resp_err = if (200..300).contains(&code) {
@@ -372,6 +420,7 @@ impl HttpClient {
                     .client
                     .get(url)
                     .header("Accept", content_type)
+                    .header("Accept-Encoding", "gzip")
                     .timeout(std::time::Duration::from_secs_f64(request_timeout))
                     .send()
                     .await
@@ -392,12 +441,20 @@ impl HttpClient {
                         }
                     }
                 }
+                let gzip = resp.headers().get("content-encoding").is_some_and(|e| e.as_bytes().eq_ignore_ascii_case(b"gzip"));
+                let mut gunzip = gzip.then(Gunzip::new);
                 let mut file: Option<tokio::fs::File> = None;
                 let mut total: i64 = 0;
                 let mut pct_done: i64 = 0;
                 let mut stream = resp.bytes_stream();
                 while let Some(chunk) = stream.next().await {
                     let chunk = chunk.map_err(|e| e.to_string())?;
+                    // decompressed as tornado's streaming_callback gets it; Content-Length
+                    // (the progress size) stays the compressed one
+                    let chunk = match gunzip.as_mut() {
+                        Some(g) => g.feed(&chunk).map_err(|e| e.to_string())?.into(),
+                        None => chunk,
+                    };
                     if chunk.is_empty() {
                         continue;
                     }
@@ -470,4 +527,43 @@ fn title_case(h: &str) -> String {
 
 pub fn load_component(config: &ConfigHelper) -> Rc<HttpClient> {
     HttpClient::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut e, data).unwrap();
+        e.finish().unwrap()
+    }
+
+    // a body in any chunking decompresses whole; bytes after the member are ignored
+    #[test]
+    fn gunzip_chunks() {
+        let data: Vec<u8> = (0..20000u32).flat_map(|i| (i % 251).to_le_bytes()).collect();
+        let mut body = gzip(&data);
+        body.extend_from_slice(b"trailing");
+        for size in [1, 7, 512, body.len()] {
+            let mut g = Gunzip::new();
+            let out: Vec<u8> = body.chunks(size).flat_map(|c| g.feed(c).unwrap()).collect();
+            assert_eq!(out, data, "chunks of {size}");
+        }
+    }
+
+    // tornado's _GzipMessageDelegate: Content-Encoding renamed, Content-Length kept
+    #[test]
+    fn gunzip_headers() {
+        let mut h = IndexMap::new();
+        h.insert("Content-Encoding".to_string(), "GZIP".to_string());
+        h.insert("Content-Length".to_string(), "10".to_string());
+        assert!(Gunzip::for_headers(&mut h).is_some());
+        let keys: Vec<&str> = h.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["Content-Length", "X-Consumed-Content-Encoding"]);
+        assert_eq!(h["X-Consumed-Content-Encoding"], "GZIP");
+        let mut plain = IndexMap::new();
+        plain.insert("Content-Length".to_string(), "10".to_string());
+        assert!(Gunzip::for_headers(&mut plain).is_none());
+    }
 }
