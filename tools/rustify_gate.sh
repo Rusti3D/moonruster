@@ -29,9 +29,4 @@ if [ "$1" = "--record" ]; then
     cat tools/rustify_gate.expected
     exit 0
 fi
-if diff -u tools/rustify_gate.expected "$OUT/summary"; then
-    echo "GATE PASS"
-else
-    echo "GATE FAIL (outputs in $OUT)"
-    exit 1
-fi
+python3 tools/gate_compare.py tools/rustify_gate.expected "$OUT/summary" || { echo "(outputs in $OUT)"; exit 1; }
