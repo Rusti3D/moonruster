@@ -339,7 +339,8 @@ impl Server {
             crate::utils::hostname()
         );
         let app = self.app();
-        app.listen(&self.host.borrow(), self.port.get(), self.ssl_port.get()).await;
+        let host = self.host.borrow().clone();
+        app.listen(&host, self.port.get(), self.ssl_port.get()).await;
         self.server_running.set(true);
         if connect_to_klippy {
             self.klippy().connect();
