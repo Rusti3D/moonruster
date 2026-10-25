@@ -6,6 +6,7 @@
 # differed in the expected run and no longer does passes (an improvement, or
 # one of Moonraker's own volatile cases on a good run); it is listed.
 #   python3 tools/gate_compare.py EXPECTED CURRENT
+import re
 import sys
 
 
@@ -37,9 +38,15 @@ def main():
             continue
         (eh, ec), (ch, cc) = exp[suite], cur[suite]
         # tool verdicts (RESULT n differences, mqtt identical) must not change;
-        # an 'N/M identical' total follows from the cases
+        # an 'N/M identical' total follows from the cases, but its M (the
+        # cases run) must not: a suite that crashed or ran fewer cases fails
+        if len(eh) != len(ch):
+            fail.append(f"[{suite}] {eh!r} -> {ch!r}")
         for e, c in zip(eh, ch):
-            if e != c and "identical" not in e:
+            if e == c:
+                continue
+            em, cm = re.match(r"^\d+/(\d+) ", e), re.match(r"^\d+/(\d+) ", c)
+            if not (em and cm and em.group(1) == cm.group(1)):
                 fail.append(f"[{suite}] {e!r} -> {c!r}")
         for case, paths in sorted(cc.items()):
             if case not in ec:
