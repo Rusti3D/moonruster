@@ -1,0 +1,75 @@
+[config]
+5/9 variants identical
+  case_and_delims: $case_and_delims.config.config.server.port
+  default_section: $default_section.config.config.server.port
+  include_comments: $include_comments.config.config.server.port
+  secrets_template: $secrets_template.config.config.server.port
+[corpus_cmp]
+RESULT 0 differences
+[difftest]
+120/143 cases identical
+  DELETE /server/webcams/item?name=cam1: $.body.result.webcam.uid
+  GET /access/oneshot_token: $.body.result
+  GET /server/config: $.body.result.config $.body.result.config.mqtt.instance_name $.body.result.config.paneldue.serial $.body.result.config.power $.body.result.config.sensor $.body.result.config.server.port $.body.result.config.simplyprint.url $.body.result.config.zeroconf.mdns_hostname $.body.result.orig.mqtt.instance_name $.body.result.orig.paneldue.serial $.body.result.orig.power $.body.result.orig.sensor $.body.result.orig.simplyprint.url $.body.result.orig.zeroconf.mdns_hostname
+  GET /server/database/item?namespace=moonraker: $.body.result.value.announcements.klipper.etag $.body.result.value.announcements.moonraker.etag
+  GET /server/database/list: $.body.result.namespaces[]
+  GET /server/files/config/printer.cfg: $.headers.content-range
+  GET /server/files/config/printer.cfg: $.headers.content-range
+  GET /server/files/config/printer.cfg: $.headers.content-range
+  GET /server/files/config/printer.cfg: $.headers.content-range
+  GET /server/files/directory?path=config: $.body.result.files[].filename $.body.result.files[].size
+  GET /server/files/klippy.log: $.headers.content-range
+  GET /server/files/list?root=config: $.body.result[].path $.body.result[].size
+  GET /server/files/moonraker.log: $.body
+  GET /server/history/totals: $.body.result.job_totals.longest_job $.body.result.job_totals.total_time
+  GET /server/info: $.body.result.components[]
+  GET /server/info: $.body.result.components[]
+  GET /server/info?raw=true: $.body.result.components[]
+  GET /server/webcams/item?name=cam1: $.body.result.webcam.uid
+  POST /server/jsonrpc: $.body.result.components[]
+  POST /server/webcams/item: $.body.result.webcam.uid
+  WS raw27: $[].result.components[]
+  WS server.config: $.result.config $.result.config.mqtt.instance_name $.result.config.paneldue.serial $.result.config.power $.result.config.sensor $.result.config.server.port $.result.config.simplyprint.url $.result.config.zeroconf.mdns_hostname $.result.orig.mqtt.instance_name $.result.orig.paneldue.serial $.result.orig.power $.result.orig.sensor $.result.orig.simplyprint.url $.result.orig.zeroconf.mdns_hostname
+  WS server.info: $.result.components[]
+[ext]
+36/37 checks identical
+  db_list: $db_list.body.result.namespaces[]
+[ldap]
+9/9 checks identical
+[machine_cli]
+7/8 steps identical
+  /server/info: $resp.body.result.components[]
+[machine_dbus]
+7/8 steps identical
+  /server/info: $resp.body.result.components[]
+[mqtt_tls]
+identical
+[plugin_cmp]
+RESULT 0 differences
+[power]
+47/47 steps identical
+[ppc]
+6/6 files identical
+[scenario]
+138/159 steps identical
+  api key get: $resp.body.result
+  api key use: $resp.body.result.components[]
+  copy exists: $notify $notify[].params[].item.path $notify[].params[].item.size
+  copy: $notify[].params[].item.size
+  dir ext: $resp.body.result.files[].thumbnails[].size
+  history totals2: $resp.body.result.job_totals.longest_job $resp.body.result.job_totals.total_time
+  history totals: $resp.body.result.job_totals.longest_job $resp.body.result.job_totals.total_time
+  meta moved: $resp.body.result.thumbnails[].size
+  metadata cube1h43.gcode: $resp.body.result.thumbnails[].size
+  metadata doorbell.gcode: $resp.body.result.thumbnails[].size
+  metadata orca_small.gcode: $resp.body.result.thumbnails[].size
+  metadata prusa.gcode: $resp.body.result.thumbnails[].size
+  oneshot: $resp.body.result
+  reset_totals: $resp.body.result.last_totals.longest_job $resp.body.result.last_totals.total_time
+  thumbs moved: $resp.body.result[].size
+  thumbs prusa: $resp.body.result[].size
+  upload cube1h43.gcode: $notify[].params[].item.size
+  upload doorbell.gcode: $notify[].params[].item.size
+  upload orca_small.gcode: $notify[].params[].item.size
+  upload prusa.gcode: $notify[].params[].item.size
+  zip default: $notify[].params[].item.path $notify[].params[].item.size $resp.body.result.destination.path $resp.body.result.destination.size
