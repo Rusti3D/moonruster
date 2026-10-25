@@ -54,7 +54,9 @@ pub(crate) fn parse_os_release() -> IndexMap<String, String> {
                     continue;
                 }
                 if let Some((k, v)) = line.split_once('=') {
-                    let v = crate::components::shell_command::shlex_split(v).join(" ");
+                    // a line shlex cannot split is skipped
+                    let Ok(v) = crate::components::shell_command::shlex_split(v) else { continue };
+                    let v = v.join(" ");
                     out.insert(k.to_lowercase(), v);
                 }
             }
@@ -193,7 +195,7 @@ impl Provider {
         machine.exec_sudo_command(cmd, 1, 2.0).await
     }
 
-    pub async fn initialize(self: &Rc<Self>) {
+    pub async fn initialize(self: &Rc<Self>) -> Result<(), ServerError> {
         match self.kind {
             ProviderKind::None => {}
             ProviderKind::SystemdCli => {
@@ -207,12 +209,14 @@ impl Provider {
                         None,
                         false,
                         None,
-                    ));
+                    )?);
                     self.update_service_status(0, true).await;
                     self.register_status_cb();
                 }
             }
-            ProviderKind::SystemdDbus => self.initialize_dbus().await,
+            ProviderKind::SystemdDbus => {
+                self.initialize_dbus().await;
+            }
             ProviderKind::SupervisordCli => {
                 self.detect_active_services_spv().await;
                 let keys: Vec<String> = self.available_services.borrow().keys().cloned().collect();
@@ -221,11 +225,12 @@ impl Provider {
                 } else {
                     format!("supervisorctl status {}", keys.join(" "))
                 };
-                *self.svc_cmd.borrow_mut() = Some(self.shell().build_shell_command(&cmd, None, None, None, false, None));
+                *self.svc_cmd.borrow_mut() = Some(self.shell().build_shell_command(&cmd, None, None, None, false, None)?);
                 self.update_service_status(0, true).await;
                 self.register_status_cb();
             }
         }
+        Ok(())
     }
 
     fn register_status_cb(self: &Rc<Self>) {
@@ -863,7 +868,7 @@ impl Component for Machine {
         let m = self.clone();
         spawn(async move { m.update_usb_ids(false).await });
         self.validator.validation_init().await;
-        self.provider.initialize().await;
+        self.provider.initialize().await?;
         if !self.inside_container.get() {
             let virt = self.provider.check_virt_status().await;
             self.system_info.borrow_mut().insert("virtualization".into(), virt);
@@ -939,9 +944,9 @@ impl Machine {
         log::info!("Using System Provider: {}", provider_type);
         let validator = InstallValidator::new(config)?;
         let shell: Rc<ShellCommandFactory> = srv.lookup_component("shell_command").unwrap();
-        let addr_cmd = shell.build_shell_command("ip -json -det address", None, None, None, false, None);
+        let addr_cmd = shell.build_shell_command("ip -json -det address", None, None, None, false, None).map_err(|e| ConfigHelper::error(e.message))?;
         let iwgetbin = if Path::new("/sbin/iwgetid").exists() { "/sbin/iwgetid" } else { "iwgetid" };
-        let iwgetid_cmd = shell.build_shell_command(iwgetbin, None, None, None, false, None);
+        let iwgetid_cmd = shell.build_shell_command(iwgetbin, None, None, None, false, None).map_err(|e| ConfigHelper::error(e.message))?;
         let m = Rc::new(Machine {
             allowed_services: RefCell::new(Vec::new()),
             inside_container: Cell::new(false),

@@ -2,7 +2,61 @@
 // frequently embeds str()/repr() output of python objects in messages and
 // responses, these helpers reproduce that output.
 
+use crate::pyfmt_tables::{DIGIT_ZEROS, NONPRINTABLE, WHITESPACE};
 use serde_json::Value;
+
+fn in_ranges(table: &[(u32, u32)], cp: u32) -> bool {
+    table
+        .binary_search_by(|&(a, b)| {
+            if b < cp {
+                std::cmp::Ordering::Less
+            } else if a > cp {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .is_ok()
+}
+
+/// str.isspace()
+fn py_isspace(c: char) -> bool {
+    in_ranges(WHITESPACE, c as u32)
+}
+
+/// The value of a Unicode decimal digit (unicodedata.decimal)
+fn py_decimal(c: char) -> Option<u32> {
+    let cp = c as u32;
+    let i = DIGIT_ZEROS.partition_point(|&z| z <= cp);
+    let zero = *DIGIT_ZEROS.get(i.checked_sub(1)?)?;
+    (cp - zero < 10).then_some(cp - zero)
+}
+
+/// str.strip() with no argument
+fn py_strip(s: &str) -> &str {
+    s.trim_matches(py_isspace)
+}
+
+/// Python's digitpart (digit (["_"] digit)*) as ASCII digits, None if it
+/// is not one
+fn py_digitpart(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_digit = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '_' {
+            // only between digits
+            if !prev_digit || !chars.peek().is_some_and(|&n| py_decimal(n).is_some()) {
+                return None;
+            }
+            prev_digit = false;
+            continue;
+        }
+        out.push(char::from_digit(py_decimal(c)?, 10)?);
+        prev_digit = true;
+    }
+    (!out.is_empty()).then_some(out)
+}
 
 /// Python's repr() for a float
 pub fn py_float_repr(f: f64) -> String {
@@ -59,7 +113,17 @@ pub fn py_str_repr(s: &str) -> String {
                 out.push('\\');
                 out.push(c);
             }
-            c if (c as u32) < 0x20 || c as u32 == 0x7f => out.push_str(&format!("\\x{:02x}", c as u32)),
+            // what str.isprintable() rejects, escaped as repr() does
+            c if in_ranges(NONPRINTABLE, c as u32) => {
+                let cp = c as u32;
+                if cp < 0x100 {
+                    out.push_str(&format!("\\x{:02x}", cp));
+                } else if cp < 0x10000 {
+                    out.push_str(&format!("\\u{:04x}", cp));
+                } else {
+                    out.push_str(&format!("\\U{:08x}", cp));
+                }
+            }
             c => out.push(c),
         }
     }
@@ -128,52 +192,57 @@ pub fn round_value(v: &Value, ndigits: usize) -> Value {
     }
 }
 
-/// Python's int(str) conversion
+/// Python's int(str) conversion (base 10; values beyond i64 are None)
 pub fn py_int(s: &str) -> Option<i64> {
-    let t = s.trim();
-    if t.is_empty() {
-        return None;
-    }
-    let (sign, body) = match t.as_bytes()[0] {
-        b'+' => (1, &t[1..]),
-        b'-' => (-1, &t[1..]),
-        _ => (1, t),
+    let t = py_strip(s);
+    let (neg, body) = match t.as_bytes().first()? {
+        b'+' => (false, &t[1..]),
+        b'-' => (true, &t[1..]),
+        _ => (false, t),
     };
-    if body.is_empty() || body.starts_with('_') || body.ends_with('_') || body.contains("__") {
-        return None;
-    }
-    let clean: String = body.chars().filter(|c| *c != '_').collect();
-    if !clean.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    clean.parse::<i64>().ok().map(|v| v * sign)
+    let digits = py_digitpart(body)?;
+    format!("{}{}", if neg { "-" } else { "" }, digits).parse().ok()
 }
 
-/// Python's float(str) conversion
+/// Python's float(str) conversion: [sign] (inf | infinity | nan |
+/// number), number = digitpart ["." [digitpart]] | "." digitpart, then
+/// an optional exponent "e" [sign] digitpart
 pub fn py_float(s: &str) -> Option<f64> {
-    let t = s.trim();
-    if t.is_empty() {
-        return None;
-    }
-    let lower = t.to_lowercase();
-    let (sign, body) = match lower.as_bytes()[0] {
-        b'+' => (1.0, &lower[1..]),
-        b'-' => (-1.0, &lower[1..]),
-        _ => (1.0, lower.as_str()),
+    let t = py_strip(s);
+    let (sign, body) = match t.as_bytes().first()? {
+        b'+' => (1.0, &t[1..]),
+        b'-' => (-1.0, &t[1..]),
+        _ => (1.0, t),
     };
-    match body {
+    match body.to_ascii_lowercase().as_str() {
         "inf" | "infinity" => return Some(sign * f64::INFINITY),
         "nan" => return Some(f64::NAN),
         _ => {}
     }
-    if body.contains("__") || body.starts_with('_') || body.ends_with('_') {
-        return None;
+    let (mantissa, exponent) = match body.find(['e', 'E']) {
+        Some(i) => (&body[..i], Some(&body[i + 1..])),
+        None => (body, None),
+    };
+    let mut ascii = match mantissa.split_once('.') {
+        Some((int, frac)) => {
+            let int = if int.is_empty() { None } else { Some(py_digitpart(int)?) };
+            let frac = if frac.is_empty() { None } else { Some(py_digitpart(frac)?) };
+            if int.is_none() && frac.is_none() {
+                return None;
+            }
+            format!("{}.{}", int.unwrap_or_else(|| "0".into()), frac.unwrap_or_else(|| "0".into()))
+        }
+        None => py_digitpart(mantissa)?,
+    };
+    if let Some(e) = exponent {
+        let (esign, edigits) = match e.as_bytes().first()? {
+            b'+' => ("", &e[1..]),
+            b'-' => ("-", &e[1..]),
+            _ => ("", e),
+        };
+        ascii = format!("{}e{}{}", ascii, esign, py_digitpart(edigits)?);
     }
-    let clean: String = body.chars().filter(|c| *c != '_').collect();
-    if !clean.chars().all(|c| c.is_ascii_digit() || c == '.' || c == 'e' || c == '+' || c == '-') {
-        return None;
-    }
-    clean.parse::<f64>().ok().map(|v| v * sign)
+    ascii.parse::<f64>().ok().map(|v| sign * v)
 }
 
 #[cfg(test)]
@@ -190,6 +259,58 @@ mod tests {
         assert_eq!(py_float_repr(123456.789), "123456.789");
         assert_eq!(py_float_repr(-0.0001), "-0.0001");
         assert_eq!(py_float_repr(1.5e300), "1.5e+300");
+    }
+
+    /// CPython's own results (tools/gen_pyfmt_vectors.py): every mismatch is
+    /// listed, not only the first
+    #[test]
+    fn vectors() {
+        let v: Value = serde_json::from_str(include_str!("../tests/data/pyfmt_vectors.json")).unwrap();
+        let mut bad: Vec<String> = Vec::new();
+        for e in v["float_repr"].as_array().unwrap() {
+            let f = f64::from_bits(e[0].as_u64().unwrap());
+            let got = py_float_repr(f);
+            if got != e[1].as_str().unwrap() {
+                bad.push(format!("float_repr {:e}: {} != {}", f, got, e[1]));
+            }
+        }
+        for e in v["str_repr"].as_array().unwrap() {
+            let got = py_str_repr(e[0].as_str().unwrap());
+            if got != e[1].as_str().unwrap() {
+                bad.push(format!("str_repr {:?}: {} != {}", e[0], got, e[1]));
+            }
+        }
+        for e in v["int"].as_array().unwrap() {
+            let got = py_int(e[0].as_str().unwrap()).map(Value::from).unwrap_or(Value::Null);
+            // python ints beyond i64 are out of range here
+            if got != e[1] && !(e[1].is_number() && e[1].as_i64().is_none()) {
+                bad.push(format!("int {:?}: {} != {}", e[0], got, e[1]));
+            }
+        }
+        for e in v["float"].as_array().unwrap() {
+            let got = match py_float(e[0].as_str().unwrap()) {
+                None => Value::Null,
+                Some(f) if !f.is_finite() => Value::from(py_float_repr(f)),
+                Some(f) => Value::from(f),
+            };
+            let want = match &e[1] {
+                Value::Number(n) => Value::from(n.as_f64().unwrap()),
+                other => other.clone(),
+            };
+            if got != want {
+                bad.push(format!("float {:?}: {} != {}", e[0], got, want));
+            }
+        }
+        for e in v["round"].as_array().unwrap() {
+            let f = f64::from_bits(e[0].as_u64().unwrap());
+            let got = py_float_repr(py_round(f, e[1].as_u64().unwrap() as usize));
+            if got != e[2].as_str().unwrap() {
+                bad.push(format!("round({:e}, {}): {} != {}", f, e[1], got, e[2]));
+            }
+        }
+        assert!(bad.is_empty(), "{} mismatches:
+{}", bad.len(), bad.join("
+"));
     }
 
     #[test]

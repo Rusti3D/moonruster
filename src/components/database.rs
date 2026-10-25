@@ -1222,3 +1222,22 @@ impl NamespaceWrapper {
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<MoonrakerDatabase>, crate::confighelper::ConfigError> {
     MoonrakerDatabase::new(config)
 }
+
+#[cfg(test)]
+mod cleandoc_tests {
+    /// CPython's inspect.cleandoc (tools/gen_misc_vectors.py)
+    #[test]
+    fn vectors() {
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/data/misc_vectors.json")).unwrap();
+        let mut bad = Vec::new();
+        for e in v["cleandoc"].as_array().unwrap() {
+            let got = super::cleandoc(e[0].as_str().unwrap());
+            if got != e[1].as_str().unwrap() {
+                bad.push(format!("{:?}: {:?} != {:?}", e[0], got, e[1]));
+            }
+        }
+        assert!(bad.is_empty(), "{} mismatches:
+{}", bad.len(), bad.join("
+"));
+    }
+}

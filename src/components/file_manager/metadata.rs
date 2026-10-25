@@ -1177,7 +1177,14 @@ fn run_gcode_processors(path: &Path, slicer: &mut Slicer, processors: &[Value], 
             continue;
         }
         let mut args: Vec<String> = match &command {
-            Value::String(s) => crate::components::shell_command::shlex_split(s),
+            // shlex's ValueError: the processor fails, as in metadata.py
+            Value::String(s) => match crate::components::shell_command::shlex_split(s) {
+                Ok(a) => a,
+                Err(_) => {
+                    logi(&format!("Processor {} failed with error", name));
+                    continue;
+                }
+            },
             Value::Array(a) => a.iter().map(crate::pyfmt::py_str).collect(),
             _ => {
                 logi(&format!("Processor {} failed with error", name));

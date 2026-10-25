@@ -33,63 +33,84 @@ impl std::fmt::Display for ShellCommandError {
     }
 }
 
-/// python's shlex.split (posix mode)
-pub fn shlex_split(s: &str) -> Vec<String> {
+/// Python's shlex.split(s): shlex.shlex(s, posix=True) with whitespace_split
+/// and no commenters (CPython's read_token state machine). The error is the
+/// ValueError's message
+pub fn shlex_split(s: &str) -> Result<Vec<String>, String> {
+    const WHITESPACE: [char; 4] = [' ', '\t', '\r', '\n'];
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Space,
+        Word,
+        Quote(char),
+        Escape,
+    }
     let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_token = false;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '\'' => {
-                in_token = true;
-                for c2 in chars.by_ref() {
-                    if c2 == '\'' {
-                        break;
-                    }
-                    cur.push(c2);
-                }
-            }
-            '"' => {
-                in_token = true;
-                while let Some(c2) = chars.next() {
-                    match c2 {
-                        '"' => break,
-                        '\\' => match chars.peek() {
-                            Some(&n) if n == '"' || n == '\\' || n == '$' || n == '`' || n == '\n' => {
-                                cur.push(n);
-                                chars.next();
-                            }
-                            _ => cur.push('\\'),
-                        },
-                        other => cur.push(other),
+    let mut token = String::new();
+    let mut quoted = false;
+    let mut state = State::Space;
+    // the state an escape returns to: Word, or the double quote it is in
+    let mut escaped = State::Word;
+    let mut chars = s.chars();
+    loop {
+        let next = chars.next();
+        match state {
+            State::Space | State::Word => match next {
+                None => break,
+                Some(c) if WHITESPACE.contains(&c) => {
+                    state = State::Space;
+                    if !token.is_empty() || quoted {
+                        out.push(std::mem::take(&mut token));
+                        quoted = false;
                     }
                 }
+                Some('\\') => {
+                    escaped = State::Word;
+                    state = State::Escape;
+                }
+                Some(q @ ('\'' | '"')) => state = State::Quote(q),
+                Some(c) => {
+                    token.push(c);
+                    state = State::Word;
+                }
+            },
+            State::Quote(q) => {
+                quoted = true;
+                match next {
+                    None => return Err("No closing quotation".into()),
+                    Some(c) if c == q => state = State::Word,
+                    // only double quotes have escapes
+                    Some('\\') if q == '"' => {
+                        escaped = state;
+                        state = State::Escape;
+                    }
+                    Some(c) => token.push(c),
+                }
             }
-            '\\' => {
-                in_token = true;
-                if let Some(n) = chars.next() {
-                    if n != '\n' {
-                        cur.push(n);
+            State::Escape => {
+                let c = next.ok_or_else(|| "No escaped character".to_string())?;
+                // in quotes, only the quote itself or the escape character
+                // may be escaped
+                if let State::Quote(q) = escaped {
+                    if c != '\\' && c != q {
+                        token.push('\\');
                     }
                 }
-            }
-            c if c.is_whitespace() => {
-                if in_token {
-                    out.push(std::mem::take(&mut cur));
-                    in_token = false;
-                }
-            }
-            c => {
-                in_token = true;
-                cur.push(c);
+                token.push(c);
+                state = escaped;
             }
         }
     }
-    if in_token {
-        out.push(cur);
+    if !token.is_empty() || quoted {
+        out.push(token);
     }
-    out
+    Ok(out)
+}
+
+/// A command that could not be built (shlex's ValueError) as the factory's
+/// error
+fn build_error(e: ServerError) -> ShellCommandError {
+    ShellCommandError { message: e.message, return_code: None, stdout: Vec::new(), stderr: Vec::new(), status_code: e.status_code }
 }
 
 pub struct ShellCommand {
@@ -120,11 +141,13 @@ impl ShellCommand {
         env: Option<HashMap<String, String>>,
         log_stderr: bool,
         cwd: Option<String>,
-    ) -> Rc<Self> {
+    ) -> Result<Rc<Self>, ServerError> {
         let expanded = crate::utils::expand_user(cmd).to_string_lossy().to_string();
-        Rc::new(ShellCommand {
+        // shlex.split's ValueError, raised by ShellCommand() in Moonraker
+        let command = shlex_split(&expanded).map_err(ServerError::exc)?;
+        Ok(Rc::new(ShellCommand {
             name: cmd.to_string(),
-            command: shlex_split(&expanded),
+            command,
             std_out_cb,
             std_err_cb,
             env,
@@ -136,7 +159,7 @@ impl ShellCommand {
             run_lock: tokio::sync::Mutex::new(()),
             done_notify: RefCell::new(None),
             finished: Cell::new(false),
-        })
+        }))
     }
 
     pub fn get_return_code(&self) -> Option<i32> {
@@ -487,7 +510,7 @@ impl ShellCommandFactory {
         env: Option<HashMap<String, String>>,
         log_stderr: bool,
         cwd: Option<String>,
-    ) -> Rc<ShellCommand> {
+    ) -> Result<Rc<ShellCommand>, ServerError> {
         ShellCommand::new(cmd, callback, std_err_callback, env, log_stderr, cwd)
     }
 
@@ -509,7 +532,7 @@ impl ShellCommandFactory {
         cwd: Option<String>,
         success_codes: Option<&[i32]>,
     ) -> Result<(), ShellCommandError> {
-        let scmd = ShellCommand::new(cmd, callback, std_err_callback, env, log_stderr, cwd);
+        let scmd = ShellCommand::new(cmd, callback, std_err_callback, env, log_stderr, cwd).map_err(build_error)?;
         for _ in 0..attempts.max(1) {
             if scmd.run(self, timeout, verbose, log_complete, sig_idx, proc_input, success_codes).await {
                 return Ok(());
@@ -526,7 +549,7 @@ impl ShellCommandFactory {
 
     /// Executes a command and returns decoded stdout
     pub async fn exec_cmd(&self, cmd: &str, opts: ExecOpts<'_>) -> Result<String, ShellCommandError> {
-        let scmd = ShellCommand::new(cmd, None, None, opts.env, opts.log_stderr, opts.cwd);
+        let scmd = ShellCommand::new(cmd, None, None, opts.env, opts.log_stderr, opts.cwd).map_err(build_error)?;
         scmd.run_with_response(self, opts.timeout, opts.attempts, opts.log_complete, opts.sig_idx, opts.proc_input, opts.success_codes)
             .await
     }
@@ -570,8 +593,27 @@ pub fn load_component(config: &ConfigHelper) -> Rc<ShellCommandFactory> {
 
 #[cfg(test)]
 mod tests {
+    /// CPython's shlex.split (tools/gen_misc_vectors.py)
+    #[test]
+    fn shlex_vectors() {
+        let v: serde_json::Value = serde_json::from_str(include_str!("../../tests/data/misc_vectors.json")).unwrap();
+        let mut bad = Vec::new();
+        for e in v["shlex"].as_array().unwrap() {
+            let got = match super::shlex_split(e[0].as_str().unwrap()) {
+                Ok(v) => serde_json::to_value(v).unwrap(),
+                Err(msg) => serde_json::json!({ "error": msg }),
+            };
+            if got != e[1] {
+                bad.push(format!("{:?}: {} != {}", e[0], got, e[1]));
+            }
+        }
+        assert!(bad.is_empty(), "{} mismatches:
+{}", bad.len(), bad.join("
+"));
+    }
+
     #[test]
     fn shlex() {
-        assert_eq!(super::shlex_split("a 'b c' \"d \\\"e\" f\\ g"), vec!["a", "b c", "d \"e", "f g"]);
+        assert_eq!(super::shlex_split("a 'b c' \"d \\\"e\" f\\ g").unwrap(), vec!["a", "b c", "d \"e", "f g"]);
     }
 }
