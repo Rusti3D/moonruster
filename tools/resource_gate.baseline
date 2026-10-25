@@ -1,0 +1,13 @@
+idle_nocomp.cpu_ns 10539478 11164609
+idle_nocomp.hwm_kb 19428 20196
+idle_nocomp.anon_kb 1872 1924
+idle_yescomp.cpu_ns 12204416 13527673
+idle_yescomp.hwm_kb 49828 50388
+idle_yescomp.anon_kb 19284 19388
+load_nocomp.cpu_ns 98788321 103867743
+load_nocomp.hwm_kb 19692 20072
+load_nocomp.anon_kb 2128 2192
+load_yescomp.cpu_ns 138743516 146903850
+load_yescomp.hwm_kb 49572 50588
+load_yescomp.anon_kb 19304 19640
+binary.x86_64 22715000 22715000

@@ -12,6 +12,10 @@
 # A metric fails when it exceeds the baseline's worst run by more than
 # TOL percent (default 3).
 cd "$(dirname "$0")/.."
+# gate runs of every project on this machine take turns (kaliru's too): a
+# measurement must not overlap another's suites or measurements
+exec 9> /tmp/rustify_gates.lock
+flock 9
 RUNS=${RUNS:-5}
 SETTLE=${SETTLE:-20}
 WIN=${WIN:-30}
