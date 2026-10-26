@@ -63,9 +63,25 @@ pub enum HandlerKind {
 
 struct Rule {
     pattern: String,
-    // None for plain paths (most routes), matched by string comparison
-    regex: Option<Regex>,
+    matcher: Matcher,
     kind: HandlerKind,
+}
+
+/// How a route pattern (tornado's regex, anchored at both ends) matches
+enum Matcher {
+    /// a plain path (most routes): string comparison
+    Exact,
+    /// `<literal>(.*)` (the file roots): the literal as a prefix, the rest
+    /// of the path (no newline, as `.`) the one argument; no regex engine
+    Prefix(String),
+    Regex(Regex),
+}
+
+const REGEX_CHARS: &str = "\\.+*?()[]{}|^$";
+
+/// What `^(?:<literal>(.*))$` captures in `path`
+fn prefix_rest<'a>(literal: &str, path: &'a str) -> Option<&'a str> {
+    path.strip_prefix(literal).filter(|rest| !rest.contains('\n'))
 }
 
 pub struct RouteMatch {
@@ -223,8 +239,13 @@ impl MoonrakerApp {
 
     fn add_handler(&self, pattern: &str, kind: HandlerKind) {
         self.remove_handler(pattern);
-        if !pattern.contains(|c: char| "\\.+*?()[]{}|^$".contains(c)) {
-            self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), regex: None, kind });
+        if !pattern.contains(|c: char| REGEX_CHARS.contains(c)) {
+            self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), matcher: Matcher::Exact, kind });
+            return;
+        }
+        if let Some(literal) = pattern.strip_suffix("(.*)").filter(|l| !l.contains(|c: char| REGEX_CHARS.contains(c))) {
+            let matcher = Matcher::Prefix(literal.to_string());
+            self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), matcher, kind });
             return;
         }
         let mut re_src = pattern.to_string();
@@ -238,7 +259,7 @@ impl MoonrakerApp {
                 return;
             }
         };
-        self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), regex: Some(regex), kind });
+        self.rules.borrow_mut().push(Rule { pattern: pattern.to_string(), matcher: Matcher::Regex(regex), kind });
     }
 
     fn remove_handler(&self, pattern: &str) {
@@ -248,12 +269,19 @@ impl MoonrakerApp {
     fn find_handler(&self, path: &str) -> Option<RouteMatch> {
         let rules = self.rules.borrow();
         for rule in rules.iter() {
-            let regex = match &rule.regex {
-                Some(r) => r,
-                None if rule.pattern == path => {
+            let regex = match &rule.matcher {
+                Matcher::Regex(r) => r,
+                Matcher::Exact if rule.pattern == path => {
                     return Some(RouteMatch { kind: rule.kind.clone(), path_args: vec![], path_kwargs: vec![] });
                 }
-                None => continue,
+                Matcher::Prefix(literal) => match prefix_rest(literal, path) {
+                    Some(rest) => {
+                        let path_args = vec![Some(utils::url_unescape(rest))];
+                        return Some(RouteMatch { kind: rule.kind.clone(), path_args, path_kwargs: vec![] });
+                    }
+                    None => continue,
+                },
+                Matcher::Exact => continue,
             };
             if let Some(caps) = regex.captures(path) {
                 let mut path_args = Vec::new();
@@ -627,5 +655,29 @@ mod tests {
         assert_eq!(s("::1"), (":".into(), Some(1)));
         assert_eq!(s("host:99999"), ("host".into(), None));
         assert_eq!(s(":80"), (":80".into(), None));
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    // a file root's prefix matcher captures what its regex captures
+    #[test]
+    fn prefix_matcher_as_regex() {
+        let literal = "/server/files/gcodes/";
+        let re = regex::Regex::new(&format!("^(?:{}(.*))$", literal)).unwrap();
+        for path in [
+            "/server/files/gcodes/",
+            "/server/files/gcodes/a%20b.gcode",
+            "/server/files/gcodes/sub/dir/x.gcode",
+            "/server/files/gcodes",
+            "/server/files/gcodesx/y",
+            "/server/files/config/x",
+            "/server/files/gcodes/a\nb",
+            "/server/files/gcodes/a\rb",
+            "",
+        ] {
+            let by_regex = re.captures(path).map(|c| c.get(1).unwrap().as_str());
+            assert_eq!(super::prefix_rest(literal, path), by_regex, "{path:?}");
+        }
     }
 }
