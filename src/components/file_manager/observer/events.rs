@@ -336,7 +336,10 @@ pub(super) async fn inotify_reader(fd: i32, obs: Weak<Observer>) {
             return;
         }
     };
-    let mut buf = vec![0u8; 65536];
+    // room for several events: inotify(7) needs at least one with the
+    // longest name (16 + NAME_MAX + 1 bytes), and a burst is read in turns
+    // (the fd stays ready until it is drained)
+    let mut buf = vec![0u8; 4096];
     loop {
         let mut guard = match afd.readable().await {
             Ok(g) => g,
