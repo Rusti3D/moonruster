@@ -10,6 +10,7 @@ use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use hyper_tungstenite::tungstenite::protocol::frame::Frame;
 use hyper_tungstenite::tungstenite::protocol::CloseFrame;
 use hyper_tungstenite::tungstenite::{Message, Utf8Bytes};
 use indexmap::IndexMap;
@@ -671,7 +672,12 @@ pub async fn serve_websocket(
         r.set_header("Sec-WebSocket-Version", "7, 8, 13");
         return (Err(r), user);
     }
-    let cfg = hyper_tungstenite::tungstenite::protocol::WebSocketConfig::default();
+    // Clients send small JSON-RPC calls: a small read buffer, grown for a
+    // larger message only while it is read. Frames are written as they come
+    // (writer_loop sends the large ones in fragments)
+    let cfg = hyper_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .read_buffer_size(WS_READ_BUFFER)
+        .write_buffer_size(0);
     let (response, websocket) = match hyper_tungstenite::upgrade(&mut req, Some(cfg)) {
         Ok(r) => r,
         Err(_) => return (Err(text_response(400, "Missing/Invalid WebSocket Key")), user),
@@ -710,6 +716,34 @@ type WsStream = hyper_tungstenite::WebSocketStream<hyper_util::rt::TokioIo<hyper
 
 const PING_INTERVAL: f64 = 10.0;
 const PING_TIMEOUT: f64 = 30.0;
+const WS_READ_BUFFER: usize = 8 * 1024;
+/// Text messages larger than this go out as fragments of at most this size
+/// (RFC 6455 5.4; clients receive one message): tungstenite's write buffer
+/// keeps the capacity of the largest frame it wrote for the connection's
+/// life, and one subscription reply can be a few hundred kB
+const WS_FRAGMENT: usize = 16 * 1024;
+
+/// A text message as frames of at most WS_FRAGMENT bytes, split on UTF-8
+/// character boundaries, the last one final
+fn text_frames(text: &str) -> Vec<Frame> {
+    use hyper_tungstenite::tungstenite::protocol::frame::coding::{Data, OpCode};
+    let mut frames = Vec::new();
+    let mut rest = text;
+    let mut opcode = OpCode::Data(Data::Text);
+    loop {
+        let mut end = rest.len().min(WS_FRAGMENT);
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        let (chunk, tail) = rest.split_at(end);
+        frames.push(Frame::message(chunk.as_bytes().to_vec(), opcode, tail.is_empty()));
+        if tail.is_empty() {
+            return frames;
+        }
+        rest = tail;
+        opcode = OpCode::Data(Data::Continue);
+    }
+}
 
 async fn writer_loop(
     mut sink: futures::stream::SplitSink<WsStream, Message>,
@@ -724,7 +758,19 @@ async fn writer_loop(
                 match msg {
                     None => break,
                     Some(OutMsg::Text(t)) => {
-                        if sink.send(Message::Text(t)).await.is_err() {
+                        let sent = if t.len() <= WS_FRAGMENT {
+                            sink.send(Message::Text(t)).await
+                        } else {
+                            let mut res = Ok(());
+                            for frame in text_frames(t.as_str()) {
+                                res = sink.send(Message::Frame(frame)).await;
+                                if res.is_err() {
+                                    break;
+                                }
+                            }
+                            res
+                        };
+                        if sent.is_err() {
                             conn.is_closed.set(true);
                             log::info!("Websocket closed while writing: {}", conn.uid());
                             break;
@@ -944,5 +990,28 @@ mod tests {
             serde_json::to_string(&et).unwrap()
         );
         assert_eq!(got, expected);
+    }
+}
+
+#[cfg(test)]
+mod fragment_tests {
+    use super::{text_frames, WS_FRAGMENT};
+
+    // a long message: fragments within the limit, on character boundaries,
+    // joining back to the message, the last one final; a short one is one frame
+    #[test]
+    fn text_frames_split_and_join() {
+        let text: String = "ab\u{e9}\u{1F600}".repeat(9000);
+        let frames = text_frames(&text);
+        assert!(frames.len() > 2);
+        let mut joined = Vec::new();
+        for (i, f) in frames.iter().enumerate() {
+            assert!(f.payload().len() <= WS_FRAGMENT);
+            assert!(std::str::from_utf8(f.payload()).is_ok());
+            assert_eq!(f.header().is_final, i == frames.len() - 1);
+            joined.extend_from_slice(f.payload());
+        }
+        assert_eq!(joined, text.as_bytes());
+        assert_eq!(text_frames("short").len(), 1);
     }
 }
