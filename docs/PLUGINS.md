@@ -562,7 +562,7 @@ Each area below has cases in `mr_test_api` / `mr_test_sql`. `plugin_cmp` shows 0
   - notifier `notify_action`;
   - mqtt `transport_type` / `screen_rpc_request` / `send_status`;
   - machine `validate_installation`, `sudo_password` (and its setter), `log_service_info`, `update_usb_ids`,
-    `get_libcamera_devices` (none: no libcamera bindings);
+    `get_libcamera_devices` (the system's libcamera bindings, through Moonruster's probe);
   - application `load_template`;
   - extensions `register_agent` / `remove_agent`.
 

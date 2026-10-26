@@ -42,6 +42,7 @@ pub fn which(cmd: &str) -> Option<PathBuf> {
     path.split(':').map(|p| Path::new(p).join(cmd)).find(|p| p.exists())
 }
 
+mod libcamera;
 mod providers;
 mod sysinfo;
 mod validation;
@@ -70,6 +71,8 @@ pub struct Machine {
     iwgetid_cmd: Rc<ShellCommand>,
     init_done: Cell<bool>,
     init_notify: tokio::sync::Notify,
+    // the system's libcamera python bindings import (Machine.libcam)
+    libcam: Cell<bool>,
 }
 
 #[async_trait(?Send)]
@@ -177,6 +180,7 @@ impl Machine {
             iwgetid_cmd,
             init_done: Cell::new(false),
             init_notify: tokio::sync::Notify::new(),
+            libcam: Cell::new(false),
         });
         m.init_allowed_services();
         {
@@ -227,8 +231,28 @@ impl Machine {
                 }))
             }),
         )?;
-        let has_libcam = false;
-        srv.add_log_rollover_item("libcamera", if has_libcam { "Found libcamera" } else { "Module libcamera unavailable, import failed" }, true);
+        // _try_import_libcamera: only where the bindings are installed
+        if libcamera::bindings_present() {
+            match libcamera::probe(false) {
+                Ok(v) => {
+                    srv.add_log_rollover_item(
+                        "libcamera",
+                        &format!("Found libcamera Python module, version: {}", py_str(&v["version"])),
+                        true,
+                    );
+                    m.libcam.set(true);
+                }
+                Err(e) => {
+                    if srv.is_verbose_enabled() {
+                        log::error!("Failed to import libcamera
+{}", e);
+                    }
+                }
+            }
+        }
+        if !m.libcam.get() {
+            srv.add_log_rollover_item("libcamera", "Module libcamera unavailable, import failed", true);
+        }
         Ok(m)
     }
 
@@ -519,7 +543,29 @@ impl Machine {
     pub async fn detect_video_devices(&self) -> Value {
         let _g = self.periph_lock.lock().await;
         let devs = tokio::task::spawn_blocking(crate::sysfs_devs::find_video_devices).await.unwrap_or_default();
-        json!({"v4l2_devices": devs, "libcamera_devices": []})
+        let libcam = self.libcam.get();
+        let libcam_devs = tokio::task::spawn_blocking(move || Self::libcamera_devices(libcam)).await.unwrap_or_default();
+        json!({"v4l2_devices": devs, "libcamera_devices": libcam_devs})
+    }
+
+    /// get_libcamera_devices (blocking): the cameras the bindings list, none
+    /// without them
+    pub fn libcamera_devices(libcam: bool) -> Value {
+        if !libcam {
+            return json!([]);
+        }
+        match libcamera::probe(true) {
+            Ok(v) => v.get("devices").cloned().unwrap_or(json!([])),
+            Err(e) => {
+                log::error!("Failed to list libcamera devices
+{}", e);
+                json!([])
+            }
+        }
+    }
+
+    pub fn has_libcamera(&self) -> bool {
+        self.libcam.get()
     }
 
     /// Machine.wait_for_init: component_init finished, or the timeout passed

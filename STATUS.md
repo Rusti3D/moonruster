@@ -55,5 +55,8 @@ apprise delivery (list/config only).
   python git checkout. Klipper, clients and system updates work.
 - notifier delivers through the `apprise` CLI (needs the apprise python package installed).
 - preprocess_cancellation is ported (cancellation.rs, shapely hulls not supported, moonraker doesn't
-  install shapely); libcamera list is always [];
-  thumbnail PNG bytes can differ from PIL.
+  install shapely); thumbnail PNG bytes can differ from PIL.
+- libcamera cameras: Moonraker's own code (load_system_module("libcamera"), get_libcamera_devices) runs
+  in a short-lived python subprocess, only where the system's libcamera python bindings are installed
+  (no python and no memory elsewhere). Checked with Ubuntu's python3-libcamera 0.2.0 (version line, empty
+  list) and a fake camera (output identical to Moonraker's function); not yet on a real Pi camera.

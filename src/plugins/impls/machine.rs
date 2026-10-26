@@ -43,8 +43,11 @@ pub fn register(r: &mut Registry) {
             Ok(none())
         })
     });
-    // Moonruster has no libcamera bindings: none found, as Moonraker without them
-    r.method(mc!("get_libcamera_devices"), |_| lookup("builtins", "list")?.call(&[]));
+    // the system's libcamera python bindings' cameras (none without them)
+    r.method(mc!("get_libcamera_devices"), |a| {
+        let libcam = a.this::<crate::components::machine::Machine>()?.has_libcamera();
+        to_py(&crate::components::machine::Machine::libcamera_devices(libcam))
+    });
     // properties
     r.method(mc!("public_ip"), |a| Ok(py_str(&this(a)?.public_ip().unwrap_or_default())));
     r.method(mc!("unit_name"), |a| Ok(py_str(&this(a)?.unit_name())));
