@@ -149,10 +149,7 @@ impl DataStore {
         if self.temp_store_size == 0 {
             return;
         }
-        store.push_back(v);
-        while store.len() > self.temp_store_size {
-            store.pop_front();
-        }
+        store_push(store, v, self.temp_store_size);
     }
 
     async fn init_sensors(self: Rc<Self>) {
@@ -222,9 +219,7 @@ impl DataStore {
             };
             for field in &reported {
                 if !entry.contains_key(field) {
-                    // the full store's size up front: growth by doubling
-                    // would leave 1200 samples in room for 2048
-                    let mut dq = VecDeque::with_capacity(self.temp_store_size);
+                    let mut dq = VecDeque::new();
                     self.push_limited(&mut dq, Sample::rounded(sstatus.get(field).unwrap_or(&Value::Null)));
                     entry.insert(field.clone(), dq);
                 }
@@ -262,10 +257,7 @@ impl DataStore {
                     None => store.back().cloned().unwrap_or(Sample::Null),
                 };
                 if self.temp_store_size > 0 {
-                    store.push_back(v);
-                    while store.len() > self.temp_store_size {
-                        store.pop_front();
-                    }
+                    store_push(store, v, self.temp_store_size);
                 }
             }
         }
@@ -296,6 +288,22 @@ impl DataStore {
         let items: Vec<Value> = q.iter().skip(start).map(GcodeEntry::value).collect();
         Ok(json!({"gcode_store": items}))
     }
+}
+
+/// Appends to a store of at most `limit` samples. It grows by doubling as a
+/// VecDeque does, but never past `limit`: plain doubling would hold 1200
+/// samples in room for 2048
+fn store_push(store: &mut VecDeque<Sample>, v: Sample, limit: usize) {
+    // the oldest sample goes first, as from a deque with a maxlen: appending
+    // to a full store would grow it before it shrinks
+    while store.len() >= limit.max(1) {
+        store.pop_front();
+    }
+    if store.len() == store.capacity() {
+        let target = (store.capacity().max(4) * 2).min(limit.max(1));
+        store.reserve_exact(target - store.len());
+    }
+    store.push_back(v);
 }
 
 /// Where python's list[-count:] starts
@@ -338,5 +346,19 @@ mod tests {
         // rounding a rounded value changes nothing (the last-value fallback)
         assert_eq!(Sample::rounded(&r(json!(215.376))).value(), json!(215.38));
         assert_eq!(std::mem::size_of::<Sample>(), 16);
+    }
+
+    // a store grows as it fills and stops at its limit, without spare room
+    #[test]
+    fn store_capacity_stops_at_limit() {
+        let mut q = std::collections::VecDeque::new();
+        for i in 0..5000 {
+            super::store_push(&mut q, Sample::Int(i), 1200);
+            assert!(q.capacity() <= 1200);
+            assert!(q.capacity() <= (q.len() * 2).max(8), "len {} cap {}", q.len(), q.capacity());
+        }
+        assert_eq!(q.len(), 1200);
+        assert_eq!(q.capacity(), 1200);
+        assert!(matches!(q.front(), Some(Sample::Int(3800))));
     }
 }
