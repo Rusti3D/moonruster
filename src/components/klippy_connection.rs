@@ -1077,6 +1077,11 @@ impl KlippyConnection {
         self.subscription_cache.borrow().clone()
     }
 
+    /// The subscription cache, borrowed: for readers that need a few fields
+    pub fn subscription_cache(&self) -> std::cell::Ref<'_, Map<String, Value>> {
+        self.subscription_cache.borrow()
+    }
+
     pub async fn rollover_log(&self) -> Result<(), ServerError> {
         if self.service_info.borrow().get("unit_name").is_none() {
             return Err(ServerError::bad("Unable to detect Klipper Service, cannot perform manual rollover"));

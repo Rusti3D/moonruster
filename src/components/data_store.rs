@@ -12,15 +12,66 @@ use std::rc::Rc;
 
 const TEMP_UPDATE_TIME: f64 = 1.0;
 
-fn round_null(v: &Value) -> Value {
-    crate::pyfmt::round_value(v, 2)
+/// One temperature store sample: round_null(value, 2), 16 bytes instead of
+/// a json Value (48 on armv7; a store holds 1200 per sensor field). Klipper
+/// reports numbers or null for these fields; any other value is kept as it
+/// came, as before.
+#[derive(Clone)]
+enum Sample {
+    Null,
+    Int(i64),
+    Float(f64),
+    Other(Box<Value>),
 }
+
+impl Sample {
+    /// python's round(value, 2), None kept as None
+    fn rounded(v: &Value) -> Sample {
+        match v {
+            Value::Null => Sample::Null,
+            // round() of a bool is an int
+            Value::Bool(b) => Sample::Int(*b as i64),
+            Value::Number(n) if n.is_f64() => {
+                Sample::Float(crate::pyfmt::py_round(n.as_f64().unwrap_or_default(), 2))
+            }
+            Value::Number(n) => match n.as_i64() {
+                Some(i) => Sample::Int(i),
+                None => Sample::Other(Box::new(v.clone())),
+            },
+            other => Sample::Other(Box::new(other.clone())),
+        }
+    }
+
+    fn value(&self) -> Value {
+        match self {
+            Sample::Null => Value::Null,
+            Sample::Int(i) => Value::from(*i),
+            Sample::Float(f) => crate::pyfmt::float_value(*f),
+            Sample::Other(v) => (**v).clone(),
+        }
+    }
+}
+
+/// A gcode store entry ({"message", "time", "type"})
+struct GcodeEntry {
+    message: String,
+    time: f64,
+    kind: &'static str,
+}
+
+impl GcodeEntry {
+    fn value(&self) -> Value {
+        json!({"message": self.message, "time": self.time, "type": self.kind})
+    }
+}
+
+type SensorStore = IndexMap<String, VecDeque<Sample>>;
 
 pub struct DataStore {
     temp_store_size: usize,
     gcode_store_size: usize,
-    gcode_queue: RefCell<VecDeque<Value>>,
-    temperature_store: RefCell<IndexMap<String, IndexMap<String, VecDeque<Value>>>>,
+    gcode_queue: RefCell<VecDeque<GcodeEntry>>,
+    temperature_store: RefCell<IndexMap<String, SensorStore>>,
     temp_monitors: RefCell<Vec<String>>,
     timer: crate::server::TaskSlot,
 }
@@ -46,8 +97,7 @@ impl DataStore {
         let d = Rc::downgrade(&ds);
         srv.on::<crate::events::GcodeResponse>(move |resp| {
             if let Some(ds) = d.upgrade() {
-                let resp = resp.clone();
-                ds.push_gcode(json!({"message": resp, "time": crate::utils::time_now(), "type": "response"}));
+                ds.push_gcode(crate::pyfmt::py_str(resp), "response");
             }
         });
         let d = Rc::downgrade(&ds);
@@ -62,9 +112,8 @@ impl DataStore {
         let d = Rc::downgrade(&ds);
         srv.on::<crate::events::GcodeReceived>(move |script| {
             if let Some(ds) = d.upgrade() {
-                let script = script.clone();
                 if !script.trim().is_empty() {
-                    ds.push_gcode(json!({"message": script, "time": crate::utils::time_now(), "type": "command"}));
+                    ds.push_gcode(script.clone(), "command");
                 }
             }
         });
@@ -81,12 +130,12 @@ impl DataStore {
         Ok(ds)
     }
 
-    fn push_gcode(&self, item: Value) {
+    fn push_gcode(&self, message: String, kind: &'static str) {
         let mut q = self.gcode_queue.borrow_mut();
         if self.gcode_store_size == 0 {
             return;
         }
-        q.push_back(item);
+        q.push_back(GcodeEntry { message, time: crate::utils::time_now(), kind });
         while q.len() > self.gcode_store_size {
             q.pop_front();
         }
@@ -96,7 +145,7 @@ impl DataStore {
         self.timer.cancel();
     }
 
-    fn push_limited(&self, store: &mut VecDeque<Value>, v: Value) {
+    fn push_limited(&self, store: &mut VecDeque<Sample>, v: Sample) {
         if self.temp_store_size == 0 {
             return;
         }
@@ -145,7 +194,7 @@ impl DataStore {
             crate::pyfmt::py_repr(&Value::Array(sensors.iter().map(|s| json!(s)).collect()))
         );
         let valid_fields = ["temperature", "target", "power", "speed"];
-        let mut new_store: IndexMap<String, IndexMap<String, VecDeque<Value>>> = IndexMap::new();
+        let mut new_store: IndexMap<String, SensorStore> = IndexMap::new();
         let mut old_store = std::mem::take(&mut *self.temperature_store.borrow_mut());
         for sensor in &sensors {
             let sstatus = status.get(sensor).and_then(|v| v.as_object()).cloned().unwrap_or_default();
@@ -162,7 +211,7 @@ impl DataStore {
                         if !reported.contains(&field) {
                             existing.shift_remove(&field);
                         } else {
-                            let v = round_null(sstatus.get(&field).unwrap_or(&Value::Null));
+                            let v = Sample::rounded(sstatus.get(&field).unwrap_or(&Value::Null));
                             let store = existing.get_mut(&field).unwrap();
                             self.push_limited(store, v);
                         }
@@ -173,8 +222,10 @@ impl DataStore {
             };
             for field in &reported {
                 if !entry.contains_key(field) {
-                    let mut dq = VecDeque::new();
-                    self.push_limited(&mut dq, round_null(sstatus.get(field).unwrap_or(&Value::Null)));
+                    // the full store's size up front: growth by doubling
+                    // would leave 1200 samples in room for 2048
+                    let mut dq = VecDeque::with_capacity(self.temp_store_size);
+                    self.push_limited(&mut dq, Sample::rounded(sstatus.get(field).unwrap_or(&Value::Null)));
                     entry.insert(field.clone(), dq);
                 }
             }
@@ -197,13 +248,19 @@ impl DataStore {
     }
 
     fn update_temperature_store(&self) {
-        let cache = server().klippy().get_subscription_cache();
+        // read in place: copying the whole subscription cache each second
+        // for a few temperatures was all garbage
+        let klippy = server().klippy();
+        let cache = klippy.subscription_cache();
         let mut ts = self.temperature_store.borrow_mut();
         for (name, sensor) in ts.iter_mut() {
-            let sdata = cache.get(name).cloned().unwrap_or(json!({}));
+            let sdata = cache.get(name);
             for (field, store) in sensor.iter_mut() {
-                let last = store.back().cloned().unwrap_or(Value::Null);
-                let v = round_null(sdata.get(field).unwrap_or(&last));
+                let v = match sdata.and_then(|d| d.get(field)) {
+                    Some(v) => Sample::rounded(v),
+                    // the last value, already rounded
+                    None => store.back().cloned().unwrap_or(Sample::Null),
+                };
                 if self.temp_store_size > 0 {
                     store.push_back(v);
                     while store.len() > self.temp_store_size {
@@ -223,7 +280,7 @@ impl DataStore {
                 continue;
             }
             let m: Map<String, Value> =
-                sensor.iter().map(|(k, v)| (format!("{}s", k), Value::Array(v.iter().cloned().collect()))).collect();
+                sensor.iter().map(|(k, v)| (format!("{}s", k), Value::Array(v.iter().map(|s| s.value()).collect()))).collect();
             out.insert(name.clone(), Value::Object(m));
         }
         Ok(Value::Object(out))
@@ -232,18 +289,18 @@ impl DataStore {
     fn handle_gcode_store_request(&self, req: WebRequest) -> ApiResult {
         let count = req.get_int_opt("count")?;
         let q = self.gcode_queue.borrow();
-        let all: Vec<Value> = q.iter().cloned().collect();
-        let items = match count {
-            Some(c) => py_slice_tail(&all, c),
-            None => all,
+        let start = match count {
+            Some(c) => py_tail_start(q.len(), c),
+            None => 0,
         };
+        let items: Vec<Value> = q.iter().skip(start).map(GcodeEntry::value).collect();
         Ok(json!({"gcode_store": items}))
     }
 }
 
-/// python's list[-count:]
-pub fn py_slice_tail<T: Clone>(items: &[T], count: i64) -> Vec<T> {
-    let len = items.len() as i64;
+/// Where python's list[-count:] starts
+fn py_tail_start(len: usize, count: i64) -> usize {
+    let len = len as i64;
     let start = if count == 0 {
         0
     } else if count > 0 {
@@ -251,9 +308,35 @@ pub fn py_slice_tail<T: Clone>(items: &[T], count: i64) -> Vec<T> {
     } else {
         (-count).min(len)
     };
-    items[start as usize..].to_vec()
+    start as usize
 }
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<DataStore>, crate::confighelper::ConfigError> {
     DataStore::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Sample;
+    use serde_json::{json, Value};
+
+    fn r(v: Value) -> Value {
+        Sample::rounded(&v).value()
+    }
+
+    // what python's round(value, 2) gives (None stays None)
+    #[test]
+    fn samples_round_as_python() {
+        assert_eq!(r(json!(215.376)), json!(215.38));
+        assert_eq!(r(json!(0.125)), json!(0.12)); // ties to even on the double
+        assert_eq!(r(json!(-0.004)), json!(-0.0));
+        assert_eq!(r(json!(60)), json!(60)); // an int stays an int
+        assert_eq!(r(Value::Null), Value::Null);
+        assert_eq!(r(json!(true)), json!(1)); // round(True, 2) == 1
+        assert_eq!(r(json!(u64::MAX)), json!(u64::MAX));
+        assert_eq!(r(json!("x")), json!("x"));
+        // rounding a rounded value changes nothing (the last-value fallback)
+        assert_eq!(Sample::rounded(&r(json!(215.376))).value(), json!(215.38));
+        assert_eq!(std::mem::size_of::<Sample>(), 16);
+    }
 }
