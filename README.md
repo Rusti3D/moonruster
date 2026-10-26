@@ -14,8 +14,12 @@ All 37 Moonraker components are ported. Behaviour is checked by running Moonrake
 side by side against the same Klipper setup and diffing every response and notification (see
 `tools/` and `STATUS.md`).
 
-Not yet verified on real hardware: GPIO, buttons, RF/GPIO power, TD-1, WLED over serial, uhubctl,
-real smart plugs (only mocked), Spoolman and SimplyPrint cloud services.
+In daily use on a real printer: an Elegoo Centauri Carbon (armv7, 115 MB RAM), where Moonruster is
+the API server of the [Rusticc](https://github.com/Rusti3D/rusticc) firmware since its first release,
+serving Mainsail, the webcam, uploads, history and the update manager.
+
+Tested against mocks only, not yet on real hardware or services: GPIO, buttons, RF/GPIO power, TD-1,
+WLED over serial, uhubctl, real smart plugs, Spoolman and SimplyPrint cloud.
 
 Known differences from Moonraker:
 
@@ -61,6 +65,10 @@ imports):
 
 The real-world gap is smaller than the synthetic one above: a real Klipper, file list, history and webcam
 add data on both sides, and COSMOS trims its Python.
+
+A memory pass since then (2026-10-26: compact temperature and console stores, one copy of Klipper's
+status per subscription, small websocket and Klipper read buffers) brought Moonruster's own memory on
+the same printer from 4.3 MB to 2.7 MB, measured in alternating runs with one Mainsail client.
 
 Reproduce the first table with `tools/bench.sh` (it starts `tools/mock_klippy.py` and
 `tools/ws_clients.py`, which needs `tornado`, e.g. from Moonraker's virtualenv):
