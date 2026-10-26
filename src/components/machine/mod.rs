@@ -349,12 +349,6 @@ impl Machine {
         self.provider.extract_service_info(name, pid, None, false).await
     }
 
-    // Moonraker's Machine.get_system_provider (Python components, docs/PLUGINS.md)
-    #[allow(dead_code)]
-    pub fn get_system_provider(&self) -> Rc<Provider> {
-        self.provider.clone()
-    }
-
     async fn handle_machine_request(self: Rc<Self>, req: WebRequest) -> ApiResult {
         let ep = req.get_endpoint().to_string();
         if self.inside_container.get() {
