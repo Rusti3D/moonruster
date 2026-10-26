@@ -508,11 +508,13 @@ impl KlippyConnection {
     }
 
     async fn read_stream(self: Rc<Self>, read_half: tokio::net::unix::OwnedReadHalf) {
-        let mut reader = tokio::io::BufReader::with_capacity(64 * 1024, read_half);
+        let mut reader = tokio::io::BufReader::new(read_half);
         let mut buf = Vec::new();
         loop {
-            // reused, but a large response (configfile) doesn't stay allocated
-            if buf.capacity() > 256 * 1024 {
+            // reused, but a large response (a subscription's configfile, a
+            // few hundred kB) doesn't stay allocated: status updates are a
+            // few kB
+            if buf.capacity() > 16 * 1024 {
                 buf = Vec::new();
             } else {
                 buf.clear();
@@ -945,15 +947,22 @@ impl KlippyConnection {
         args.insert("objects".into(), Self::sub_to_value(&all_subs));
         args.insert("response_template".into(), json!({"method": "process_status_update"}));
         let mut result = self.request_standard("objects/subscribe", Value::Object(args), Some(20.0)).await?;
-        let all_status = result.get("status").and_then(|s| s.as_object()).cloned().unwrap_or_default();
+        // Klippy's status, taken out of the result: each object is moved to
+        // the cache or the reply, and copied only when both need it
+        let all_status = match result.as_object_mut().and_then(|r| r.shift_remove("status")) {
+            Some(Value::Object(m)) => m,
+            _ => Map::new(),
+        };
         let mut pruned = Map::new();
         let mut status_diff = Map::new();
         {
             let mut cache = self.subscription_cache.borrow_mut();
-            for (obj, fields) in &all_status {
-                let fields_map = fields.as_object().cloned().unwrap_or_default();
-                if let Some(Value::Object(cached)) = cache.get(obj) {
-                    for (fname, value) in &fields_map {
+            let received: std::collections::HashSet<String> = all_status.keys().cloned().collect();
+            for (obj, fields) in all_status {
+                let empty = Map::new();
+                let fields_map = fields.as_object().unwrap_or(&empty);
+                if let Some(Value::Object(cached)) = cache.get(&obj) {
+                    for (fname, value) in fields_map {
                         if let Some(cv) = cached.get(fname) {
                             if cv != value {
                                 status_diff
@@ -966,14 +975,20 @@ impl KlippyConnection {
                         }
                     }
                 }
-                if obj == "configfile" {
-                    let mut to_cache = fields_map.clone();
-                    let mut removed = Vec::new();
-                    for ex in ["config", "settings"] {
-                        if to_cache.shift_remove(ex).is_some() {
-                            removed.push(Value::String(ex.into()));
-                        }
-                    }
+                let requested = requested_sub.get(&obj);
+                // the fields asked for, when not the whole object
+                let partial = match requested {
+                    Some(Some(names)) => Some(Value::Object(
+                        fields_map.iter().filter(|(k, _)| names.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    )),
+                    _ => None,
+                };
+                // the cache's own copy, where the reply keeps the original
+                // (configfile: without config and settings, which are not
+                // cached)
+                let cache_copy = if obj == "configfile" {
+                    let removed: Vec<Value> =
+                        ["config", "settings"].iter().filter(|ex| fields_map.contains_key(**ex)).map(|ex| json!(ex)).collect();
                     if !removed.is_empty() {
                         log::debug!(
                             "Removed excluded fields from subscription cache: {}: {}",
@@ -981,29 +996,34 @@ impl KlippyConnection {
                             crate::pyfmt::py_repr(&Value::Array(removed))
                         );
                     }
-                    cache.insert(obj.clone(), Value::Object(to_cache));
+                    Some(Value::Object(
+                        fields_map
+                            .iter()
+                            .filter(|(k, _)| k.as_str() != "config" && k.as_str() != "settings")
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    ))
+                } else if matches!(requested, Some(None)) {
+                    Some(fields.clone())
                 } else {
-                    cache.insert(obj.clone(), fields.clone());
-                }
-                if let Some(valid) = requested_sub.get(obj) {
-                    match valid {
-                        None => {
-                            pruned.insert(obj.clone(), fields.clone());
-                        }
-                        Some(v) => {
-                            let f: Map<String, Value> =
-                                fields_map.iter().filter(|(k, _)| v.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
-                            pruned.insert(obj.clone(), Value::Object(f));
-                        }
+                    None
+                };
+                match (requested, partial) {
+                    (_, Some(part)) => {
+                        pruned.insert(obj.clone(), part);
+                        cache.insert(obj, cache_copy.unwrap_or(fields));
+                    }
+                    (Some(None), None) => {
+                        cache.insert(obj.clone(), cache_copy.unwrap_or_else(|| fields.clone()));
+                        pruned.insert(obj, fields);
+                    }
+                    _ => {
+                        cache.insert(obj, cache_copy.unwrap_or(fields));
                     }
                 }
             }
-            let keys: Vec<String> = cache.keys().cloned().collect();
-            for k in keys {
-                if !all_status.contains_key(&k) {
-                    cache.remove(&k);
-                }
-            }
+            // objects Klippy no longer reports leave the cache, in order
+            cache.retain(|k, _| received.contains(k));
         }
         if !status_diff.is_empty() {
             log::debug!("Detected status difference during subscription: {}", crate::pyfmt::py_repr(&Value::Object(status_diff.clone())));
