@@ -272,15 +272,16 @@ pub fn py_utc_datetime(ts: f64) -> String {
 
 // ***** Base configuration *****
 
-// Kaliru preserves Klipper's reported source path for compatibility, but
-// its executable is a native binary. That source tree and the binary must
-// not be handed to the Python/git deployment code as a virtualenv pair.
-// Keep it manually managed until a native Kaliru deployer is available.
+// A native host (Kaliru) reports its own binary as python_path, under any
+// name, next to a retained Klipper checkout. Only a python inside a
+// virtualenv can go to the git/pip deployer (configure_virtualenv takes the
+// executable's grandparent as the venv); anything else stays manually managed.
 fn klipper_app_type(path: &Path, executable: &Path) -> AppType {
-    if executable.file_name().is_some_and(|name| name == "kaliru") {
-        AppType::None
-    } else {
+    let in_venv = executable.parent().and_then(Path::parent).is_some_and(|venv| venv.join("bin/activate").is_file());
+    if in_venv {
         AppType::detect(Some(path))
+    } else {
+        AppType::None
     }
 }
 
@@ -1014,43 +1015,52 @@ pub fn load_component(config: &ConfigHelper) -> Result<Rc<UpdateManager>, Config
 mod tests {
     use super::*;
 
-    struct KlipperTree(std::path::PathBuf);
+    // <tmp>/klipper (source tree), <tmp>/klippy-env (virtualenv), <tmp>/bin (native host)
+    struct Install(std::path::PathBuf);
 
-    impl KlipperTree {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("moonruster-klipper-{}", uuid::Uuid::new_v4()));
-            std::fs::create_dir(&path).unwrap();
-            Self(path)
+    impl Install {
+        fn new(checkout: bool) -> Self {
+            let root = std::env::temp_dir().join(format!("moonruster-klipper-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(root.join("klipper")).unwrap();
+            std::fs::create_dir_all(root.join("klippy-env/bin")).unwrap();
+            std::fs::write(root.join("klippy-env/bin/activate"), "").unwrap();
+            if checkout {
+                std::fs::create_dir(root.join("klipper/.git")).unwrap();
+            }
+            Self(root)
+        }
+        fn app_type(&self, executable: &str) -> AppType {
+            klipper_app_type(&self.0.join("klipper"), &self.0.join(executable))
         }
     }
 
-    impl Drop for KlipperTree {
+    impl Drop for Install {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
     #[test]
-    fn native_kaliru_with_retained_klipper_checkout_is_unmanaged() {
-        let tree = KlipperTree::new();
-        std::fs::create_dir(tree.0.join(".git")).unwrap();
-        assert_eq!(klipper_app_type(&tree.0, Path::new("/usr/local/bin/kaliru")), AppType::None);
+    fn native_host_with_retained_klipper_checkout_is_unmanaged() {
+        let install = Install::new(true);
+        for native in ["bin/kaliru", "bin/kaliru-1.2"] {
+            assert_eq!(install.app_type(native), AppType::None);
+        }
     }
 
     #[test]
     fn python_klipper_with_checkout_remains_git_managed() {
-        let tree = KlipperTree::new();
-        std::fs::create_dir(tree.0.join(".git")).unwrap();
-        for python in ["/home/pi/klippy-env/bin/python", "/home/pi/klippy-env/bin/python3"] {
-            assert_eq!(klipper_app_type(&tree.0, Path::new(python)), AppType::GitRepo);
+        let install = Install::new(true);
+        for python in ["klippy-env/bin/python", "klippy-env/bin/python3"] {
+            assert_eq!(install.app_type(python), AppType::GitRepo);
         }
     }
 
     #[test]
     fn klipper_without_checkout_remains_unmanaged() {
-        let tree = KlipperTree::new();
-        for executable in ["/usr/local/bin/kaliru", "/home/pi/klippy-env/bin/python"] {
-            assert_eq!(klipper_app_type(&tree.0, Path::new(executable)), AppType::None);
+        let install = Install::new(false);
+        for executable in ["bin/kaliru", "klippy-env/bin/python"] {
+            assert_eq!(install.app_type(executable), AppType::None);
         }
     }
 }
