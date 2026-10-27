@@ -272,6 +272,19 @@ pub fn py_utc_datetime(ts: f64) -> String {
 
 // ***** Base configuration *****
 
+// A native host (Kaliru) reports its own binary as python_path, under any
+// name, next to a retained Klipper checkout. Only a python inside a
+// virtualenv can go to the git/pip deployer (configure_virtualenv takes the
+// executable's grandparent as the venv); anything else stays manually managed.
+fn klipper_app_type(path: &Path, executable: &Path) -> AppType {
+    let in_venv = executable.parent().and_then(Path::parent).is_some_and(|venv| venv.join("bin/activate").is_file());
+    if in_venv {
+        AppType::detect(Some(path))
+    } else {
+        AppType::None
+    }
+}
+
 fn get_base_configuration(config: &ConfigHelper) -> Result<ConfigHelper, ConfigError> {
     let kconn = server().klippy();
     let kpath = kconn.path();
@@ -297,7 +310,7 @@ fn get_base_configuration(config: &ConfigHelper) -> Result<ConfigHelper, ConfigE
     k.insert("managed_services".into(), "klipper".into());
     k.insert("path".into(), kpath.display().to_string());
     k.insert("env".into(), kconn.executable().display().to_string());
-    k.insert("type".into(), AppType::detect(Some(&kpath)).name().into());
+    k.insert("type".into(), klipper_app_type(&kpath, &kconn.executable()).name().into());
     base.insert("klipper".into(), k);
     let default_channel = config.get_opt("channel")?;
     for (app_name, opts) in base.iter_mut() {
@@ -654,7 +667,7 @@ impl UpdateManager {
         let kpath = kconn.path();
         let kexec = kconn.executable();
         let kupdater = self.get_updater("klipper");
-        let app_type = AppType::detect(Some(&kpath));
+        let app_type = klipper_app_type(&kpath, &kexec);
         let is_app = kupdater.as_ref().and_then(|k| k.app().map(|_| ())).is_some();
         if let Some(k) = &kupdater {
             if let Some(a) = k.app() {
@@ -996,4 +1009,58 @@ impl Component for UpdateManager {
 
 pub fn load_component(config: &ConfigHelper) -> Result<Rc<UpdateManager>, ConfigError> {
     UpdateManager::new(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // <tmp>/klipper (source tree), <tmp>/klippy-env (virtualenv), <tmp>/bin (native host)
+    struct Install(std::path::PathBuf);
+
+    impl Install {
+        fn new(checkout: bool) -> Self {
+            let root = std::env::temp_dir().join(format!("moonruster-klipper-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(root.join("klipper")).unwrap();
+            std::fs::create_dir_all(root.join("klippy-env/bin")).unwrap();
+            std::fs::write(root.join("klippy-env/bin/activate"), "").unwrap();
+            if checkout {
+                std::fs::create_dir(root.join("klipper/.git")).unwrap();
+            }
+            Self(root)
+        }
+        fn app_type(&self, executable: &str) -> AppType {
+            klipper_app_type(&self.0.join("klipper"), &self.0.join(executable))
+        }
+    }
+
+    impl Drop for Install {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn native_host_with_retained_klipper_checkout_is_unmanaged() {
+        let install = Install::new(true);
+        for native in ["bin/kaliru", "bin/kaliru-1.2"] {
+            assert_eq!(install.app_type(native), AppType::None);
+        }
+    }
+
+    #[test]
+    fn python_klipper_with_checkout_remains_git_managed() {
+        let install = Install::new(true);
+        for python in ["klippy-env/bin/python", "klippy-env/bin/python3"] {
+            assert_eq!(install.app_type(python), AppType::GitRepo);
+        }
+    }
+
+    #[test]
+    fn klipper_without_checkout_remains_unmanaged() {
+        let install = Install::new(false);
+        for executable in ["bin/kaliru", "klippy-env/bin/python"] {
+            assert_eq!(install.app_type(executable), AppType::None);
+        }
+    }
 }
