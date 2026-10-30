@@ -129,7 +129,7 @@ def setup_tree():
     if not TREE.exists():
         TREE.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "clone", "-q", str(HOME / "mr/moonraker"), str(TREE)], check=True)
-    subprocess.run(["git", "-C", str(TREE), "checkout", "-q", "9e676eba"], check=True)
+    subprocess.run(["git", "-C", str(TREE), "checkout", "-q", "b559b9a"], check=True)
     comps = TREE / "moonraker/components"
     for f in (HERE / "plugin_tests/components").glob("*.py"):
         link = comps / f.name

@@ -50,9 +50,11 @@ pub struct StatusView<'a> {
 
 impl<'a> StatusView<'a> {
     fn objects(&self) -> impl Iterator<Item = (&'a String, ObjectView<'a>)> + '_ {
-        let status = self.status;
-        self.sub.iter().filter_map(move |(name, fields)| match status.get(name) {
-            Some(Value::Object(val)) => {
+        // the objects in both (Moonraker b559b9a: sub.keys() & status.keys(),
+        // walked from the update, which is the small side)
+        let sub = self.sub;
+        self.status.iter().filter_map(move |(name, val)| match (sub.get(name), val) {
+            (Some(fields), Value::Object(val)) => {
                 let obj = ObjectView { val, fields: fields.as_deref() };
                 obj.fields().next().is_some().then_some((name, obj))
             }
@@ -1195,7 +1197,8 @@ mod status_view_tests {
     use super::{StatusView, Subscription};
     use serde_json::{json, Map, Value};
 
-    // the filtered map process_status_update built for each transport
+    // Moonraker's _process_status_update for one transport (b559b9a: the
+    // objects in sub.keys() & status.keys(), a set, so in no set order)
     fn filtered(status: &Map<String, Value>, sub: &Subscription) -> Map<String, Value> {
         let mut conn_status = Map::new();
         for (name, fields) in sub {
@@ -1232,7 +1235,8 @@ mod status_view_tests {
         for sub in &subs {
             let view = StatusView { status, sub };
             let old = filtered(status, sub);
-            assert_eq!(serde_json::to_string(&view).unwrap(), serde_json::to_string(&old).unwrap());
+            // (Map equality ignores the order of the objects)
+            assert_eq!(serde_json::from_str::<Map<String, Value>>(&serde_json::to_string(&view).unwrap()).unwrap(), old);
             assert_eq!(view.to_map(), old);
             assert_eq!(view.is_empty(), old.is_empty());
         }

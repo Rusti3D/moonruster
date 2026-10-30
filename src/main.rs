@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 /// The Moonraker release this port tracks.  Reported as the software
 /// version so clients apply the correct feature set.
-pub const MOONRAKER_COMPAT_VERSION: &str = "v0.11.0-3-g9e676eb";
+pub const MOONRAKER_COMPAT_VERSION: &str = "v0.11.0-4-gb559b9a";
 
 struct Args {
     datapath: Option<String>,

@@ -5,7 +5,7 @@ verification history, `README.md` / `docs/INSTALL.md` for users.
 
 ## State (2026-10-22, commit after 104133f)
 
-- All 37 Moonraker components are ported (Moonraker commit `9e676eba`).
+- All 37 Moonraker components are ported (Moonraker commit `b559b9a`).
 - Verified side by side against the Python reference with the differential suites in `tools/`.
   Last results (remaining diffs are random tokens, python `set` ordering of components /
   namespaces / sections, instance names, timing races that also vary upstream):
@@ -19,7 +19,7 @@ verification history, `README.md` / `docs/INSTALL.md` for users.
 `ref/` (the reference Moonraker source) is gitignored. The suites expect:
 
 - Linux with systemd (they were run in WSL Ubuntu 24.04, as root, under `~/mr`).
-- `~/mr/moonraker`: Moonraker checked out at `9e676eba`; `~/mr/venv` with its requirements
+- `~/mr/moonraker`: Moonraker checked out at `b559b9a`; `~/mr/venv` with its requirements
   (`scripts/moonraker-requirements.txt`) plus `requests`.
 - `~/mr/klipper` and `~/mr/klipper.dict` (`tools/build_dict.sh`), batch mode klippy, no MCU.
 - Instances `~/mr/inst/ref` (python, port 7010) and `~/mr/inst/rust` (port 7020) from

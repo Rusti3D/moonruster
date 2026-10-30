@@ -1,6 +1,6 @@
 # Moonruster status
 
-Goal (user, 2026-10-21): complete Rust port of Moonraker (Arksine/moonraker @ 9e676eba), 100% parity,
+Goal (user, 2026-10-21): complete Rust port of Moonraker (Arksine/moonraker @ 9e676eba; moved to b559b9a 2026-10-31), 100% parity,
 drop-in replacement (same config, same database file, same HTTP/WS API).
 
 ## State (2026-10-22)

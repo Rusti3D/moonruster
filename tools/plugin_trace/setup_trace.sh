@@ -11,7 +11,7 @@ CORPUS=/mnt/d/RustyKlipper/Originals_Base/addons/corpus
 T=~/mr/trace
 mkdir -p "$T"
 [ -d "$T/moonraker" ] || git clone -q ~/mr/moonraker "$T/moonraker"
-git -C "$T/moonraker" checkout -q 9e676eba
+git -C "$T/moonraker" checkout -q b559b9a
 C="$T/moonraker/moonraker/components"
 link() { ln -sfn "$CORPUS/$1" "$C/$(basename "$1")"; }
 link moonraker-timelapse/component/timelapse.py

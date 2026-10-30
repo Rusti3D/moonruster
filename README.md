@@ -6,7 +6,7 @@ same `moonraker.conf`, uses the same database file and data folder, and serves t
 websocket, unix socket and MQTT APIs, so Mainsail, Fluidd, KlipperScreen, slicer uploads and other
 Moonraker clients work without changes.
 
-Ported from Moonraker at commit `9e676eba` (reports itself as `v0.11.0-3-g9e676eb`, API 1.5.0).
+Ported from Moonraker at commit `b559b9a` (reports itself as `v0.11.0-4-gb559b9a`, API 1.5.0).
 
 ## Status
 

@@ -703,9 +703,9 @@ delivered. On x86 with the whole corpus loaded: 26.8 MB vs 39.6 MB own memory (0
 2. **Interpreter.** The `moonraker-env` virtualenv's `python` when present, else the system `python3`.
    CPython >= 3.10, Moonraker's own minimum (Phase 1: 3.10-3.15 verified).
 3. **Pip recovery.** As Moonraker: one `pip install -r scripts/moonraker-requirements.txt` in that Python.
-4. **Reference version.** The mirror is generated from `ref/moonraker` 9e676eba. Upstream's newest commit,
-   b559b9a, is one commit later (`klippy_connection` only) and loads components the same way. If
-   `ref/moonraker` moves, the mirror is regenerated and the surface check rerun.
+4. **Reference version.** The mirror is generated from `ref/moonraker` b559b9a (2026-10-31; 9e676eba before:
+   one commit, `klippy_connection._process_status_update` walks `sub.keys() & status.keys()`, ported, same
+   surface). If `ref/moonraker` moves, the mirror is regenerated and the surface check rerun.
 5. **Build.** Release binaries become glibc, non-PIE, with malloc tuned at start ("Build" above).
 
 ## What "works in Moonraker" cannot cover
