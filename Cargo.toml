@@ -1,6 +1,6 @@
 [package]
 name = "moonruster"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 # the highest any locked dependency declares (uuid 1.28); a Yocto build needs at least this toolchain
 rust-version = "1.89"
